@@ -8,9 +8,8 @@ import { COMMODITIES } from '../data/commodities';
 const MarketplaceView: React.FC<{
   currentSystem: StarSystem;
   ship: Ship;
-  setShip: React.Dispatch<React.SetStateAction<Ship>>;
   onReturnToStation: () => void;
-}> = ({ currentSystem, ship, setShip, onReturnToStation }) => {
+}> = ({ currentSystem, ship, onReturnToStation }) => {
   const [marketData, setMarketData] = useState<MarketGood[]>([]);
   const [selectedCommodity, setSelectedCommodity] = useState<MarketGood | null>(null);
   const [tradeQuantity, setTradeQuantity] = useState<number>(1);
@@ -53,14 +52,13 @@ const MarketplaceView: React.FC<{
     setError('');
 
     const result = type === 'buy'
-        ? marketService.buyCommodity(ship, currentSystem, selectedCommodity.name, tradeQuantity)
-        : marketService.sellCommodity(ship, currentSystem, selectedCommodity.name, tradeQuantity);
+        ? marketService.buyCommodity(currentSystem, selectedCommodity.name, tradeQuantity)
+        : marketService.sellCommodity(currentSystem, selectedCommodity.name, tradeQuantity);
     
-    if (result.success) {
-        setShip(result.ship!);
-        setMarketData(result.market!);
+    if (result.success && result.market) {
+        setMarketData(result.market);
         // After trade, update the selected commodity view with new data
-        const updatedCommodity = result.market!.find(c => c.name === selectedCommodity.name);
+        const updatedCommodity = result.market.find(c => c.name === selectedCommodity.name);
         setSelectedCommodity(updatedCommodity || null);
         setTradeQuantity(1);
     } else {

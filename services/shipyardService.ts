@@ -2,9 +2,11 @@
 import { Ship, ShipForSale, ShipSlot, EquipmentItem, ShipSpec } from '../types';
 import { calculateShipStats, createShipFromSpec } from './shipService';
 import { SHIPS_FOR_SALE } from '../data/ships';
+import { playerShipService } from './playerShipService';
 
 class ShipyardService {
-    public purchaseShip(currentShip: Ship, shipToBuy: ShipForSale): { success: boolean, newShip?: Ship, error?: string } {
+    public purchaseShip(shipToBuy: ShipForSale): { success: boolean, error?: string } {
+        const currentShip = playerShipService.getShip();
         const tradeInValue = Math.round(currentShip.basePrice * 0.7);
         const cargoValue = currentShip.cargo.reduce((acc, item) => acc + (item.quantity * item.weight * 50), 0); // Avg 50cr/T
         const finalCost = shipToBuy.price - tradeInValue - cargoValue;
@@ -20,11 +22,13 @@ class ShipyardService {
         newShip.velocity = { x: 0, y: 0 };
         newShip.angle = 0;
 
+        playerShipService.setShip(newShip);
 
-        return { success: true, newShip: newShip };
+        return { success: true };
     }
 
-    public equipModule(currentShip: Ship, slot: ShipSlot, itemToEquip: EquipmentItem): { success: boolean, newShip?: Ship, error?: string } {
+    public equipModule(slot: ShipSlot, itemToEquip: EquipmentItem): { success: boolean, error?: string } {
+        const currentShip = playerShipService.getShip();
         const currentItem = slot.equippedItem;
         const priceDifference = itemToEquip.price - (currentItem?.price ? Math.round(currentItem.price * 0.9) : 0); // Sell current item at 90%
 
@@ -33,9 +37,7 @@ class ShipyardService {
         }
 
         const newSlots = currentShip.slots.map(s => {
-            // This is a naive way to find the slot, but works for this structure
-            // In a more complex app, slots might need unique IDs
-            if (s.type === slot.type && s.size === slot.size && s.equippedItem === slot.equippedItem) {
+            if (s === slot) { // Simple object reference check
                 return { ...s, equippedItem: itemToEquip };
             }
             return s;
@@ -59,10 +61,13 @@ class ShipyardService {
             energy: Math.min(currentShip.energy, newStats.maxEnergy),
         };
 
-        return { success: true, newShip: newShip };
+        playerShipService.setShip(newShip);
+
+        return { success: true };
     }
 
-    public sellModule(currentShip: Ship, slot: ShipSlot): { success: boolean, newShip?: Ship, error?: string } {
+    public sellModule(slot: ShipSlot): { success: boolean, error?: string } {
+        const currentShip = playerShipService.getShip();
         if (!slot.equippedItem) {
             return { success: false, error: "Slot is already empty." };
         }
@@ -95,7 +100,9 @@ class ShipyardService {
             energy: Math.min(currentShip.energy, newStats.maxEnergy),
         };
         
-        return { success: true, newShip: newShip };
+        playerShipService.setShip(newShip);
+        
+        return { success: true };
     }
 }
 

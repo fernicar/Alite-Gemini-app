@@ -1,6 +1,7 @@
 
 import { StarSystem, MarketGood, Ship, CargoItem } from '../types';
 import { COMMODITIES } from '../data/commodities';
+import { playerShipService } from './playerShipService';
 
 // Cache to store market data for each system, to persist changes during a session.
 const marketDataCache = new Map<number, MarketGood[]>();
@@ -114,7 +115,8 @@ class MarketService {
     };
   }
 
-  public buyCommodity(ship: Ship, system: StarSystem, commodityName: string, quantity: number): { success: boolean, ship?: Ship, market?: MarketGood[], error?: string } {
+  public buyCommodity(system: StarSystem, commodityName: string, quantity: number): { success: boolean, market?: MarketGood[], error?: string } {
+    const ship = playerShipService.getShip();
     const market = this.getMarketData(system);
     const selectedCommodity = market.find(c => c.name === commodityName);
     if (!selectedCommodity) return { success: false, error: "Commodity not found in this market." };
@@ -143,16 +145,18 @@ class MarketService {
         credits: ship.credits - totalPrice,
         cargo: newCargo,
     };
+    playerShipService.setShip(newShipState);
 
     const newMarketData = market.map(item =>
         item.name === commodityName ? this.adjustPrice(item, -quantity) : item
     );
     marketDataCache.set(system.id, newMarketData);
     
-    return { success: true, ship: newShipState, market: newMarketData };
+    return { success: true, market: newMarketData };
   }
 
-  public sellCommodity(ship: Ship, system: StarSystem, commodityName: string, quantity: number): { success: boolean, ship?: Ship, market?: MarketGood[], error?: string } {
+  public sellCommodity(system: StarSystem, commodityName: string, quantity: number): { success: boolean, market?: MarketGood[], error?: string } {
+    const ship = playerShipService.getShip();
     const market = this.getMarketData(system);
     const selectedCommodity = market.find(c => c.name === commodityName);
     if (!selectedCommodity) return { success: false, error: "This station does not trade this commodity." };
@@ -174,13 +178,14 @@ class MarketService {
         credits: ship.credits + totalPrice,
         cargo: newCargo,
     };
+    playerShipService.setShip(newShipState);
 
     const newMarketData = market.map(item =>
         item.name === commodityName ? this.adjustPrice(item, quantity) : item
     );
     marketDataCache.set(system.id, newMarketData);
 
-    return { success: true, ship: newShipState, market: newMarketData };
+    return { success: true, market: newMarketData };
   }
 }
 

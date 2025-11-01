@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Ship, StarSystem, ShipSlot, EquipmentItem } from '../types';
 import { EQUIPMENT_LIST } from '../data/equipment';
 import { ShipStatusPanel } from './ShipStatusPanel';
@@ -8,9 +8,8 @@ import { shipyardService } from '../services/shipyardService';
 const OutfittingView: React.FC<{
   currentSystem: StarSystem;
   ship: Ship;
-  setShip: React.Dispatch<React.SetStateAction<Ship>>;
   onReturnToStation: () => void;
-}> = ({ currentSystem, ship, setShip, onReturnToStation }) => {
+}> = ({ currentSystem, ship, onReturnToStation }) => {
     const [selectedSlot, setSelectedSlot] = useState<ShipSlot | null>(null);
 
     const availableEquipmentForSlot = useMemo(() => {
@@ -24,9 +23,8 @@ const OutfittingView: React.FC<{
     const handleEquipItem = (itemToEquip: EquipmentItem) => {
         if (!selectedSlot) return;
 
-        const result = shipyardService.equipModule(ship, selectedSlot, itemToEquip);
-        if (result.success && result.newShip) {
-            setShip(result.newShip);
+        const result = shipyardService.equipModule(selectedSlot, itemToEquip);
+        if (result.success) {
             setSelectedSlot(null);
         } else {
             alert(result.error || "Failed to equip module.");
@@ -36,9 +34,8 @@ const OutfittingView: React.FC<{
     const handleSellItem = () => {
         if (!selectedSlot || !selectedSlot.equippedItem) return;
         
-        const result = shipyardService.sellModule(ship, selectedSlot);
-        if (result.success && result.newShip) {
-            setShip(result.newShip);
+        const result = shipyardService.sellModule(selectedSlot);
+        if (result.success) {
             setSelectedSlot(null);
         } else {
             alert(result.error || "Failed to sell module.");

@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Ship, StarSystem, ShipForSale } from '../types';
 import { SHIPS_FOR_SALE } from '../data/ships';
 import { ShipStatusPanel } from './ShipStatusPanel';
@@ -26,9 +26,8 @@ const StatRow: React.FC<{ label: string; currentValue: number | string; newValue
 const ShipyardView: React.FC<{
   currentSystem: StarSystem;
   ship: Ship;
-  setShip: React.Dispatch<React.SetStateAction<Ship>>;
   onReturnToStation: () => void;
-}> = ({ currentSystem, ship, setShip, onReturnToStation }) => {
+}> = ({ currentSystem, ship, onReturnToStation }) => {
     const [selectedShip, setSelectedShip] = useState<ShipForSale | null>(null);
     const [showConfirm, setShowConfirm] = useState(false);
 
@@ -49,10 +48,9 @@ const ShipyardView: React.FC<{
     const handlePurchase = () => {
         if (!selectedShip) return;
 
-        const result = shipyardService.purchaseShip(ship, selectedShip);
+        const result = shipyardService.purchaseShip(selectedShip);
 
-        if (result.success && result.newShip) {
-            setShip(result.newShip);
+        if (result.success) {
             alert(`Congratulations on your new ${selectedShip.type}!`);
             setShowConfirm(false);
             setSelectedShip(null);

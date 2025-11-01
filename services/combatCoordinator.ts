@@ -1,6 +1,8 @@
+
 import { Ship, NPC, Salvage } from '../types';
 import { NPCAction, aiService } from './aiService';
 import { audioService } from './audioService';
+import { playerShipService } from './playerShipService';
 
 class CombatCoordinator {
     private target: NPC | null = null;
@@ -36,7 +38,8 @@ class CombatCoordinator {
         return damage;
     }
 
-    public update(playerShip: Ship, npcActions: NPCAction[]) {
+    public update(npcActions: NPCAction[]) {
+        const playerShip = playerShipService.getShip();
         const npcs = aiService.getNpcs();
         const updatedNpcs: NPC[] = [];
 
@@ -58,6 +61,7 @@ class CombatCoordinator {
                     case 'ATTACK':
                         if (Math.random() < 0.02) { // slower fire rate with faster loop
                             this.damageToPlayerThisFrame += Math.random() * 10;
+                            audioService.playLaserSound(); // NPCs need sound too!
                         }
                         break;
                     case 'IDLE':
@@ -68,24 +72,27 @@ class CombatCoordinator {
             updatedNpcs.push(updatedNpc);
         }
         
-        // This is a bit inefficient, but for now we'll just replace the whole array
         updatedNpcs.forEach(n => aiService.updateNpc(n));
     }
 
-    public handlePlayerAttack(ship: Ship): { playerEnergyUsed: number, targetDestroyed: boolean } {
-        if (!this.target) return { playerEnergyUsed: 0, targetDestroyed: false };
+    public handlePlayerAttack(): { targetDestroyed: boolean } {
+        const ship = playerShipService.getShip();
+        if (!this.target) return { targetDestroyed: false };
 
         const weapons = ship.slots.filter(
             s => s.type === 'Hardpoint' && s.equippedItem?.category === 'Weapon'
         );
 
-        if (weapons.length === 0) return { playerEnergyUsed: 0, targetDestroyed: false };
+        if (weapons.length === 0) return { targetDestroyed: false };
         
         const totalEnergyCost = weapons.reduce((acc, s) => acc + (s.equippedItem?.powerDraw || 0), 0);
         const totalDamage = weapons.reduce((acc, s) => acc + (s.equippedItem?.stats?.damage || 0), 0);
         
-        if (ship.energy < totalEnergyCost) return { playerEnergyUsed: 0, targetDestroyed: false };
+        if (ship.energy < totalEnergyCost) return { targetDestroyed: false };
         
+        playerShipService.useEnergy(totalEnergyCost);
+        audioService.playLaserSound();
+
         let targetDestroyed = false;
         const targetNpc = aiService.getNpcs().find(n => n.id === this.target!.id);
 
@@ -117,10 +124,11 @@ class CombatCoordinator {
             }
         }
         
-        return { playerEnergyUsed: totalEnergyCost, targetDestroyed };
+        return { targetDestroyed };
     }
     
-    public targetNextEnemy(ship: Ship, npcs: NPC[]) {
+    public targetNextEnemy() {
+        const npcs = aiService.getNpcs();
         const hostiles = npcs.filter(n => n.isHostile);
         if (hostiles.length === 0) {
             this.setTarget(null);
@@ -131,7 +139,8 @@ class CombatCoordinator {
         this.setTarget(hostiles[nextIndex]);
     }
 
-    public scoopSalvage(ship: Ship, salvageId: string): { success: boolean, ship?: Ship } {
+    public scoopSalvage(salvageId: string): { success: boolean } {
+        const ship = playerShipService.getShip();
         const item = this.salvage.find(s => s.id === salvageId);
         if (!item) return { success: false };
 
@@ -153,11 +162,12 @@ class CombatCoordinator {
             newCargo = [...ship.cargo, item.contents];
         }
         const newShip = { ...ship, cargo: newCargo };
+        playerShipService.setShip(newShip);
 
         this.salvage = this.salvage.filter(i => i.id !== salvageId);
         this.notify();
 
-        return { success: true, ship: newShip };
+        return { success: true };
     }
 }
 
