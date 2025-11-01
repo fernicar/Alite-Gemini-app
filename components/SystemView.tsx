@@ -1,9 +1,11 @@
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect, useRef } from 'react';
 import { Ship, StarSystem, NPC, Salvage, Projectile, VisualEffect } from '../types';
 import { ShipStatusPanel } from './ShipStatusPanel';
-import { StationIcon, EnemyIcon, FireIcon, SalvageIcon, PlayerShipIcon } from './icons';
+import { StationIcon, FireIcon, SalvageIcon } from './icons';
 import { TargetInfoPanel } from './TargetInfoPanel';
+import { ShipIcon } from './ShipIcon';
+import { PlanetIcon } from './PlanetIcon';
 
 const SystemView: React.FC<{
   currentSystem: StarSystem;
@@ -42,6 +44,103 @@ const SystemView: React.FC<{
         .filter(s => s.type === 'Hardpoint' && s.equippedItem?.category === 'Weapon')
         .reduce((acc, s) => acc + (s.equippedItem?.powerDraw || 0), 0);
   }, [ship.slots]);
+
+  // Parallax background refs
+  const backgroundCanvasRef = useRef<HTMLCanvasElement>(null);
+  const starsRef = useRef<{ x: number; y: number; size: number; opacity: number; }[][]>([]);
+
+  // Generate stars once on component mount
+  useEffect(() => {
+      if (starsRef.current.length > 0) return;
+
+      const layers = [
+          { numStars: 200, size: 0.8 },
+          { numStars: 100, size: 1.2 },
+          { numStars: 50,  size: 1.8 },
+      ];
+
+      starsRef.current = layers.map(layer => {
+          const stars = [];
+          for (let i = 0; i < layer.numStars; i++) {
+              stars.push({
+                  x: Math.random(), // 0 to 1
+                  y: Math.random(), // 0 to 1
+                  size: Math.random() * layer.size + 0.5,
+                  opacity: Math.random() * 0.5 + 0.5,
+              });
+          }
+          return stars;
+      });
+  }, []);
+
+  // Drawing effect
+  useEffect(() => {
+      const canvas = backgroundCanvasRef.current;
+      if (!canvas) return;
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      
+      const parent = canvas.parentElement;
+      if (!parent) return;
+
+      const resizeObserver = new ResizeObserver(entries => {
+          for (let entry of entries) {
+              const { width, height } = entry.contentRect;
+              canvas.width = width;
+              canvas.height = height;
+          }
+      });
+      resizeObserver.observe(parent);
+
+      let animationFrameId: number;
+      
+      const layers = [
+          { speed: 0.1, color: 'rgba(255, 255, 255, 0.4)' },
+          { speed: 0.3, color: 'rgba(255, 255, 255, 0.6)' },
+          { speed: 0.5, color: 'rgba(255, 255, 255, 0.9)' },
+      ];
+      
+      const draw = () => {
+          animationFrameId = requestAnimationFrame(draw);
+          
+          const { width, height } = canvas;
+          ctx.clearRect(0, 0, width, height);
+          ctx.fillStyle = '#000011';
+          ctx.fillRect(0, 0, width, height);
+
+          layers.forEach((layer, i) => {
+              if (!starsRef.current[i]) return;
+              
+              const offsetX = ship.position.x * layer.speed;
+              const offsetY = ship.position.y * layer.speed;
+
+              ctx.fillStyle = layer.color;
+
+              starsRef.current[i].forEach(star => {
+                  const starX = star.x * width;
+                  const starY = star.y * height;
+
+                  const drawX = (starX - offsetX % width + width) % width;
+                  const drawY = (starY - offsetY % height + height) % height;
+                  
+                  ctx.globalAlpha = star.opacity;
+                  ctx.beginPath();
+                  ctx.arc(drawX, drawY, star.size, 0, 2 * Math.PI);
+                  ctx.fill();
+              });
+          });
+          ctx.globalAlpha = 1.0;
+      };
+      
+      draw();
+
+      return () => {
+          cancelAnimationFrame(animationFrameId);
+          resizeObserver.disconnect();
+      };
+
+  }, [ship.position]); // Redraw when ship position changes
   
   return (
     <main className="grid flex-grow grid-cols-1 gap-4 p-4 min-h-0 lg:grid-cols-[350px_1fr]">
@@ -99,17 +198,49 @@ const SystemView: React.FC<{
             </button>
         </div>
         <div className="flex-grow bg-black rounded-md relative flex items-center justify-center overflow-hidden border border-cyan-400/10">
-          {/* Starfield background */}
-          <div className="absolute inset-0 bg-grid-cyan-500/10 [mask-image:radial-gradient(ellipse_at_center,transparent_20%,#000)]"></div>
+          {/* Parallax Starfield background */}
+          <canvas ref={backgroundCanvasRef} className="absolute inset-0 w-full h-full z-0" />
+
+          {/* Scanner HUD */}
+          <div className="absolute w-[80vmin] h-[80vmin] pointer-events-none">
+              {/* Grid */}
+              <svg width="100%" height="100%" viewBox="0 0 200 200" className="absolute inset-0 z-1">
+                  <defs>
+                      <radialGradient id="scannerGlow" cx="50%" cy="50%" r="50%" fx="50%" fy="50%">
+                          <stop offset="85%" stopColor="rgba(0, 40, 40, 0)" />
+                          <stop offset="100%" stopColor="rgba(0, 255, 255, 0.15)" />
+                      </radialGradient>
+                  </defs>
+                  <circle cx="100" cy="100" r="99" fill="url(#scannerGlow)" />
+
+                  <circle cx="100" cy="100" r="33" fill="none" stroke="rgba(0, 255, 255, 0.1)" strokeWidth="0.5" />
+                  <circle cx="100" cy="100" r="66" fill="none" stroke="rgba(0, 255, 255, 0.1)" strokeWidth="0.5" />
+                  <circle cx="100" cy="100" r="99" fill="none" stroke="rgba(0, 255, 255, 0.2)" strokeWidth="0.5" />
+
+                  <line x1="100" y1="0" x2="100" y2="200" stroke="rgba(0, 255, 255, 0.1)" strokeWidth="0.5" />
+                  <line x1="0" y1="100" x2="200" y2="100" stroke="rgba(0, 255, 255, 0.1)" strokeWidth="0.5" />
+                  <line x1="29.3" y1="29.3" x2="170.7" y2="170.7" stroke="rgba(0, 255, 255, 0.1)" strokeWidth="0.5" />
+                  <line x1="29.3" y1="170.7" x2="170.7" y2="29.3" stroke="rgba(0, 255, 255, 0.1)" strokeWidth="0.5" />
+              </svg>
+              {/* Sweep */}
+              <div className="absolute inset-0 w-full h-full animate-spin-radar z-2" style={{ transformOrigin: '50% 50%' }}>
+                  <div className="absolute top-0 left-0 w-full h-full"
+                      style={{
+                          background: 'conic-gradient(from 0deg at 50% 50%, transparent 0deg, transparent 270deg, rgba(0, 255, 255, 0.4) 358deg, transparent 360deg)',
+                          clipPath: 'circle(50% at 50% 50%)',
+                      }}
+                  />
+              </div>
+          </div>
           
           {/* Player Ship */}
           <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10"
               style={{ transform: `rotate(${ship.angle}deg)` }}>
-              <PlayerShipIcon className="w-5 h-6 drop-shadow-[0_0_5px_rgba(56,189,248,0.7)]" />
+              <ShipIcon shipType={ship.type} className="w-5 h-6 text-sky-400 drop-shadow-[0_0_5px_rgba(56,189,248,0.7)]" />
           </div>
 
           {/* Central Star (position relative to player) */}
-          <div className="absolute w-32 h-32 bg-yellow-400 rounded-full shadow-[0_0_50px_10px_rgba(250,204,21,0.5)] animate-pulse"
+          <div className="absolute w-32 h-32 bg-yellow-400 rounded-full shadow-[0_0_50px_10px_rgba(250,204,21,0.5)] animate-pulse z-3"
              style={{ 
                 left: '50%', top: '50%',
                 transform: `translate(-50%, -50%) translate(${-ship.position.x}px, ${-ship.position.y}px)`
@@ -117,7 +248,7 @@ const SystemView: React.FC<{
           ></div>
 
           {/* Station */}
-          <div className="absolute" style={{ 
+          <div className="absolute z-3" style={{ 
                 left: '50%', top: '50%',
                 transform: `translate(-50%, -50%) translate(${200 * Math.cos(2.09) - ship.position.x}px, ${200 * Math.sin(2.09) - ship.position.y}px)` 
             }}>
@@ -130,21 +261,27 @@ const SystemView: React.FC<{
             <p className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-xs text-cyan-200 font-mono">{currentSystem.name} Station</p>
           </div>
 
-          {/* Planets (placeholders) */}
-           <div className="absolute w-8 h-8 bg-blue-500 rounded-full" style={{ left: '50%', top: '50%', transform: `translate(-50%,-50%) translate(${150*Math.cos(0.78)-ship.position.x}px, ${150*Math.sin(0.78)-ship.position.y}px)` }}></div>
-          <div className="absolute w-6 h-6 bg-red-500 rounded-full" style={{ left: '50%', top: '50%', transform: `translate(-50%,-50%) translate(${250*Math.cos(2.61)-ship.position.x}px, ${250*Math.sin(2.61)-ship.position.y}px)` }}></div>
-          <div className="absolute w-10 h-10 bg-green-500 rounded-full" style={{ left: '50%', top: '50%', transform: `translate(-50%,-50%) translate(${350*Math.cos(4.88)-ship.position.x}px, ${350*Math.sin(4.88)-ship.position.y}px)` }}></div>
+          {/* Planets */}
+          <div className="absolute z-3" style={{ left: '50%', top: '50%', transform: `translate(-50%,-50%) translate(${150*Math.cos(0.78)-ship.position.x}px, ${150*Math.sin(0.78)-ship.position.y}px)` }}>
+            <PlanetIcon type="terrestrial" size={32} seed={`${currentSystem.id}-1`} />
+          </div>
+          <div className="absolute z-3" style={{ left: '50%', top: '50%', transform: `translate(-50%,-50%) translate(${250*Math.cos(2.61)-ship.position.x}px, ${250*Math.sin(2.61)-ship.position.y}px)` }}>
+            <PlanetIcon type="rocky" size={24} seed={`${currentSystem.id}-2`} />
+          </div>
+          <div className="absolute z-3" style={{ left: '50%', top: '50%', transform: `translate(-50%,-50%) translate(${350*Math.cos(4.88)-ship.position.x}px, ${350*Math.sin(4.88)-ship.position.y}px)` }}>
+            <PlanetIcon type="gas_giant" size={40} seed={`${currentSystem.id}-3`} />
+          </div>
 
 
           {/* NPCs */}
           {npcs.map(npc => (
-            <div key={npc.id} className="absolute transition-transform duration-500" 
+            <div key={npc.id} className="absolute transition-transform duration-500 z-5" 
               style={{ 
                 left: '50%', top: '50%',
-                transform: `translate(-50%, -50%) translate(${npc.position.x - ship.position.x}px, ${npc.position.y - ship.position.y}px)`
+                transform: `translate(-50%, -50%) translate(${npc.position.x - ship.position.x}px, ${npc.position.y - ship.position.y}px) rotate(${npc.angle}deg)`
               }}
             >
-              <EnemyIcon className={`w-6 h-6 transition-colors ${npc.isHostile ? 'text-red-500' : 'text-green-500'} ${target?.id === npc.id ? 'opacity-100' : 'opacity-75'}`} />
+              <ShipIcon shipType={npc.shipType} className={`w-5 h-6 transition-colors ${npc.isHostile ? 'text-red-500' : 'text-green-500'} ${target?.id === npc.id ? 'opacity-100' : 'opacity-75'}`} />
               {target?.id === npc.id && (
                 <div className="absolute -top-2 -left-2 w-10 h-10 border border-red-500 rounded-full animate-pulse"></div>
               )}
@@ -153,7 +290,7 @@ const SystemView: React.FC<{
 
           {/* Salvage */}
           {salvage.map(s => (
-            <div key={s.id} className="absolute transition-transform duration-500" 
+            <div key={s.id} className="absolute transition-transform duration-500 z-5" 
               style={{ 
                 left: '50%', top: '50%',
                 transform: `translate(-50%, -50%) translate(${s.position.x - ship.position.x}px, ${s.position.y - ship.position.y}px)`
@@ -169,7 +306,7 @@ const SystemView: React.FC<{
           {/* Projectiles */}
           {projectiles.map(proj => (
               <div key={proj.id} 
-                   className="absolute bg-cyan-300 rounded-sm"
+                   className="absolute bg-cyan-300 rounded-sm z-15"
                    style={{
                        left: '50%',
                        top: '50%',
@@ -184,7 +321,7 @@ const SystemView: React.FC<{
           {/* Visual Effects */}
           {visualEffects.map(effect => (
               <div key={effect.id}
-                   className="absolute bg-yellow-400 rounded-full"
+                   className="absolute bg-yellow-400 rounded-full z-20"
                    style={{
                        left: '50%',
                        top: '50%',
