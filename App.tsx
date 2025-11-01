@@ -1,3 +1,4 @@
+
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Ship, StarSystem, NPC, Salvage, CargoItem, ShipSlot, Mission, EquipmentItem, ShipSpec } from './types';
 import { GALAXY_MAP, GALAXY_WIDTH, GALAXY_HEIGHT } from './constants';
@@ -15,6 +16,7 @@ import { SHIPS_FOR_SALE } from './data/ships';
 import { MarkdownRenderer } from './components/MarkdownRenderer';
 import { audioService } from './services/audioService';
 import { updateCombatState, handlePlayerAttack } from './services/combatService';
+import { updatePlayerShip } from './services/playerService';
 
 const PIRATE_SHIP_TYPES = ['Viper Mk I', 'Adder', 'Cobra Mk III'];
 
@@ -175,11 +177,6 @@ const SystemInfoPanel: React.FC<{
 
 type View = 'GALAXY' | 'SYSTEM' | 'DOCKED' | 'MARKETPLACE' | 'SHIPYARD' | 'OUTFITTING' | 'MISSION_BOARD' | 'GAME_OVER';
 
-const THRUST = 0.1;
-const TURN_RATE = 3;
-const MAX_VELOCITY = 5;
-const DRAG = 0.99;
-
 const App: React.FC = () => {
     const [view, setView] = useState<View>('GALAXY');
     const [ship, setShip] = useState<Ship>(initialShip);
@@ -270,65 +267,13 @@ const App: React.FC = () => {
         const gameLoop = setInterval(() => {
             // --- NPC Combat Logic ---
             const { updatedNpcs, damageToPlayer } = updateCombatState(shipRef.current, npcsRef.current);
+
+            // --- Player Ship Logic ---
+            const updatedShip = updatePlayerShip(shipRef.current, pressedKeys.current, damageToPlayer);
+
+            // --- Update State ---
             setNpcs(updatedNpcs);
-            
-            setShip(s => {
-                let newAngle = s.angle;
-                let newVelocity = { ...s.velocity };
-                let newPosition = { ...s.position };
-                let newShields = s.shields;
-                let newHull = s.hull;
-                let newEnergy = s.energy;
-
-                // --- Player Movement ---
-                if (pressedKeys.current.has('a') || pressedKeys.current.has('arrowleft')) newAngle -= TURN_RATE;
-                if (pressedKeys.current.has('d') || pressedKeys.current.has('arrowright')) newAngle += TURN_RATE;
-                
-                if (pressedKeys.current.has('w') || pressedKeys.current.has('arrowup')) {
-                    const radians = (newAngle - 90) * (Math.PI / 180);
-                    newVelocity.x += Math.cos(radians) * THRUST;
-                    newVelocity.y += Math.sin(radians) * THRUST;
-                }
-                if (pressedKeys.current.has('s') || pressedKeys.current.has('arrowdown')) {
-                    newVelocity.x *= 0.95;
-                    newVelocity.y *= 0.95;
-                }
-                newVelocity.x *= DRAG;
-                newVelocity.y *= DRAG;
-
-                const speed = Math.sqrt(newVelocity.x ** 2 + newVelocity.y ** 2);
-                if (speed > MAX_VELOCITY) {
-                    newVelocity.x = (newVelocity.x / speed) * MAX_VELOCITY;
-                    newVelocity.y = (newVelocity.y / speed) * MAX_VELOCITY;
-                }
-
-                newPosition.x += newVelocity.x;
-                newPosition.y += newVelocity.y;
-                
-                // --- Damage & Recharge ---
-                if (damageToPlayer > 0) {
-                    const tempShields = newShields - damageToPlayer;
-                    if (tempShields < 0) {
-                        newHull += tempShields;
-                        newShields = 0;
-                    } else {
-                        newShields = tempShields;
-                    }
-                }
-                newShields = Math.min(s.maxShields, newShields + (s.maxShields / 200)); // Slower recharge
-                newEnergy = Math.min(s.maxEnergy, newEnergy + (s.maxEnergy / 100)); // Slower recharge
-
-                return {
-                    ...s,
-                    angle: newAngle,
-                    velocity: newVelocity,
-                    position: newPosition,
-                    shields: newShields,
-                    hull: newHull,
-                    energy: newEnergy
-                };
-            });
-
+            setShip(updatedShip);
         }, 50); // 20 FPS game loop
 
         return () => clearInterval(gameLoop);
