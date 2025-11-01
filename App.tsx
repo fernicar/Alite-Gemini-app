@@ -1,6 +1,7 @@
 
+
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { Ship, StarSystem, NPC, Salvage, CargoItem, ShipSlot, Mission, EquipmentItem, ShipSpec, Projectile, VisualEffect } from './types';
+import { Ship, StarSystem, NPC, Salvage, CargoItem, ShipSlot, Mission, EquipmentItem, ShipSpec, Projectile, VisualEffect, PhysicsState, Celestial } from './types';
 import { generateSystemDescription } from './services/geminiService';
 import { getGalaxy, GALAXY_WIDTH, GALAXY_HEIGHT } from './services/galaxyService';
 import { JumpIcon } from './components/icons';
@@ -15,12 +16,13 @@ import { EQUIPMENT_LIST } from './data/equipment';
 import { SHIPS_FOR_SALE } from './data/ships';
 import { MarkdownRenderer } from './components/MarkdownRenderer';
 import { audioService } from './services/audioService';
-import { aiService } from './services/aiService';
-import { combatCoordinator } from './services/combatCoordinator';
 import { playerShipService } from './services/playerShipService';
-import { physicsService } from './services/physicsService';
-import { projectileService } from './services/projectileService';
+import { physicsService3D } from './services/physicsService3D';
+import { playerController3D } from './services/playerController3D';
+import { SystemViewHUD } from './components/SystemViewHUD';
 import { effectsService } from './services/effectsService';
+import { aiService } from './services/aiService';
+import * as CANNON from 'cannon-es';
 
 
 const GALAXY_MAP = getGalaxy();
@@ -64,19 +66,19 @@ const SystemInfoPanel: React.FC<{
         
         <div className="mt-4 space-y-2">
           <button 
-            onClick={onGenerateDescription}
+            onClick={() => { audioService.playUIClick(); onGenerateDescription(); }}
             disabled={isLoading}
             className="w-full bg-slate-600 hover:bg-slate-500 text-white font-bold py-2 px-4 rounded transition duration-200 disabled:bg-slate-700 disabled:cursor-not-allowed"
           >
             {isLoading ? 'Loading...' : 'Get AI Briefing'}
           </button>
           {isCurrentSystem ? (
-             <button onClick={onEnterSystem} className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-4 rounded transition duration-200 flex items-center justify-center gap-2">
+             <button onClick={() => { audioService.playUIClick(); onEnterSystem(); }} className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-4 rounded transition duration-200 flex items-center justify-center gap-2">
                 Enter System View
             </button>
           ) : (
             <button 
-                onClick={onJump} 
+                onClick={() => { audioService.playUIClick(); onJump(); }} 
                 disabled={!canJump}
                 className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2 px-4 rounded transition duration-200 flex items-center justify-center gap-2 disabled:bg-gray-500 disabled:cursor-not-allowed"
             >
@@ -94,6 +96,11 @@ const SystemInfoPanel: React.FC<{
 
 type View = 'GALAXY' | 'SYSTEM' | 'DOCKED' | 'MARKETPLACE' | 'SHIPYARD' | 'OUTFITTING' | 'MISSION_BOARD' | 'GAME_OVER';
 
+export type NpcEntity = { data: NPC; body: CANNON.Body };
+export type CelestialEntity = { data: Celestial; body: CANNON.Body };
+export type Target = { type: 'npc', entity: NpcEntity } | { type: 'celestial', entity: CelestialEntity } | null;
+
+
 const App: React.FC = () => {
     const [view, setView] = useState<View>('GALAXY');
     
@@ -104,36 +111,202 @@ const App: React.FC = () => {
     
     const [activeMission, setActiveMission] = useState<Mission | null>(null);
     const pressedKeys = useRef(new Set<string>());
+    const [flightAssist, setFlightAssist] = useState(true);
+    const [mouseAim, setMouseAim] = useState(false);
+
+    const [npcs, setNpcs] = useState<NpcEntity[]>([]);
+    const npcsRef = useRef<NpcEntity[]>([]);
+    useEffect(() => { npcsRef.current = npcs; }, [npcs]);
+    const [celestials, setCelestials] = useState<CelestialEntity[]>([]);
+    const [target, setTarget] = useState<Target>(null);
+    const [canDock, setCanDock] = useState(false);
+    const [projectiles, setProjectiles] = useState<Projectile[]>([]);
+    const [visualEffects, setVisualEffects] = useState<VisualEffect[]>([]);
+    const [salvage, setSalvage] = useState<Salvage[]>([]);
+    const [scoopableSalvage, setScoopableSalvage] = useState<Salvage | null>(null);
+
+    // Refs for game loop
+    const celestialsRef = useRef<CelestialEntity[]>([]);
+    useEffect(() => { celestialsRef.current = celestials; }, [celestials]);
+    const salvageRef = useRef<Salvage[]>([]);
+    useEffect(() => { salvageRef.current = salvage; }, [salvage]);
+    const flightAssistRef = useRef(flightAssist);
+    useEffect(() => { flightAssistRef.current = flightAssist; }, [flightAssist]);
+    const mouseAimRef = useRef(mouseAim);
+    useEffect(() => { mouseAimRef.current = mouseAim; }, [mouseAim]);
+
 
     // State to force re-renders when services update
     const [_, forceUpdate] = useState(0);
 
-    useEffect(() => {
-        const reRender = () => forceUpdate(c => c + 1);
+    const targetables = useMemo(() => [...npcs.map(n => ({ type: 'npc' as const, entity: n })), ...celestials.map(c => ({ type: 'celestial' as const, entity: c }))], [npcs, celestials]);
 
-        const unsubAi = aiService.subscribe(reRender);
-        const unsubCombat = combatCoordinator.subscribe(reRender);
-        const unsubPlayerShip = playerShipService.subscribe(reRender);
-        const unsubPhysics = physicsService.subscribe(reRender);
-        const unsubProjectiles = projectileService.subscribe(reRender);
-        const unsubEffects = effectsService.subscribe(reRender);
+    const handleTargetNext = useCallback(() => {
+        if (targetables.length === 0) return;
+        const currentIndex = target ? targetables.findIndex(t => t.entity.data.id === target.entity.data.id) : -1;
+        const nextIndex = (currentIndex + 1) % targetables.length;
+        setTarget(targetables[nextIndex]);
+    }, [targetables, target]);
 
-        return () => {
-            unsubAi();
-            unsubCombat();
-            unsubPlayerShip();
-            unsubPhysics();
-            unsubProjectiles();
-            unsubEffects();
+    const ship = useMemo(() => playerShipService.getShip(), [_, playerShipService]);
+    const shipBody = useMemo(() => physicsService3D.getShipBody(), [_, playerShipService]);
+    const shipBodyRef = useRef(shipBody);
+    useEffect(() => { shipBodyRef.current = shipBody; }, [shipBody]);
+
+    const handleHit = useCallback((projectile: Projectile, hitTarget: NPC | Ship) => {
+        if ('isHostile' in hitTarget) { // It's an NPC
+            const targetNpcEntity = npcsRef.current.find(n => n.data.id === hitTarget.id);
+            if (!targetNpcEntity) return;
+
+            let { shields, hull } = targetNpcEntity.data;
+            
+            if (shields > 0) {
+                effectsService.createShieldImpact(targetNpcEntity.data.position, 0);
+                const shieldDamage = Math.min(shields, projectile.damage);
+                shields -= shieldDamage;
+                const spillover = projectile.damage - shieldDamage;
+                if (spillover > 0) hull -= spillover;
+            } else {
+                effectsService.createHullImpact(targetNpcEntity.data.position);
+                hull -= projectile.damage;
+            }
+
+            if (hull <= 0) {
+                effectsService.createExplosion(targetNpcEntity.data.position, 'large');
+                audioService.playExplosionSound();
+                setTarget(currentTarget => {
+                    if (currentTarget?.entity.data.id === hitTarget.id) {
+                        return null;
+                    }
+                    return currentTarget;
+                });
+                setSalvage(s => [...s, {
+                    id: `salvage-${hitTarget.id}`,
+                    contents: { name: 'Scrap Metal', quantity: Math.ceil(Math.random() * 5), weight: 1 },
+                    position: targetNpcEntity.data.position,
+                }]);
+                aiService.removeNpc(hitTarget.id);
+            } else {
+                // FIX: Use `targetNpcEntity.data` which is guaranteed to be up-to-date from the component state,
+                // instead of `hitTarget` which could be stale data from the physics body. This also resolves the TS error.
+                const updatedNpc = { ...targetNpcEntity.data, shields, hull };
+                aiService.updateNpc(updatedNpc);
+            }
+
+        } else { // It's the player
+            const { type } = playerShipService.applyDamage(projectile.damage);
+            const currentShipPosition = playerShipService.getShip().position;
+            if (type === 'shield') {
+                effectsService.createShieldImpact(currentShipPosition, 0); 
+            } else {
+                effectsService.createHullImpact(currentShipPosition);
+            }
         }
     }, []);
 
-    const ship = useMemo(() => playerShipService.getShip(), [_, playerShipService]);
-    const npcs = useMemo(() => aiService.getNpcs(), [_, aiService]);
-    const target = useMemo(() => combatCoordinator.getTarget(), [_, combatCoordinator]);
-    const salvage = useMemo(() => combatCoordinator.getSalvage(), [_, combatCoordinator]);
-    const projectiles = useMemo(() => projectileService.getProjectiles(), [_, projectileService]);
-    const visualEffects = useMemo(() => effectsService.getEffects(), [_, effectsService]);
+    useEffect(() => {
+        if (view !== 'SYSTEM') {
+            return;
+        }
+        
+        const reRender = () => forceUpdate(c => c + 1);
+
+        const unsubPlayerShip = playerShipService.subscribe(reRender);
+        const unsubPhysics3D = physicsService3D.subscribe(() => {
+            setProjectiles(physicsService3D.getProjectiles());
+            reRender();
+        });
+        const unsubEffects = effectsService.subscribe(() => {
+            setVisualEffects([...effectsService.getEffects()]);
+        });
+        const unsubCollision = physicsService3D.onCollision(({ projectile, target }) => {
+            handleHit(projectile, target as NPC | Ship);
+        });
+
+        const handleAiUpdate = () => {
+            const aiNpcsData = aiService.getNpcs();
+            const currentNpcEntities = npcsRef.current;
+            const currentNpcMap = new Map(currentNpcEntities.map(e => [e.data.id, e]));
+            
+            const newEntities = aiNpcsData.map(npcData => {
+                if (currentNpcMap.has(npcData.id)) {
+                    const existingEntity = currentNpcMap.get(npcData.id)!;
+                    return { ...existingEntity, data: npcData };
+                } else {
+                    physicsService3D.initializeNpc(npcData);
+                    const body = physicsService3D.getNpcBody(npcData.id);
+                    return body ? { data: npcData, body } : null;
+                }
+            }).filter((e): e is NpcEntity => e !== null);
+
+            const newNpcIds = new Set(aiNpcsData.map(n => n.id));
+            currentNpcEntities.forEach(entity => {
+                if (!newNpcIds.has(entity.data.id)) {
+                    physicsService3D.removeNpcBody(entity.data.id);
+                }
+            });
+            
+            setNpcs(newEntities);
+        };
+        
+        const unsubAi = aiService.subscribe(handleAiUpdate);
+
+
+        // Initialize 3D physics for the player ship
+        const currentShip = playerShipService.getShip();
+        physicsService3D.initializeShip(currentShip);
+
+        // Initialize Celestials
+        const initialCelestials: Celestial[] = [
+            { id: 'sun-1', type: 'Star', name: `${currentSystem.name} Prime`, position: { x: 0, y: 1000, z: -15000 }, radius: 2000 },
+            { id: 'planet-1', type: 'Planet', name: `${currentSystem.name} I`, position: { x: 5000, y: 200, z: 0 }, radius: 600 },
+            { id: 'station-1', type: 'Station', name: `${currentSystem.name} Station`, position: { x: 5000, y: 200, z: -1000 }, radius: 200 },
+        ];
+
+        const celestialEntities: CelestialEntity[] = [];
+        initialCelestials.forEach(celestial => {
+            physicsService3D.initializeCelestialBody(celestial);
+            const body = physicsService3D.getNpcBody(celestial.id); // Reusing getNpcBody for static bodies
+             if (body) {
+                celestialEntities.push({ data: celestial, body: body });
+            }
+        });
+        setCelestials(celestialEntities);
+
+        aiService.spawnEntities(currentSystem);
+
+        return () => {
+            unsubPlayerShip();
+            unsubPhysics3D();
+            unsubEffects();
+            unsubCollision();
+            unsubAi();
+
+            if (physicsService3D.getShipBody()) {
+                physicsService3D.removeBody(physicsService3D.getShipBody());
+            }
+            physicsService3D.shipBody = null;
+
+            npcsRef.current.forEach(entity => {
+                physicsService3D.removeNpcBody(entity.data.id);
+            });
+            celestialsRef.current.forEach(entity => {
+                physicsService3D.removeNpcBody(entity.data.id);
+            });
+            
+            physicsService3D.clearAllProjectiles();
+            
+            aiService.clearNpcs();
+            effectsService.clearEffects();
+
+            setNpcs([]);
+            setCelestials([]);
+            setSalvage([]);
+            setTarget(null);
+            setVisualEffects([]);
+            setProjectiles([]);
+        }
+    }, [view, currentSystem, handleHit]);
 
 
     const handleSelectSystem = useCallback((system: StarSystem) => {
@@ -160,25 +333,115 @@ const App: React.FC = () => {
         if (!selectedSystem || !currentSystem || currentShip.fuel < jumpDistance) return;
         
         audioService.playJumpSound();
-        // Reset position and velocity after jump
-        physicsService.updateObjectState(currentShip.id, { position: {x: 0, y: 0}, velocity: {x: 0, y: 0}});
+        
         playerShipService.setShip({ ...currentShip, fuel: currentShip.fuel - jumpDistance });
 
         setCurrentSystem(selectedSystem);
         setDetailedDescription('');
-        aiService.clearNpcs();
-        combatCoordinator.clearSalvage();
-        combatCoordinator.setTarget(null);
     }, [selectedSystem, currentSystem, jumpDistance]);
 
-    useEffect(() => {
-        if (view === 'SYSTEM' && aiService.getNpcCount() === 0 && !aiService.isSystemCleared()) {
-            aiService.spawnEntities(currentSystem);
+    const handleFire = useCallback(() => {
+        if (!target) return;
+        
+        const weapons = ship.slots.filter(
+            s => s.type === 'Hardpoint' && s.equippedItem?.category === 'Weapon'
+        );
+        if (weapons.length === 0) return;
+    
+        const totalEnergyCost = weapons.reduce((acc, s) => acc + (s.equippedItem?.powerDraw || 0), 0);
+        if (ship.energy < totalEnergyCost) return;
+    
+        playerShipService.useEnergy(totalEnergyCost);
+        audioService.playLaserSound();
+    
+        const totalDamage = weapons.reduce((acc, s) => acc + (s.equippedItem?.stats?.damage || 0), 0);
+        
+        physicsService3D.fireProjectile(ship.id, totalDamage);
+    }, [ship, target]);
+
+    const handleScoop = useCallback((salvageId: string) => {
+        const item = salvage.find(s => s.id === salvageId);
+        if (!item) return;
+    
+        const currentShip = playerShipService.getShip();
+        const totalWeight = currentShip.cargo.reduce((acc, c) => acc + (c.quantity * c.weight), 0);
+        
+        if (totalWeight + (item.contents.quantity * item.contents.weight) > currentShip.cargoCapacity) {
+          alert("Not enough cargo space!");
+          return;
         }
-    }, [view, currentSystem]);
+    
+        const newCargo = [...currentShip.cargo];
+        const existing = newCargo.find(c => c.name === item.contents.name);
+        if (existing) {
+            existing.quantity += item.contents.quantity;
+        } else {
+            newCargo.push(item.contents);
+        }
+        playerShipService.setShip({ ...currentShip, cargo: newCargo });
+    
+        setSalvage(prev => prev.filter(s => s.id !== salvageId));
+        setScoopableSalvage(null);
+        
+        audioService.playCargoScoopSound();
+        alert(`Cargo acquired: ${item.contents.quantity}T ${item.contents.name}`);
+    }, [salvage]);
+
+    const handlePipChange = useCallback((system: 'sys' | 'eng' | 'wep') => {
+        const pips = { ...ship.energyPips };
+        if (pips[system] >= 4) return;
+    
+        const takeFrom: ('sys' | 'eng' | 'wep')[] = [];
+        if (system === 'sys') takeFrom.push('wep', 'eng');
+        if (system === 'eng') takeFrom.push('wep', 'sys');
+        if (system === 'wep') takeFrom.push('eng', 'sys');
+
+        let taken = false;
+        for (const source of takeFrom) {
+            if (pips[source] > 0) {
+                pips[source]--;
+                pips[system]++;
+                taken = true;
+                break;
+            }
+        }
+        
+        if (taken) {
+            playerShipService.setEnergyPips(pips);
+            audioService.playPipChangeSound();
+        }
+    }, [ship]);
+
+    const resetPips = useCallback(() => {
+        playerShipService.setEnergyPips({ sys: 2, eng: 2, wep: 2 });
+        audioService.playPipChangeSound();
+    }, []);
 
     useEffect(() => {
-      const handleKeyDown = (e: KeyboardEvent) => pressedKeys.current.add(e.key.toLowerCase());
+      const handleKeyDown = (e: KeyboardEvent) => {
+        const key = e.key.toLowerCase();
+        
+        if (key === 'z') {
+            if (!pressedKeys.current.has('z')) { // on press, not hold
+                setFlightAssist(prev => !prev);
+            }
+        }
+        if (key === 'm') {
+            if (!pressedKeys.current.has('m')) {
+                setMouseAim(prev => !prev);
+            }
+        }
+        
+        pressedKeys.current.add(key);
+        
+        if (view === 'SYSTEM') {
+            if (key === 't') handleTargetNext();
+            if (key === 'arrowup') handlePipChange('sys');
+            if (key === 'arrowleft') handlePipChange('eng');
+            if (key === 'arrowdown') handlePipChange('wep');
+            if (key === 'arrowright') resetPips();
+        }
+      };
       const handleKeyUp = (e: KeyboardEvent) => pressedKeys.current.delete(e.key.toLowerCase());
 
       window.addEventListener('keydown', handleKeyDown);
@@ -187,37 +450,98 @@ const App: React.FC = () => {
         window.removeEventListener('keydown', handleKeyDown);
         window.removeEventListener('keyup', handleKeyUp);
       };
-    }, []);
+    }, [handleTargetNext, handlePipChange, resetPips, view]);
 
     useEffect(() => {
-        if (view !== 'SYSTEM') return;
-        
-        const gameLoop = setInterval(() => {
-            const currentShip = playerShipService.getShip();
-            const allShips = [currentShip, ...aiService.getNpcs()];
-            const deltaTime = 50; // ms
-            
-            // 1. Handle inputs (player and AI) and convert to physics intentions
-            playerShipService.handlePlayerInput(pressedKeys.current);
-            const npcActions = aiService.update(currentShip);
-            combatCoordinator.handleNpcActions(npcActions);
-            
-            // 2. Step the physics simulation
-            physicsService.update(deltaTime / 1000); // physics service expects seconds
-
-            // 3. Update projectiles and check for hits
-            projectileService.update(deltaTime, allShips);
-
-            // 4. Update visual effects
-            effectsService.update(deltaTime);
-            
-            // 5. Update ship systems (energy, shields)
-            playerShipService.rechargeSystems();
-
-        }, 50); // 20 FPS game loop
-
-        return () => clearInterval(gameLoop);
+        if (view === 'SYSTEM' && mouseAim) {
+            document.body.style.cursor = 'none';
+        } else {
+            document.body.style.cursor = 'default';
+        }
+    }, [view, mouseAim]);
+    
+    useEffect(() => {
+        if (view === 'SYSTEM') {
+            playerController3D.init();
+            return () => {
+                playerController3D.destroy();
+            }
+        }
     }, [view]);
+
+    useEffect(() => {
+        if (view !== 'SYSTEM') {
+            audioService.stopThrusterSound();
+            return;
+        }
+        
+        audioService.startThrusterSound();
+        
+        let animationFrameId: number;
+        let lastTime = performance.now();
+
+        const gameLoop = (timestamp: number) => {
+            const deltaTime = (timestamp - lastTime) / 1000; // seconds
+            lastTime = timestamp;
+
+            // 1. Handle player input
+            playerController3D.handlePlayerInput(pressedKeys.current, flightAssistRef.current, mouseAimRef.current);
+
+            // 2. Handle simple NPC AI
+            npcsRef.current.forEach(npc => {
+                if (Math.random() < 0.01) {
+                    physicsService3D.applyNpcYaw(npc.data.id, (Math.random() - 0.5) * 0.5);
+                }
+                if (npc.data.type === 'Pirate' || npc.data.type === 'Trader') {
+                    if (Math.random() < 0.02) {
+                       physicsService3D.applyNpcThrust(npc.data.id, Math.random() * 0.3 + 0.1);
+                    }
+                }
+            });
+            
+            // 3. Step the 3D physics simulation
+            physicsService3D.update(deltaTime);
+            effectsService.update(deltaTime);
+            playerShipService.rechargeSystems(deltaTime);
+
+
+            // 4. Check for docking proximity and scoopable salvage
+            if (shipBodyRef.current) {
+                const station = celestialsRef.current.find(c => c.data.type === 'Station')?.body;
+                if (station) {
+                    const distance = shipBodyRef.current.position.distanceTo(station.position);
+                    const speed = shipBodyRef.current.velocity.length();
+                    setCanDock(distance < 250 && speed < 50);
+                }
+
+                let closestSalvage: Salvage | null = null;
+                let minSalvageDist = 100; // scoop range
+                salvageRef.current.forEach(s => {
+                    const salvagePos = new CANNON.Vec3(s.position.x, s.position.y, s.position.z);
+                    const dist = shipBodyRef.current.position.distanceTo(salvagePos);
+                    if (dist < minSalvageDist) {
+                        minSalvageDist = dist;
+                        closestSalvage = s;
+                    }
+                });
+                setScoopableSalvage(closestSalvage);
+            }
+            
+            // 5. Update thruster sound based on input
+            const thrustInput = (pressedKeys.current.has('w') ? 1 : (pressedKeys.current.has('s') ? -0.5 : 0));
+            audioService.updateThrusterSound(thrustInput);
+    
+            animationFrameId = requestAnimationFrame(gameLoop);
+        };
+    
+        animationFrameId = requestAnimationFrame(gameLoop);
+    
+        return () => {
+            cancelAnimationFrame(animationFrameId);
+            audioService.stopThrusterSound();
+        };
+    }, [view]);
+
 
     useEffect(() => {
       if (ship.hull <= 0 && view !== 'GAME_OVER') {
@@ -227,20 +551,8 @@ const App: React.FC = () => {
       }
     }, [ship.hull, view]);
 
-    const handleFire = () => {
-        if (!target) return;
-        combatCoordinator.handlePlayerAttack();
-    };
-
-    const handleTargetNext = () => {
-        combatCoordinator.targetNextEnemy();
-    };
-
-    const handleScoop = (salvageId: string) => {
-      combatCoordinator.scoopSalvage(salvageId);
-    };
-
     const handleDock = () => {
+      if (!canDock) return;
       if (activeMission && activeMission.status === 'Completed' && activeMission.systemId === currentSystem.id) {
           const currentShip = playerShipService.getShip();
           playerShipService.setShip({ ...currentShip, credits: currentShip.credits + activeMission.reward });
@@ -251,11 +563,17 @@ const App: React.FC = () => {
       setView('DOCKED');
     }
 
+    const handleUndock = () => {
+        audioService.playUndockingSound();
+        setView('SYSTEM');
+    }
+
     const handleAcceptMission = (mission: Mission) => {
         if (activeMission) {
             alert("You already have an active mission.");
             return;
         }
+        audioService.playAcceptMissionSound();
         setActiveMission({ ...mission, status: 'InProgress' });
         setView('DOCKED');
     };
@@ -263,9 +581,14 @@ const App: React.FC = () => {
     const renderView = () => {
         switch (view) {
             case 'SYSTEM':
-                return <SystemView currentSystem={currentSystem} ship={ship} onReturnToGalaxy={() => setView('GALAXY')} onDock={handleDock} npcs={npcs} salvage={salvage} target={target} onFire={handleFire} onTargetNext={handleTargetNext} onScoop={handleScoop} projectiles={projectiles} visualEffects={visualEffects} />;
+                return (
+                  <div style={{ position: 'relative', width: '100%', height: '100%', flexGrow: 1 }}>
+                    <SystemView currentSystem={currentSystem} ship={ship} onReturnToGalaxy={() => setView('GALAXY')} onDock={handleDock} canDock={canDock} npcs={npcs} celestials={celestials} salvage={salvage} target={target} onFire={handleFire} onTargetNext={handleTargetNext} onScoop={handleScoop} projectiles={projectiles} visualEffects={visualEffects} shipBody={shipBody} pressedKeys={pressedKeys.current} flightAssist={flightAssist} mouseAim={mouseAim} scoopableSalvage={scoopableSalvage} />
+                    <SystemViewHUD shipBody={shipBody} pressedKeys={pressedKeys.current} target={target} flightAssist={flightAssist} energyPips={ship.energyPips} mouseAim={mouseAim} />
+                  </div>
+                );
             case 'DOCKED':
-                return <DockedView currentSystem={currentSystem} ship={ship} onUndock={() => setView('SYSTEM')} onViewMarketplace={() => setView('MARKETPLACE')} onViewShipyard={() => setView('SHIPYARD')} onViewOutfitting={() => setView('OUTFITTING')} onViewMissionBoard={() => setView('MISSION_BOARD')} />;
+                return <DockedView currentSystem={currentSystem} ship={ship} onUndock={handleUndock} onViewMarketplace={() => setView('MARKETPLACE')} onViewShipyard={() => setView('SHIPYARD')} onViewOutfitting={() => setView('OUTFITTING')} onViewMissionBoard={() => setView('MISSION_BOARD')} />;
             case 'MARKETPLACE':
                 return <MarketplaceView currentSystem={currentSystem} ship={ship} onReturnToStation={() => setView('DOCKED')} />;
             case 'SHIPYARD':
@@ -279,7 +602,7 @@ const App: React.FC = () => {
                 <div className="text-center">
                   <h2 className="font-orbitron text-5xl text-red-500 mb-4">YOU DIED</h2>
                   <p className="text-gray-300">Your journey through the stars has come to an untimely end.</p>
-                  <button onClick={() => window.location.reload()} className="mt-8 bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2 px-4 rounded">Try Again</button>
+                  <button onClick={() => { audioService.playUIClick(); window.location.reload(); }} className="mt-8 bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2 px-4 rounded">Try Again</button>
                 </div>
               </div>;
             case 'GALAXY':
@@ -300,7 +623,7 @@ const App: React.FC = () => {
                               style={{ left: `${(system.x / GALAXY_WIDTH) * 100}%`, top: `${(system.y / GALAXY_HEIGHT) * 100}%`, transform: 'translate(-50%, -50%)' }}
                             >
                               <button
-                                onClick={() => handleSelectSystem(system)}
+                                onClick={() => { audioService.playUIClick(); handleSelectSystem(system); }}
                                 className="flex flex-col items-center group"
                               >
                                 <div className={`w-4 h-4 rounded-full transition-all duration-300 ${isCurrent ? 'bg-green-400 animate-pulse' : (canJump ? 'bg-cyan-400' : 'bg-red-500')} ${isSelected ? 'ring-2 ring-offset-2 ring-offset-black/50 ring-orange-400' : ''}`}></div>

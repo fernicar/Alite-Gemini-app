@@ -1,7 +1,6 @@
 
 import { NPC, StarSystem, Ship, AIState } from '../types';
 import { SHIPS_FOR_SALE } from '../data/ships';
-import { physicsService } from './physicsService';
 
 const PIRATE_SHIP_TYPES = ['Viper Mk I', 'Adder', 'Cobra Mk III'];
 
@@ -17,24 +16,7 @@ class AIService {
     private subscribers: (() => void)[] = [];
 
     constructor() {
-        physicsService.subscribe(() => {
-            const physicsStates = physicsService.getAllObjectStates();
-            let changed = false;
-            this.npcs.forEach(npc => {
-                const state = physicsStates.get(npc.id);
-                if (state) {
-                    if (npc.position.x !== state.position.x || npc.position.y !== state.position.y || npc.angle !== state.angle) {
-                        npc.position = state.position;
-                        npc.velocity = state.velocity;
-                        npc.angle = state.angle;
-                        changed = true;
-                    }
-                }
-            });
-            if (changed) {
-                this.notify();
-            }
-        });
+        // Physics subscription removed as state is now managed in App.tsx
     }
 
     public subscribe(callback: () => void): () => void {
@@ -61,7 +43,6 @@ class AIService {
     }
 
     public clearNpcs() {
-        this.npcs.forEach(npc => physicsService.removeObject(npc.id));
         this.npcs = [];
         this.systemCleared = false;
         this.notify();
@@ -76,7 +57,6 @@ class AIService {
     }
     
     public removeNpc(npcId: string) {
-        physicsService.removeObject(npcId);
         this.npcs = this.npcs.filter(n => n.id !== npcId);
         if (this.npcs.every(n => !n.isHostile)) {
             this.systemCleared = true;
@@ -93,19 +73,12 @@ class AIService {
         const spec = shipSpecData.spec;
         
         const id = `${npcType.toLowerCase()}-${Date.now()}-${Math.random()}`;
-        const position = { x: (Math.random() - 0.5) * 1200, y: (Math.random() - 0.5) * 800 };
-
-        // FIX: Added missing 'id' property to the physics state object.
-        physicsService.registerObject(id, {
-            id: id,
-            position,
-            velocity: { x: 0, y: 0 },
-            angle: 0,
-            mass: spec.mass,
-            maxSpeed: spec.speed / 50, // Scale for game units
-            turnRate: spec.turnRate,
-        });
-
+        const position = { 
+            x: (Math.random() - 0.5) * 8000, 
+            y: (Math.random() - 0.5) * 4000, 
+            z: (Math.random() - 0.5) * 8000 
+        };
+        
         return {
             id: id,
             type: npcType,
@@ -117,93 +90,55 @@ class AIService {
             position,
             isHostile: npcType === 'Pirate',
             aiState: 'PATROLLING',
-            velocity: { x: 0, y: 0 },
+            velocity: { x: 0, y: 0, z: 0 },
             angle: 0,
         };
     };
 
+    private randomInt(min: number, max: number): number {
+        return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+    private randomChoice<T>(arr: readonly T[]): T {
+        return arr[Math.floor(Math.random() * arr.length)];
+    }
+
     public spawnEntities(currentSystem: StarSystem) {
         this.clearNpcs();
         const isAnarchy = currentSystem.government === 'Anarchy';
-        const numPirates = isAnarchy ? Math.floor(Math.random() * 4) + 2 : Math.floor(Math.random() * 2);
+        const numPirates = isAnarchy ? this.randomInt(2, 5) : this.randomInt(0, 2);
+        const numTraders = this.randomInt(1, 3);
+        const numPolice = (currentSystem.government !== 'Anarchy' && currentSystem.government !== 'Feudal') ? this.randomInt(0, 2) : 0;
+
         const newNpcs: NPC[] = [];
+
         for (let i = 0; i < numPirates; i++) {
-            const randomShipType = PIRATE_SHIP_TYPES[Math.floor(Math.random() * PIRATE_SHIP_TYPES.length)];
+            const randomShipType = this.randomChoice(PIRATE_SHIP_TYPES);
             const npc = this.createNpcShip(randomShipType, 'Pirate');
+            if (npc) newNpcs.push(npc);
+        }
+        
+        for (let i = 0; i < numTraders; i++) {
+            const npc = this.createNpcShip('Cobra Mk III', 'Trader');
+            if (npc) newNpcs.push(npc);
+        }
+        
+        for (let i = 0; i < numPolice; i++) {
+            const npc = this.createNpcShip('Viper Mk I', 'Police');
             if (npc) {
+                npc.isHostile = false; // Police are not hostile by default
                 newNpcs.push(npc);
             }
         }
+        
         this.npcs = newNpcs;
-        this.systemCleared = false;
+        this.systemCleared = this.npcs.every(n => !n.isHostile);
         this.notify();
     }
 
     public update(playerShip: Ship): NPCAction[] {
-        const actions: NPCAction[] = [];
-        const updatedNpcs = this.npcs.map(npc => {
-            if (!npc.isHostile) return npc;
-
-            const distToPlayer = Math.sqrt(
-                (npc.position.x - playerShip.position.x) ** 2 + (npc.position.y - playerShip.position.y) ** 2
-            );
-
-            // State transitions
-            let newState = npc.aiState;
-            switch(npc.aiState) {
-                case 'PATROLLING':
-                    if (distToPlayer < 800) newState = 'ATTACKING';
-                    break;
-                case 'ATTACKING':
-                    if (npc.hull < npc.maxHull * 0.2) newState = 'FLEEING';
-                    if (distToPlayer > 1000) newState = 'PATROLLING';
-                    break;
-                case 'FLEEING':
-                    if (distToPlayer > 1200) newState = 'PATROLLING'; // Fled successfully
-                    break;
-            }
-
-            const updatedNpc = { ...npc, aiState: newState };
-
-            // Generate actions based on state
-            switch (updatedNpc.aiState) {
-                case 'ATTACKING':
-                    if (distToPlayer > 400) {
-                        actions.push({ npcId: npc.id, type: 'MOVE_TOWARDS', targetPosition: playerShip.position });
-                    } else {
-                        actions.push({ npcId: npc.id, type: 'ATTACK' });
-                    }
-                    break;
-                case 'FLEEING':
-                    const fleeAngle = Math.atan2(npc.position.y - playerShip.position.y, npc.position.x - playerShip.position.x);
-                    actions.push({ npcId: npc.id, type: 'MOVE_TOWARDS', targetPosition: {
-                        x: npc.position.x + Math.cos(fleeAngle) * 1000,
-                        y: npc.position.y + Math.sin(fleeAngle) * 1000,
-                    }});
-                    break;
-                case 'PATROLLING':
-                default:
-                    // Simple patrol: move randomly
-                    if (Math.random() < 0.01) {
-                         actions.push({ npcId: npc.id, type: 'MOVE_TOWARDS', targetPosition: {
-                            x: npc.position.x + (Math.random() - 0.5) * 500,
-                            y: npc.position.y + (Math.random() - 0.5) * 500,
-                        }});
-                    } else {
-                        actions.push({ npcId: npc.id, type: 'IDLE' });
-                    }
-                    break;
-            }
-            
-            return updatedNpc;
-        });
-
-        if (JSON.stringify(this.npcs) !== JSON.stringify(updatedNpcs)) {
-            this.npcs = updatedNpcs;
-            this.notify();
-        }
-
-        return actions;
+        // This logic is now superseded by the simple AI in App.tsx's game loop.
+        // It is kept here for potential future refactoring but is currently dead code.
+        return [];
     }
 }
 

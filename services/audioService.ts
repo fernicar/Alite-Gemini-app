@@ -1,4 +1,3 @@
-
 // @ts-nocheck
 // Disabling TypeScript check for this file because it uses browser-specific
 // AudioContext APIs that may not be available in all environments.
@@ -6,6 +5,10 @@
 class AudioService {
   private audioContext: AudioContext | null = null;
   private isInitialized = false;
+  
+  // For thruster sound
+  private thrusterOscillator: OscillatorNode | null = null;
+  private thrusterGain: GainNode | null = null;
 
   private init() {
     if (this.isInitialized || typeof window === 'undefined') return;
@@ -47,6 +50,57 @@ class AudioService {
     oscillator.stop(startTime + duration);
   }
 
+  public startThrusterSound() {
+    this.resumeContext();
+    if (!this.audioContext || this.thrusterOscillator) return;
+
+    this.thrusterOscillator = this.audioContext.createOscillator();
+    this.thrusterGain = this.audioContext.createGain();
+
+    this.thrusterOscillator.type = 'sawtooth';
+    this.thrusterOscillator.frequency.setValueAtTime(80, this.audioContext.currentTime); // low idle hum
+
+    this.thrusterGain.gain.setValueAtTime(0, this.audioContext.currentTime); // start silent
+    this.thrusterGain.gain.linearRampToValueAtTime(0.05, this.audioContext.currentTime + 0.1); // fade in
+
+    this.thrusterOscillator.connect(this.thrusterGain);
+    this.thrusterGain.connect(this.audioContext.destination);
+
+    this.thrusterOscillator.start();
+  }
+
+  public stopThrusterSound() {
+    if (!this.audioContext || !this.thrusterOscillator || !this.thrusterGain) return;
+
+    this.thrusterGain.gain.linearRampToValueAtTime(0, this.audioContext.currentTime + 0.2); // fade out
+    this.thrusterOscillator.stop(this.audioContext.currentTime + 0.2);
+
+    this.thrusterOscillator = null;
+    this.thrusterGain = null;
+  }
+
+  public updateThrusterSound(thrust: number) { // thrust is from -1 to 1
+    if (!this.audioContext || !this.thrusterGain || !this.thrusterOscillator) return;
+    
+    let frequency = 80;
+    let volume = 0.05;
+    
+    if (thrust > 0) { // Forward thrust
+      this.thrusterOscillator.type = 'sawtooth';
+      frequency = 80 + (thrust * 120);
+      volume = 0.05 + (thrust * 0.15);
+    } else if (thrust < 0) { // Reverse thrust
+      this.thrusterOscillator.type = 'square';
+      frequency = 60 + (Math.abs(thrust) * 40);
+      volume = 0.05 + (Math.abs(thrust) * 0.1);
+    }
+
+    const now = this.audioContext.currentTime;
+    this.thrusterOscillator.frequency.linearRampToValueAtTime(frequency, now + 0.1);
+    this.thrusterGain.gain.linearRampToValueAtTime(volume, now + 0.1);
+  }
+
+
   public playLaserSound() {
     this.playSound('sine', 880, 0.2, 0.2);
     this.playSound('square', 440, 0.2, 0.1);
@@ -83,13 +137,45 @@ class AudioService {
   }
   
   public playUIClick() {
-      this.playSound('triangle', 600, 0.05, 0.1);
+      this.playSound('triangle', 800, 0.05, 0.1);
+      this.playSound('triangle', 1200, 0.05, 0.05, 0.02);
+  }
+
+  public playPipChangeSound() {
+      this.playSound('triangle', 1200, 0.05, 0.1);
   }
 
   public playGameOverSound() {
     this.playSound('sawtooth', 200, 0.8, 0.5);
     this.playSound('sawtooth', 100, 1.2, 0.5, 0.2);
     this.playSound('sawtooth', 50, 1.6, 0.5, 0.4);
+  }
+
+  public playUndockingSound() {
+    this.playSound('sine', 440, 0.1, 0.2);
+    this.playSound('sine', 660, 0.1, 0.2, 0.1);
+    this.playSound('sine', 880, 0.2, 0.2, 0.2);
+  }
+
+  public playCargoScoopSound() {
+      this.playSound('square', 80, 0.15, 0.4);
+      this.playSound('sawtooth', 50, 0.2, 0.2);
+  }
+  
+  public playBuySound() {
+      this.playSound('square', 500, 0.05, 0.2);
+      this.playSound('square', 700, 0.05, 0.1, 0.02);
+  }
+
+  public playSellSound() {
+      this.playSound('sine', 1046.50, 0.1, 0.2); // C6
+      this.playSound('sine', 1318.51, 0.2, 0.2, 0.1); // E6
+  }
+
+  public playAcceptMissionSound() {
+      this.playSound('sine', 523.25, 0.1, 0.2); // C5
+      this.playSound('sine', 659.25, 0.1, 0.2, 0.1); // E5
+      this.playSound('sine', 783.99, 0.15, 0.2, 0.2); // G5
   }
 
 }

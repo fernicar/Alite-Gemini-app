@@ -37,6 +37,233 @@
       .animate-pulse-blip {
         animation: pulse-blip 1s infinite;
       }
+      @keyframes pulse-star-glow {
+        0%, 100% { transform: scale(1); box-shadow: 0 0 50px 15px rgba(250, 204, 21, 0.5), 0 0 80px 30px rgba(252, 165, 3, 0.3), inset 0 0 20px 5px rgba(255, 235, 150, 0.8); }
+        50% { transform: scale(1.05); box-shadow: 0 0 65px 20px rgba(250, 204, 21, 0.6), 0 0 110px 45px rgba(252, 165, 3, 0.4), inset 0 0 25px 8px rgba(255, 245, 180, 1); }
+      }
+      .animate-pulse-star-glow {
+        animation: pulse-star-glow 4s ease-in-out infinite;
+      }
+
+      @keyframes solar-flare {
+        0% { transform: scaleY(0.2); opacity: 0; }
+        10% { transform: scaleY(1); opacity: 0.8; }
+        80% { transform: scaleY(1.5); opacity: 0.5; }
+        100% { transform: scaleY(2); opacity: 0; }
+      }
+      .animate-solar-flare {
+        animation: solar-flare 6s ease-out infinite;
+      }
+
+      @keyframes pulse-gentle {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.9; transform: scale(1.02); }
+      }
+      .animate-pulse-gentle {
+        animation: pulse-gentle 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+      }
+
+      @keyframes hud-element-pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.6; }
+      }
+      .animate-hud-pulse {
+        animation: hud-element-pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+      }
+
+      @keyframes damage-flash-red {
+        0%, 100% { box-shadow: inset 0 0 0 0 rgba(255, 0, 0, 0); }
+        50% { box-shadow: inset 0 0 100vmax 50vmax rgba(255, 0, 0, 0.3); }
+      }
+      .animate-hull-damage {
+        animation: damage-flash-red 0.4s ease-out;
+      }
+
+      @keyframes damage-flash-cyan {
+        0%, 100% { box-shadow: inset 0 0 0 0 rgba(0, 255, 255, 0); }
+        50% { box-shadow: inset 0 0 80px 20px rgba(0, 255, 255, 0.5); }
+      }
+      .animate-shield-damage {
+        animation: damage-flash-cyan 0.3s ease-out;
+      }
+
+      .critical-vignette {
+        box-shadow: inset 0 0 15vmax 5vmax rgba(180, 0, 0, 0.35);
+      }
+
+      @keyframes critical-pulse {
+          0%, 100% { opacity: 0.8; }
+          50% { opacity: 0.5; }
+      }
+      .animate-critical-pulse {
+          animation: critical-pulse 2s ease-in-out infinite;
+      }
+
+      /* HUD styling */
+      .hud {
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          pointer-events: none;
+          color: #00e5ff;
+          font-family: 'Orbitron', sans-serif;
+          text-shadow: 0 0 3px rgba(0, 229, 255, 0.7), 0 0 7px rgba(0, 229, 255, 0.5);
+      }
+
+      .hud-velocity {
+          position: absolute;
+          bottom: 5%;
+          left: 5%;
+          font-size: 28px;
+          background: rgba(0, 20, 30, 0.5);
+          padding: 5px 15px;
+          border: 1px solid #005f6b;
+          border-radius: 5px;
+      }
+      
+      .hud-flight-assist {
+          position: absolute;
+          bottom: 12%;
+          left: 5%;
+          font-size: 16px;
+          background: rgba(0, 20, 30, 0.5);
+          padding: 5px 10px;
+          border-radius: 5px;
+          border: 1px solid #005f6b;
+      }
+
+      .hud-mouse-aim {
+          position: absolute;
+          bottom: 17%;
+          left: 5%;
+          font-size: 16px;
+          background: rgba(0, 20, 30, 0.5);
+          padding: 5px 10px;
+          border-radius: 5px;
+          border: 1px solid #005f6b;
+      }
+
+      .flight-cursor {
+        position: fixed;
+        width: 30px;
+        height: 30px;
+        border: 2px solid #ff8c00;
+        border-radius: 50%;
+        transform: translate(-50%, -50%);
+        pointer-events: none;
+        transition: border-color 0.2s;
+        z-index: 100;
+      }
+      .flight-cursor::before, .flight-cursor::after {
+        content: '';
+        position: absolute;
+        background-color: #ff8c00;
+        transition: background-color 0.2s;
+      }
+      .flight-cursor::before {
+        width: 2px;
+        height: 10px;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+      }
+      .flight-cursor::after {
+        width: 10px;
+        height: 2px;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+      }
+
+      .hud-compass {
+          position: absolute;
+          top: 3%;
+          left: 50%;
+          transform: translateX(-50%);
+          width: 300px;
+          height: 40px;
+          background: rgba(0, 20, 30, 0.5);
+          border: 1px solid #005f6b;
+          border-radius: 5px;
+          overflow: hidden;
+          box-shadow: inset 0 0 10px rgba(0, 229, 255, 0.2);
+      }
+
+      .hud-compass-tape {
+          position: absolute;
+          top: 25px;
+          left: 50%;
+          width: 100%;
+          height: 15px;
+          background-image:
+            repeating-linear-gradient(to right, #00e5ff, #00e5ff 1px, transparent 1px, transparent 10px),
+            repeating-linear-gradient(to right, #00e5ff, #00e5ff 1px, transparent 1px, transparent 50px);
+          background-size: 10px 8px, 50px 12px;
+          background-repeat: repeat-x, repeat-x;
+          background-position: center bottom, center bottom;
+      }
+
+      .hud-compass-label {
+          position: absolute;
+          top: 5px;
+          color: #00e5ff;
+          font-size: 12px;
+          width: 40px;
+          text-align: center;
+      }
+      
+      .hud-compass-marker {
+          position: absolute;
+          left: 50%;
+          top: 0;
+          width: 3px;
+          height: 100%;
+          background: #ff8c00;
+          transform: translateX(-50%);
+          box-shadow: 0 0 5px #ff8c00, 0 0 10px #ff8c00;
+          border-radius: 2px;
+      }
+
+      .hud-pips {
+          position: absolute;
+          bottom: 5%;
+          left: 50%;
+          transform: translateX(-50%);
+          display: flex;
+          gap: 20px;
+          background: rgba(0, 20, 30, 0.5);
+          padding: 8px 15px;
+          border: 1px solid #005f6b;
+          border-radius: 5px;
+      }
+      .pip-group {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 4px;
+      }
+      .pip-group span {
+          font-size: 10px;
+          text-transform: uppercase;
+          letter-spacing: 1px;
+      }
+      .pip-container {
+        display: flex;
+        gap: 3px;
+      }
+      .pip {
+          width: 8px;
+          height: 14px;
+          background-color: #005f6b;
+          border: 1px solid #00e5ff;
+          opacity: 0.5;
+      }
+      .pip.active {
+          background-color: #00e5ff;
+          box-shadow: 0 0 5px #00e5ff;
+          opacity: 1;
+      }
     </style>
   <script type="importmap">
 {
@@ -49,7 +276,11 @@
     "path": "https://aistudiocdn.com/path@^0.12.7",
     "vite": "https://aistudiocdn.com/vite@^7.1.12",
     "@google/genai": "https://aistudiocdn.com/@google/genai@^1.28.0",
-    "url": "https://aistudiocdn.com/url@^0.11.4"
+    "url": "https://aistudiocdn.com/url@^0.11.4",
+    "three": "https://aistudiocdn.com/three@0.166.1",
+    "three/": "https://aistudiocdn.com/three@0.166.1/",
+    "@types/three": "https://aistudiocdn.com/@types/three@0.166.0",
+    "cannon-es": "https://aistudiocdn.com/cannon-es@0.20.0"
   }
 }
 </script>

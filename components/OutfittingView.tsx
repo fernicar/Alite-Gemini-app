@@ -1,4 +1,5 @@
 
+
 import React, { useState, useMemo, useEffect } from 'react';
 import { Ship, StarSystem, ShipSlot, EquipmentItem } from '../types';
 import { EQUIPMENT_LIST } from '../data/equipment';
@@ -43,6 +44,7 @@ const OutfittingView: React.FC<{
     };
 
     const groupedSlots = useMemo(() => {
+        // FIX: Explicitly type the initial value for the reduce accumulator. The previous use of a generic on `reduce` was causing a TypeScript error.
         return ship.slots.reduce((acc, slot) => {
             if (!acc[slot.type]) {
                 acc[slot.type] = [];

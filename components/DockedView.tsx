@@ -2,6 +2,7 @@ import React from 'react';
 import { Ship, StarSystem } from '../types';
 import { ShipStatusPanel } from './ShipStatusPanel';
 import { MarketIcon, ShipyardIcon, OutfittingIcon, MissionIcon } from './icons';
+import { audioService } from '../services/audioService';
 
 const DockedView: React.FC<{
   currentSystem: StarSystem;
@@ -31,32 +32,32 @@ const DockedView: React.FC<{
             <p className="text-gray-300 mb-8">You are cleared for shore leave. All station services are at your disposal.</p>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 max-w-4xl mx-auto">
               <button 
-                onClick={onViewMarketplace}
+                onClick={() => { audioService.playUIClick(); onViewMarketplace(); }}
                 className="bg-green-600 hover:bg-green-500 text-white font-bold py-3 px-6 rounded transition duration-200 flex items-center justify-center gap-2">
                 <MarketIcon className="w-5 h-5" />
                 Marketplace
               </button>
               <button 
-                onClick={onViewShipyard}
+                onClick={() => { audioService.playUIClick(); onViewShipyard(); }}
                 className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-6 rounded transition duration-200 flex items-center justify-center gap-2">
                 <ShipyardIcon className="w-5 h-5" />
                 Shipyard
               </button>
               <button 
-                onClick={onViewOutfitting}
+                onClick={() => { audioService.playUIClick(); onViewOutfitting(); }}
                 className="bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 px-6 rounded transition duration-200 flex items-center justify-center gap-2">
                 <OutfittingIcon className="w-5 h-5" />
                 Outfitting
               </button>
                <button 
-                onClick={onViewMissionBoard}
+                onClick={() => { audioService.playUIClick(); onViewMissionBoard(); }}
                 className="bg-yellow-600 hover:bg-yellow-500 text-white font-bold py-3 px-6 rounded transition duration-200 flex items-center justify-center gap-2">
                 <MissionIcon className="w-5 h-5" />
                 Mission Board
               </button>
             </div>
             <button
-                onClick={onUndock}
+                onClick={() => { audioService.playUIClick(); onUndock(); }}
                 className="mt-8 bg-orange-600 hover:bg-orange-500 text-white font-bold py-3 px-12 rounded transition duration-200"
               >
                 Undock

@@ -1,9 +1,9 @@
 
-import { Ship, ShipForSale, ShipSlot, EquipmentItem, ShipSpec } from '../types';
-import { calculateShipStats } from './shipFactory';
-import { SHIPS_FOR_SALE } from '../data/ships';
+
+import { Ship, ShipForSale, ShipSlot, EquipmentItem } from '../types';
+import { calculateShipStats, createShipFromSpec } from './shipService';
 import { playerShipService } from './playerShipService';
-import { createShipFromSpec } from './shipFactory';
+import { SHIPS_FOR_SALE } from '../data/ships';
 
 class ShipyardService {
     public purchaseShip(shipToBuy: ShipForSale): { success: boolean, error?: string } {
@@ -20,7 +20,7 @@ class ShipyardService {
         
         // Carry over non-ship-specific properties like position
         newShip.position = currentShip.position;
-        newShip.velocity = { x: 0, y: 0 };
+        newShip.velocity = { x: 0, y: 0, z: 0 };
         newShip.angle = 0;
 
         playerShipService.setShip(newShip);
@@ -44,7 +44,7 @@ class ShipyardService {
             return s;
         });
 
-        const shipSpec = SHIPS_FOR_SALE.find(s => s.type === currentShip.type)?.spec;
+        const shipSpec = this.getShipSpec(currentShip.type);
         if (!shipSpec) {
             return { success: false, error: "Could not find current ship specifications." };
         }
@@ -82,8 +82,8 @@ class ShipyardService {
             }
             return s;
         });
-
-        const shipSpec = SHIPS_FOR_SALE.find(s => s.type === currentShip.type)?.spec;
+        
+        const shipSpec = this.getShipSpec(currentShip.type);
         if (!shipSpec) {
             return { success: false, error: "Could not find current ship specifications." };
         }
@@ -104,6 +104,11 @@ class ShipyardService {
         playerShipService.setShip(newShip);
         
         return { success: true };
+    }
+
+    private getShipSpec(type: string) {
+        const saleInfo = SHIPS_FOR_SALE.find((s: ShipForSale) => s.type === type);
+        return saleInfo?.spec;
     }
 }
 

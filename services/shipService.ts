@@ -1,4 +1,5 @@
 
+
 import { Ship, ShipSlot, ShipSpec, EquipmentItem } from '../types';
 import { SHIPS_FOR_SALE } from '../data/ships';
 import { EQUIPMENT_LIST } from '../data/equipment';
@@ -92,9 +93,10 @@ export const createShipFromSpec = (type: string, name: string, credits: number):
         credits: credits,
         basePrice: spec.basePrice,
         slots: equippedSlots,
-        position: { x: 0, y: 0 },
-        velocity: { x: 0, y: 0 },
+        position: { x: 0, y: 0, z: 0 },
+        velocity: { x: 0, y: 0, z: 0 },
         angle: 0,
+        energyPips: { sys: 2, eng: 2, wep: 2 },
     };
 }
 

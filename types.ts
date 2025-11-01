@@ -95,12 +95,22 @@ export interface NPC {
   maxHull: number;
   shields: number;
   maxShields: number;
-  position: { x: number; y: number };
+  position: { x: number; y: number; z: number };
   isHostile: boolean;
   aiState: AIState;
-  velocity: { x: number; y: number };
+  velocity: { x: number; y: number; z: number };
   angle: number;
+  targetId?: string;
 }
+
+export interface Celestial {
+    id: string;
+    type: 'Star' | 'Planet' | 'Station';
+    name: string;
+    position: { x: number; y: number; z: number };
+    radius: number;
+}
+
 
 export interface Ship {
   name: string;
@@ -118,16 +128,17 @@ export interface Ship {
   energy: number;
   maxEnergy: number;
   slots: ShipSlot[];
-  position: { x: number; y: number };
-  velocity: { x: number; y: number };
+  position: { x: number; y: number; z: number };
+  velocity: { x: number; y: number; z: number };
   angle: number; // degrees
   id: string;
+  energyPips: { sys: number; eng: number; wep: number };
 }
 
 export interface Salvage {
   id: string;
   contents: CargoItem;
-  position: { x: number; y: number };
+  position: { x: number; y: number; z: number };
 }
 
 export interface Mission {
@@ -157,11 +168,12 @@ export interface PhysicsState {
     turnRate: number; // degrees per second
 }
 
+// FIX: Update Projectile type to match its implementation in projectileService.ts
 export interface Projectile {
   id: string;
   ownerId: string;
-  position: { x: number; y: number };
-  velocity: { x: number; y: number };
+  position: { x: number; y: number; z: number };
+  velocity: { x: number; y: number; z: number };
   angle: number;
   type: 'laser';
   damage: number;
@@ -170,10 +182,11 @@ export interface Projectile {
 
 export interface VisualEffect {
   id: string;
-  type: 'explosion';
-  position: { x: number; y: number };
+  type: 'explosion' | 'shield_impact' | 'hull_impact';
+  position: { x: number; y: number; z: number };
   size: number;
   maxSize: number;
   remainingLife: number; // in ms
   maxLife: number; // in ms
+  angle?: number;
 }

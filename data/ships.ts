@@ -13,7 +13,7 @@ export const SHIPS_FOR_SALE: ShipForSale[] = [
             cargoCapacity: 4,
             maxEnergy: 12,
             speed: 340,
-            turnRate: 4,
+            turnRate: 74,
             jumpRange: 8,
             mass: 50,
             slots: [
@@ -41,7 +41,7 @@ export const SHIPS_FOR_SALE: ShipForSale[] = [
             cargoCapacity: 20,
             maxEnergy: 10,
             speed: 280,
-            turnRate: 3,
+            turnRate: 80,
             jumpRange: 10,
             mass: 180,
             slots: [
@@ -71,7 +71,7 @@ export const SHIPS_FOR_SALE: ShipForSale[] = [
             cargoCapacity: 22,
             maxEnergy: 9,
             speed: 300,
-            turnRate: 2.5,
+            turnRate: 40,
             jumpRange: 12,
             mass: 120,
             slots: [
@@ -100,7 +100,7 @@ export const SHIPS_FOR_SALE: ShipForSale[] = [
             cargoCapacity: 200,
             maxEnergy: 20,
             speed: 200,
-            turnRate: 1.5,
+            turnRate: 30,
             jumpRange: 15,
             mass: 350,
             slots: [

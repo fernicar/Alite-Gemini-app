@@ -1,39 +1,15 @@
 
-import { Ship, PhysicsState } from '../types';
-import { createInitialShip } from './shipFactory';
-import { physicsService } from './physicsService';
-import { SHIPS_FOR_SALE } from '../data/ships';
+
+import { Ship } from '../types';
+import { createInitialShip } from './shipService';
+import { physicsService3D } from './physicsService3D';
 
 class PlayerShipService {
     private ship: Ship = createInitialShip();
     private subscribers: (() => void)[] = [];
 
     constructor() {
-        const shipSpec = SHIPS_FOR_SALE.find(s => s.type === this.ship.type)?.spec;
-        if (shipSpec) {
-             // FIX: The second argument to registerObject requires the 'id' property.
-             physicsService.registerObject(this.ship.id, {
-                id: this.ship.id,
-                position: this.ship.position,
-                velocity: this.ship.velocity,
-                angle: this.ship.angle,
-                mass: shipSpec.mass,
-                maxSpeed: shipSpec.speed / 50, // Scale for game units
-                turnRate: shipSpec.turnRate,
-            });
-        }
-
-        physicsService.subscribe(() => {
-            const state = physicsService.getObjectState(this.ship.id);
-            if (state) {
-                if(this.ship.position.x !== state.position.x || this.ship.position.y !== state.position.y || this.ship.angle !== state.angle) {
-                    this.ship.position = state.position;
-                    this.ship.velocity = state.velocity;
-                    this.ship.angle = state.angle;
-                    this.notify();
-                }
-            }
-        });
+        this.setShip(this.ship); // Initialize with physics properties
     }
 
     public subscribe(callback: () => void): () => void {
@@ -52,83 +28,101 @@ class PlayerShipService {
     }
 
     public setShip(newShip: Ship) {
-        physicsService.removeObject(this.ship.id);
-        const shipSpec = SHIPS_FOR_SALE.find(s => s.type === newShip.type)?.spec;
-        if (shipSpec) {
-            // FIX: The second argument to registerObject requires the 'id' property.
-            physicsService.registerObject(newShip.id, {
-                id: newShip.id,
-                position: newShip.position,
-                velocity: newShip.velocity,
-                angle: newShip.angle,
-                mass: shipSpec.mass,
-                maxSpeed: shipSpec.speed / 50,
-                turnRate: shipSpec.turnRate,
-            });
+        if (this.ship && this.ship.id) {
+            const oldBody = physicsService3D.getShipBody();
+            if (oldBody) {
+                physicsService3D.removeBody(oldBody);
+            }
         }
+        
+        physicsService3D.initializeShip(newShip);
+
         this.ship = newShip;
+        this.updatePhysicsFromPips();
         this.notify();
     }
 
-    public handlePlayerInput(pressedKeys: Set<string>) {
-        let turn = 0;
-        let thrust = 0;
-
-        if (pressedKeys.has('a') || pressedKeys.has('arrowleft')) turn = -1;
-        if (pressedKeys.has('d') || pressedKeys.has('arrowright')) turn = 1;
-        
-        if (pressedKeys.has('w') || pressedKeys.has('arrowup')) {
-            thrust = 1;
-        }
-        if (pressedKeys.has('s') || pressedKeys.has('arrowdown')) {
-            thrust = -0.5; // less reverse thrust
-        }
-
-        physicsService.applyTurn(this.ship.id, turn);
-        physicsService.applyThrust(this.ship.id, thrust);
+    private updatePhysicsFromPips() {
+        if (!this.ship) return;
+        const { eng } = this.ship.energyPips;
+        // Pips effect: 0 pips = 75%, 2 pips = 100%, 4 pips = 125%
+        const multiplier = 0.75 + (eng / 4) * 0.5;
+        physicsService3D.updateShipPerformance({ topSpeedMultiplier: multiplier, turnRateMultiplier: multiplier });
     }
 
-    public applyDamage(amount: number) {
+    public setEnergyPips(pips: { sys: number; eng: number; wep: number }) {
+        if (this.ship.energyPips.sys !== pips.sys || this.ship.energyPips.eng !== pips.eng || this.ship.energyPips.wep !== pips.wep) {
+            this.ship.energyPips = pips;
+            this.updatePhysicsFromPips();
+            this.notify();
+        }
+    }
+
+    public handlePlayerInput(pressedKeys: Set<string>) {
+        // This is handled by playerController3D now
+    }
+
+    public applyDamage(amount: number): { type: 'shield' | 'hull', newHull: number, newShields: number } {
         let newShields = this.ship.shields;
         let newHull = this.ship.hull;
+        let damageType: 'shield' | 'hull' = 'hull';
 
-        const tempShields = newShields - amount;
-        if (tempShields < 0) {
-            newHull += tempShields;
-            newShields = 0;
+        if (newShields > 0) {
+            damageType = 'shield';
+            const tempShields = newShields - amount;
+            if (tempShields < 0) {
+                newHull += tempShields; // spillover damage to hull
+                newShields = 0;
+            } else {
+                newShields = tempShields;
+            }
         } else {
-            newShields = tempShields;
+            damageType = 'hull';
+            newHull -= amount;
         }
 
-        this.setShip({
+        this.ship = {
             ...this.ship,
-            shields: newShields,
-            hull: newHull,
-        });
+            shields: Math.max(0, newShields),
+            hull: Math.max(0, newHull),
+        };
+        this.notify();
+        
+        return { type: damageType, newHull: this.ship.hull, newShields: this.ship.shields };
     }
 
-    public rechargeSystems() {
+    public rechargeSystems(deltaTime: number) {
+        const { sys, wep } = this.ship.energyPips;
         let { shields, energy } = this.ship;
-        
-        // --- Shield and Energy Recharge ---
-        shields = Math.min(this.ship.maxShields, shields + (this.ship.maxShields / 200));
-        energy = Math.min(this.ship.maxEnergy, energy + (this.ship.maxEnergy / 100));
 
-        if (shields !== this.ship.shields || energy !== this.ship.energy) {
-            this.ship = {
-                ...this.ship,
-                shields,
-                energy,
-            };
+        // Do nothing if maxed out and no changes needed
+        if (shields >= this.ship.maxShields && energy >= this.ship.maxEnergy) {
+            return;
+        }
+        
+        // SYS pips recharge shields, WEP pips recharge weapon capacitor (energy)
+        const baseShieldRecharge = this.ship.maxShields / 60; // Full recharge in 60s at 2 pips
+        const baseEnergyRecharge = this.ship.maxEnergy / 15; // Full recharge in 15s at 2 pips
+
+        const shieldRechargeRate = (sys / 2) * baseShieldRecharge;
+        const energyRechargeRate = (wep / 2) * baseEnergyRecharge;
+
+        const newShields = Math.min(this.ship.maxShields, shields + shieldRechargeRate * deltaTime);
+        const newEnergy = Math.min(this.ship.maxEnergy, energy + energyRechargeRate * deltaTime);
+
+        if (newShields !== shields || newEnergy !== energy) {
+            this.ship.shields = newShields;
+            this.ship.energy = newEnergy;
             this.notify();
         }
     }
 
     public useEnergy(amount: number) {
-        this.setShip({
+        this.ship = {
             ...this.ship,
-            energy: this.ship.energy - amount
-        });
+            energy: Math.max(0, this.ship.energy - amount)
+        };
+        this.notify();
     }
 }
 
