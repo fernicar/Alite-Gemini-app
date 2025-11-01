@@ -1,6 +1,6 @@
 
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { Ship, StarSystem, NPC, Salvage, CargoItem, ShipSlot, Mission, EquipmentItem, ShipSpec } from './types';
+import { Ship, StarSystem, NPC, Salvage, CargoItem, ShipSlot, Mission, EquipmentItem, ShipSpec, Projectile, VisualEffect } from './types';
 import { generateSystemDescription } from './services/geminiService';
 import { getGalaxy, GALAXY_WIDTH, GALAXY_HEIGHT } from './services/galaxyService';
 import { JumpIcon } from './components/icons';
@@ -18,6 +18,9 @@ import { audioService } from './services/audioService';
 import { aiService } from './services/aiService';
 import { combatCoordinator } from './services/combatCoordinator';
 import { playerShipService } from './services/playerShipService';
+import { physicsService } from './services/physicsService';
+import { projectileService } from './services/projectileService';
+import { effectsService } from './services/effectsService';
 
 
 const GALAXY_MAP = getGalaxy();
@@ -111,11 +114,17 @@ const App: React.FC = () => {
         const unsubAi = aiService.subscribe(reRender);
         const unsubCombat = combatCoordinator.subscribe(reRender);
         const unsubPlayerShip = playerShipService.subscribe(reRender);
+        const unsubPhysics = physicsService.subscribe(reRender);
+        const unsubProjectiles = projectileService.subscribe(reRender);
+        const unsubEffects = effectsService.subscribe(reRender);
 
         return () => {
             unsubAi();
             unsubCombat();
             unsubPlayerShip();
+            unsubPhysics();
+            unsubProjectiles();
+            unsubEffects();
         }
     }, []);
 
@@ -123,6 +132,9 @@ const App: React.FC = () => {
     const npcs = useMemo(() => aiService.getNpcs(), [_, aiService]);
     const target = useMemo(() => combatCoordinator.getTarget(), [_, combatCoordinator]);
     const salvage = useMemo(() => combatCoordinator.getSalvage(), [_, combatCoordinator]);
+    const projectiles = useMemo(() => projectileService.getProjectiles(), [_, projectileService]);
+    const visualEffects = useMemo(() => effectsService.getEffects(), [_, effectsService]);
+
 
     const handleSelectSystem = useCallback((system: StarSystem) => {
         setSelectedSystem(system);
@@ -148,7 +160,10 @@ const App: React.FC = () => {
         if (!selectedSystem || !currentSystem || currentShip.fuel < jumpDistance) return;
         
         audioService.playJumpSound();
-        playerShipService.setShip({ ...currentShip, fuel: currentShip.fuel - jumpDistance, position: {x:0, y:0}, velocity: {x:0, y:0} });
+        // Reset position and velocity after jump
+        physicsService.updateObjectState(currentShip.id, { position: {x: 0, y: 0}, velocity: {x: 0, y: 0}});
+        playerShipService.setShip({ ...currentShip, fuel: currentShip.fuel - jumpDistance });
+
         setCurrentSystem(selectedSystem);
         setDetailedDescription('');
         aiService.clearNpcs();
@@ -179,13 +194,25 @@ const App: React.FC = () => {
         
         const gameLoop = setInterval(() => {
             const currentShip = playerShipService.getShip();
-            // AI decides what to do
-            const actions = aiService.update(currentShip);
-            // Combat coordinator executes actions and updates world state
-            combatCoordinator.update(actions);
+            const allShips = [currentShip, ...aiService.getNpcs()];
+            const deltaTime = 50; // ms
             
-            const damageToPlayer = combatCoordinator.getAndClearDamageToPlayer();
-            playerShipService.updateShip(pressedKeys.current, damageToPlayer);
+            // 1. Handle inputs (player and AI) and convert to physics intentions
+            playerShipService.handlePlayerInput(pressedKeys.current);
+            const npcActions = aiService.update(currentShip);
+            combatCoordinator.handleNpcActions(npcActions);
+            
+            // 2. Step the physics simulation
+            physicsService.update(deltaTime / 1000); // physics service expects seconds
+
+            // 3. Update projectiles and check for hits
+            projectileService.update(deltaTime, allShips);
+
+            // 4. Update visual effects
+            effectsService.update(deltaTime);
+            
+            // 5. Update ship systems (energy, shields)
+            playerShipService.rechargeSystems();
 
         }, 50); // 20 FPS game loop
 
@@ -202,17 +229,7 @@ const App: React.FC = () => {
 
     const handleFire = () => {
         if (!target) return;
-        const { targetDestroyed } = combatCoordinator.handlePlayerAttack();
-    
-        if (targetDestroyed) {
-            audioService.playExplosionSound();
-            if (activeMission && activeMission.type === 'Bounty' && activeMission.status === 'InProgress') {
-                if (target.type === activeMission.targetNPC?.type && currentSystem.id === activeMission.systemId) {
-                    setActiveMission(prev => prev ? ({ ...prev, status: 'Completed' }) : null);
-                    alert(`Target ${activeMission.title} destroyed! Return to a station in this system to claim your reward.`);
-                }
-            }
-        }
+        combatCoordinator.handlePlayerAttack();
     };
 
     const handleTargetNext = () => {
@@ -246,7 +263,7 @@ const App: React.FC = () => {
     const renderView = () => {
         switch (view) {
             case 'SYSTEM':
-                return <SystemView currentSystem={currentSystem} ship={ship} onReturnToGalaxy={() => setView('GALAXY')} onDock={handleDock} npcs={npcs} salvage={salvage} target={target} onFire={handleFire} onTargetNext={handleTargetNext} onScoop={handleScoop} />;
+                return <SystemView currentSystem={currentSystem} ship={ship} onReturnToGalaxy={() => setView('GALAXY')} onDock={handleDock} npcs={npcs} salvage={salvage} target={target} onFire={handleFire} onTargetNext={handleTargetNext} onScoop={handleScoop} projectiles={projectiles} visualEffects={visualEffects} />;
             case 'DOCKED':
                 return <DockedView currentSystem={currentSystem} ship={ship} onUndock={() => setView('SYSTEM')} onViewMarketplace={() => setView('MARKETPLACE')} onViewShipyard={() => setView('SHIPYARD')} onViewOutfitting={() => setView('OUTFITTING')} onViewMissionBoard={() => setView('MISSION_BOARD')} />;
             case 'MARKETPLACE':

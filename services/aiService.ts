@@ -1,5 +1,7 @@
+
 import { NPC, StarSystem, Ship, AIState } from '../types';
 import { SHIPS_FOR_SALE } from '../data/ships';
+import { physicsService } from './physicsService';
 
 const PIRATE_SHIP_TYPES = ['Viper Mk I', 'Adder', 'Cobra Mk III'];
 
@@ -13,6 +15,27 @@ class AIService {
     private npcs: NPC[] = [];
     private systemCleared: boolean = false;
     private subscribers: (() => void)[] = [];
+
+    constructor() {
+        physicsService.subscribe(() => {
+            const physicsStates = physicsService.getAllObjectStates();
+            let changed = false;
+            this.npcs.forEach(npc => {
+                const state = physicsStates.get(npc.id);
+                if (state) {
+                    if (npc.position.x !== state.position.x || npc.position.y !== state.position.y || npc.angle !== state.angle) {
+                        npc.position = state.position;
+                        npc.velocity = state.velocity;
+                        npc.angle = state.angle;
+                        changed = true;
+                    }
+                }
+            });
+            if (changed) {
+                this.notify();
+            }
+        });
+    }
 
     public subscribe(callback: () => void): () => void {
         this.subscribers.push(callback);
@@ -38,6 +61,7 @@ class AIService {
     }
 
     public clearNpcs() {
+        this.npcs.forEach(npc => physicsService.removeObject(npc.id));
         this.npcs = [];
         this.systemCleared = false;
         this.notify();
@@ -52,6 +76,7 @@ class AIService {
     }
     
     public removeNpc(npcId: string) {
+        physicsService.removeObject(npcId);
         this.npcs = this.npcs.filter(n => n.id !== npcId);
         if (this.npcs.every(n => !n.isHostile)) {
             this.systemCleared = true;
@@ -67,21 +92,38 @@ class AIService {
         }
         const spec = shipSpecData.spec;
         
+        const id = `${npcType.toLowerCase()}-${Date.now()}-${Math.random()}`;
+        const position = { x: (Math.random() - 0.5) * 1200, y: (Math.random() - 0.5) * 800 };
+
+        // FIX: Added missing 'id' property to the physics state object.
+        physicsService.registerObject(id, {
+            id: id,
+            position,
+            velocity: { x: 0, y: 0 },
+            angle: 0,
+            mass: spec.mass,
+            maxSpeed: spec.speed / 50, // Scale for game units
+            turnRate: spec.turnRate,
+        });
+
         return {
-            id: `${npcType.toLowerCase()}-${Date.now()}-${Math.random()}`,
+            id: id,
             type: npcType,
             shipType: shipType,
             hull: spec.hull,
             maxHull: spec.hull,
             shields: spec.shields,
             maxShields: spec.shields,
-            position: { x: (Math.random() - 0.5) * 1200, y: (Math.random() - 0.5) * 800 },
+            position,
             isHostile: npcType === 'Pirate',
             aiState: 'PATROLLING',
+            velocity: { x: 0, y: 0 },
+            angle: 0,
         };
     };
 
     public spawnEntities(currentSystem: StarSystem) {
+        this.clearNpcs();
         const isAnarchy = currentSystem.government === 'Anarchy';
         const numPirates = isAnarchy ? Math.floor(Math.random() * 4) + 2 : Math.floor(Math.random() * 2);
         const newNpcs: NPC[] = [];

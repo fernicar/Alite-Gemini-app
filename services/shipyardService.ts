@@ -1,8 +1,9 @@
 
 import { Ship, ShipForSale, ShipSlot, EquipmentItem, ShipSpec } from '../types';
-import { calculateShipStats, createShipFromSpec } from './shipService';
+import { calculateShipStats } from './shipFactory';
 import { SHIPS_FOR_SALE } from '../data/ships';
 import { playerShipService } from './playerShipService';
+import { createShipFromSpec } from './shipFactory';
 
 class ShipyardService {
     public purchaseShip(shipToBuy: ShipForSale): { success: boolean, error?: string } {

@@ -1,6 +1,6 @@
 
 import React, { useMemo } from 'react';
-import { Ship, StarSystem, NPC, Salvage } from '../types';
+import { Ship, StarSystem, NPC, Salvage, Projectile, VisualEffect } from '../types';
 import { ShipStatusPanel } from './ShipStatusPanel';
 import { StationIcon, EnemyIcon, FireIcon, SalvageIcon, PlayerShipIcon } from './icons';
 import { TargetInfoPanel } from './TargetInfoPanel';
@@ -16,7 +16,9 @@ const SystemView: React.FC<{
   onFire: () => void;
   onTargetNext: () => void;
   onScoop: (salvageId: string) => void;
-}> = ({ currentSystem, ship, onReturnToGalaxy, onDock, npcs, salvage, target, onFire, onTargetNext, onScoop }) => {
+  projectiles: Projectile[];
+  visualEffects: VisualEffect[];
+}> = ({ currentSystem, ship, onReturnToGalaxy, onDock, npcs, salvage, target, onFire, onTargetNext, onScoop, projectiles, visualEffects }) => {
   const SCOOP_RANGE = 100; // pixels, increased for better UX
   const HOSTILE_PROXIMITY_RANGE = 1500; // Range for detecting hostiles
 
@@ -162,6 +164,38 @@ const SystemView: React.FC<{
                 <div className="absolute -top-2 -left-2 w-9 h-9 border border-yellow-400 rounded-full animate-pulse"></div>
               )}
             </div>
+          ))}
+
+          {/* Projectiles */}
+          {projectiles.map(proj => (
+              <div key={proj.id} 
+                   className="absolute bg-cyan-300 rounded-sm"
+                   style={{
+                       left: '50%',
+                       top: '50%',
+                       width: '12px',
+                       height: '3px',
+                       transform: `translate(-50%, -50%) translate(${proj.position.x - ship.position.x}px, ${proj.position.y - ship.position.y}px) rotate(${proj.angle}deg)`,
+                       boxShadow: '0 0 5px #38bdf8',
+                   }}
+              />
+          ))}
+
+          {/* Visual Effects */}
+          {visualEffects.map(effect => (
+              <div key={effect.id}
+                   className="absolute bg-yellow-400 rounded-full"
+                   style={{
+                       left: '50%',
+                       top: '50%',
+                       width: `${effect.size}px`,
+                       height: `${effect.size}px`,
+                       opacity: effect.remainingLife / effect.maxLife,
+                       transform: `translate(-50%, -50%) translate(${effect.position.x - ship.position.x}px, ${effect.position.y - ship.position.y}px)`,
+                       boxShadow: '0 0 20px yellow',
+                       transition: 'width 0.05s ease-out, height 0.05s ease-out, opacity 0.05s ease-out',
+                   }}
+              />
           ))}
         </div>
       </section>

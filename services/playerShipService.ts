@@ -1,15 +1,40 @@
 
-import { Ship } from '../types';
-import { createInitialShip } from './shipService';
-
-const THRUST = 0.1;
-const TURN_RATE = 3;
-const MAX_VELOCITY = 5;
-const DRAG = 0.99;
+import { Ship, PhysicsState } from '../types';
+import { createInitialShip } from './shipFactory';
+import { physicsService } from './physicsService';
+import { SHIPS_FOR_SALE } from '../data/ships';
 
 class PlayerShipService {
     private ship: Ship = createInitialShip();
     private subscribers: (() => void)[] = [];
+
+    constructor() {
+        const shipSpec = SHIPS_FOR_SALE.find(s => s.type === this.ship.type)?.spec;
+        if (shipSpec) {
+             // FIX: The second argument to registerObject requires the 'id' property.
+             physicsService.registerObject(this.ship.id, {
+                id: this.ship.id,
+                position: this.ship.position,
+                velocity: this.ship.velocity,
+                angle: this.ship.angle,
+                mass: shipSpec.mass,
+                maxSpeed: shipSpec.speed / 50, // Scale for game units
+                turnRate: shipSpec.turnRate,
+            });
+        }
+
+        physicsService.subscribe(() => {
+            const state = physicsService.getObjectState(this.ship.id);
+            if (state) {
+                if(this.ship.position.x !== state.position.x || this.ship.position.y !== state.position.y || this.ship.angle !== state.angle) {
+                    this.ship.position = state.position;
+                    this.ship.velocity = state.velocity;
+                    this.ship.angle = state.angle;
+                    this.notify();
+                }
+            }
+        });
+    }
 
     public subscribe(callback: () => void): () => void {
         this.subscribers.push(callback);
@@ -27,68 +52,76 @@ class PlayerShipService {
     }
 
     public setShip(newShip: Ship) {
+        physicsService.removeObject(this.ship.id);
+        const shipSpec = SHIPS_FOR_SALE.find(s => s.type === newShip.type)?.spec;
+        if (shipSpec) {
+            // FIX: The second argument to registerObject requires the 'id' property.
+            physicsService.registerObject(newShip.id, {
+                id: newShip.id,
+                position: newShip.position,
+                velocity: newShip.velocity,
+                angle: newShip.angle,
+                mass: shipSpec.mass,
+                maxSpeed: shipSpec.speed / 50,
+                turnRate: shipSpec.turnRate,
+            });
+        }
         this.ship = newShip;
         this.notify();
     }
 
-    public updateShip(pressedKeys: Set<string>, damageToPlayer: number) {
-        let newAngle = this.ship.angle;
-        let newVelocity = { ...this.ship.velocity };
-        let newPosition = { ...this.ship.position };
-        let newShields = this.ship.shields;
-        let newHull = this.ship.hull;
-        let newEnergy = this.ship.energy;
+    public handlePlayerInput(pressedKeys: Set<string>) {
+        let turn = 0;
+        let thrust = 0;
 
-        // --- Player Movement ---
-        if (pressedKeys.has('a') || pressedKeys.has('arrowleft')) newAngle -= TURN_RATE;
-        if (pressedKeys.has('d') || pressedKeys.has('arrowright')) newAngle += TURN_RATE;
+        if (pressedKeys.has('a') || pressedKeys.has('arrowleft')) turn = -1;
+        if (pressedKeys.has('d') || pressedKeys.has('arrowright')) turn = 1;
         
         if (pressedKeys.has('w') || pressedKeys.has('arrowup')) {
-            const radians = (newAngle - 90) * (Math.PI / 180);
-            newVelocity.x += Math.cos(radians) * THRUST;
-            newVelocity.y += Math.sin(radians) * THRUST;
+            thrust = 1;
         }
         if (pressedKeys.has('s') || pressedKeys.has('arrowdown')) {
-            newVelocity.x *= 0.95;
-            newVelocity.y *= 0.95;
-        }
-        newVelocity.x *= DRAG;
-        newVelocity.y *= DRAG;
-
-        const speed = Math.sqrt(newVelocity.x ** 2 + newVelocity.y ** 2);
-        if (speed > MAX_VELOCITY) {
-            newVelocity.x = (newVelocity.x / speed) * MAX_VELOCITY;
-            newVelocity.y = (newVelocity.y / speed) * MAX_VELOCITY;
+            thrust = -0.5; // less reverse thrust
         }
 
-        newPosition.x += newVelocity.x;
-        newPosition.y += newVelocity.y;
-        
-        // --- Damage Application ---
-        if (damageToPlayer > 0) {
-            const tempShields = newShields - damageToPlayer;
-            if (tempShields < 0) {
-                newHull += tempShields;
-                newShields = 0;
-            } else {
-                newShields = tempShields;
-            }
+        physicsService.applyTurn(this.ship.id, turn);
+        physicsService.applyThrust(this.ship.id, thrust);
+    }
+
+    public applyDamage(amount: number) {
+        let newShields = this.ship.shields;
+        let newHull = this.ship.hull;
+
+        const tempShields = newShields - amount;
+        if (tempShields < 0) {
+            newHull += tempShields;
+            newShields = 0;
+        } else {
+            newShields = tempShields;
         }
 
-        // --- Shield and Energy Recharge ---
-        newShields = Math.min(this.ship.maxShields, newShields + (this.ship.maxShields / 200));
-        newEnergy = Math.min(this.ship.maxEnergy, newEnergy + (this.ship.maxEnergy / 100));
-
-        this.ship = {
+        this.setShip({
             ...this.ship,
-            angle: newAngle,
-            velocity: newVelocity,
-            position: newPosition,
             shields: newShields,
             hull: newHull,
-            energy: newEnergy
-        };
-        this.notify();
+        });
+    }
+
+    public rechargeSystems() {
+        let { shields, energy } = this.ship;
+        
+        // --- Shield and Energy Recharge ---
+        shields = Math.min(this.ship.maxShields, shields + (this.ship.maxShields / 200));
+        energy = Math.min(this.ship.maxEnergy, energy + (this.ship.maxEnergy / 100));
+
+        if (shields !== this.ship.shields || energy !== this.ship.energy) {
+            this.ship = {
+                ...this.ship,
+                shields,
+                energy,
+            };
+            this.notify();
+        }
     }
 
     public useEnergy(amount: number) {

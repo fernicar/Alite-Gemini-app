@@ -3,11 +3,13 @@ import { Ship, NPC, Salvage } from '../types';
 import { NPCAction, aiService } from './aiService';
 import { audioService } from './audioService';
 import { playerShipService } from './playerShipService';
+import { physicsService } from './physicsService';
+import { projectileService } from './projectileService';
+import { effectsService } from './effectsService';
 
 class CombatCoordinator {
     private target: NPC | null = null;
     private salvage: Salvage[] = [];
-    private damageToPlayerThisFrame: number = 0;
     private subscribers: (() => void)[] = [];
 
     public subscribe(callback: () => void): () => void {
@@ -32,72 +34,77 @@ class CombatCoordinator {
         this.notify();
     }
 
-    public getAndClearDamageToPlayer(): number {
-        const damage = this.damageToPlayerThisFrame;
-        this.damageToPlayerThisFrame = 0;
-        return damage;
-    }
-
-    public update(npcActions: NPCAction[]) {
-        const playerShip = playerShipService.getShip();
+    public handleNpcActions(npcActions: NPCAction[]) {
         const npcs = aiService.getNpcs();
-        const updatedNpcs: NPC[] = [];
 
-        for (const npc of npcs) {
-            const action = npcActions.find(a => a.npcId === npc.id);
-            let updatedNpc = { ...npc };
+        for (const action of npcActions) {
+            const npc = npcs.find(n => n.id === action.npcId);
+            if (!npc) continue;
             
-            if (action) {
-                switch(action.type) {
-                    case 'MOVE_TOWARDS':
-                        if (action.targetPosition) {
-                            const angleToTarget = Math.atan2(action.targetPosition.y - npc.position.y, action.targetPosition.x - npc.position.x);
-                            updatedNpc.position = {
-                                x: npc.position.x + Math.cos(angleToTarget) * 2, // NPC speed
-                                y: npc.position.y + Math.sin(angleToTarget) * 2,
-                            };
-                        }
-                        break;
-                    case 'ATTACK':
-                        if (Math.random() < 0.02) { // slower fire rate with faster loop
-                            this.damageToPlayerThisFrame += Math.random() * 10;
-                            audioService.playLaserSound(); // NPCs need sound too!
-                        }
-                        break;
-                    case 'IDLE':
-                        // Do nothing
-                        break;
-                }
+            switch(action.type) {
+                case 'MOVE_TOWARDS':
+                    if (action.targetPosition) {
+                        const desiredAngle = (Math.atan2(action.targetPosition.y - npc.position.y, action.targetPosition.x - npc.position.x) * 180 / Math.PI) + 90;
+                        
+                        let angleDiff = desiredAngle - npc.angle;
+                        while (angleDiff > 180) angleDiff -= 360;
+                        while (angleDiff < -180) angleDiff += 360;
+
+                        let turn = 0;
+                        if (angleDiff > 2) turn = 1;
+                        if (angleDiff < -2) turn = -1;
+
+                        physicsService.applyTurn(npc.id, turn);
+                        physicsService.applyThrust(npc.id, 1);
+                    }
+                    break;
+                case 'ATTACK':
+                    if (Math.random() < 0.02) { // slower fire rate with faster loop
+                        projectileService.createProjectile(npc.id, npc.position, npc.angle, 5); // NPC damage
+                        audioService.playLaserSound();
+                    }
+                    physicsService.applyThrust(npc.id, 0);
+                    physicsService.applyTurn(npc.id, 0);
+                    break;
+                case 'IDLE':
+                    physicsService.applyThrust(npc.id, 0);
+                    physicsService.applyTurn(npc.id, 0);
+                    break;
             }
-            updatedNpcs.push(updatedNpc);
         }
-        
-        updatedNpcs.forEach(n => aiService.updateNpc(n));
     }
 
-    public handlePlayerAttack(): { targetDestroyed: boolean } {
+    public handlePlayerAttack() {
         const ship = playerShipService.getShip();
-        if (!this.target) return { targetDestroyed: false };
+        if (!this.target) return;
 
         const weapons = ship.slots.filter(
             s => s.type === 'Hardpoint' && s.equippedItem?.category === 'Weapon'
         );
 
-        if (weapons.length === 0) return { targetDestroyed: false };
+        if (weapons.length === 0) return;
         
         const totalEnergyCost = weapons.reduce((acc, s) => acc + (s.equippedItem?.powerDraw || 0), 0);
-        const totalDamage = weapons.reduce((acc, s) => acc + (s.equippedItem?.stats?.damage || 0), 0);
         
-        if (ship.energy < totalEnergyCost) return { targetDestroyed: false };
+        if (ship.energy < totalEnergyCost) return;
         
         playerShipService.useEnergy(totalEnergyCost);
         audioService.playLaserSound();
+        
+        const totalDamage = weapons.reduce((acc, s) => acc + (s.equippedItem?.stats?.damage || 0), 0);
+        projectileService.createProjectile(ship.id, ship.position, ship.angle, totalDamage);
+    }
+    
+    public applyHit(targetId: string, damage: number) {
+        const playerShip = playerShipService.getShip();
+        if (targetId === playerShip.id) {
+            playerShipService.applyDamage(damage);
+            return;
+        }
 
-        let targetDestroyed = false;
-        const targetNpc = aiService.getNpcs().find(n => n.id === this.target!.id);
-
+        const targetNpc = aiService.getNpcs().find(n => n.id === targetId);
         if (targetNpc) {
-            const newShields = targetNpc.shields - totalDamage;
+            const newShields = targetNpc.shields - damage;
             let newHull = targetNpc.hull;
             let finalShields = newShields;
 
@@ -109,24 +116,30 @@ class CombatCoordinator {
             const damagedNpc = { ...targetNpc, shields: finalShields, hull: newHull };
             
             if (damagedNpc.hull <= 0) {
-                targetDestroyed = true;
+                effectsService.createExplosion(damagedNpc.position, 'large');
+                audioService.playExplosionSound();
+
                 this.salvage.push({
                     id: `salvage-${damagedNpc.id}`,
                     contents: { name: 'Scrap Metal', quantity: Math.ceil(Math.random() * 5), weight: 1 },
                     position: damagedNpc.position,
                 });
+
                 aiService.removeNpc(damagedNpc.id);
-                this.setTarget(null);
+
+                if (this.target?.id === damagedNpc.id) {
+                    this.setTarget(null);
+                }
                 this.notify();
             } else {
                 aiService.updateNpc(damagedNpc);
-                this.setTarget(damagedNpc);
+                if (this.target?.id === damagedNpc.id) {
+                    this.setTarget(damagedNpc);
+                }
             }
         }
-        
-        return { targetDestroyed };
     }
-    
+
     public targetNextEnemy() {
         const npcs = aiService.getNpcs();
         const hostiles = npcs.filter(n => n.isHostile);

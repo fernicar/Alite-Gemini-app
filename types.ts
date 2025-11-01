@@ -72,9 +72,11 @@ export interface ShipSpec {
     cargoCapacity: number; // Base cargo capacity
     maxEnergy: number; // Base energy from ship's built-in reactor
     speed: number;
+    turnRate: number; // degrees per second
     jumpRange: number;
     slots: { type: ShipSlotType; size: number }[];
     basePrice: number;
+    mass: number;
 }
 
 export interface ShipForSale {
@@ -96,6 +98,8 @@ export interface NPC {
   position: { x: number; y: number };
   isHostile: boolean;
   aiState: AIState;
+  velocity: { x: number; y: number };
+  angle: number;
 }
 
 export interface Ship {
@@ -117,6 +121,7 @@ export interface Ship {
   position: { x: number; y: number };
   velocity: { x: number; y: number };
   angle: number; // degrees
+  id: string;
 }
 
 export interface Salvage {
@@ -137,4 +142,38 @@ export interface Mission {
   };
   status: 'Available' | 'InProgress' | 'Completed';
   systemId: number; // The system where the mission objective is
+}
+
+export interface PhysicsState {
+    id: string;
+    position: { x: number; y: number };
+    velocity: { x: number; y: number };
+    angle: number; // degrees
+    angularVelocity: number; // degrees per second
+    mass: number;
+    thrust: number; // magnitude of forward/backward thrust (-1 to 1)
+    turn: number;   // direction of turn (-1, 0, 1)
+    maxSpeed: number;
+    turnRate: number; // degrees per second
+}
+
+export interface Projectile {
+  id: string;
+  ownerId: string;
+  position: { x: number; y: number };
+  velocity: { x: number; y: number };
+  angle: number;
+  type: 'laser';
+  damage: number;
+  remainingLife: number; // in ms
+}
+
+export interface VisualEffect {
+  id: string;
+  type: 'explosion';
+  position: { x: number; y: number };
+  size: number;
+  maxSize: number;
+  remainingLife: number; // in ms
+  maxLife: number; // in ms
 }

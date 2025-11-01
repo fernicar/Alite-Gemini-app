@@ -75,7 +75,6 @@ export const createShipFromSpec = (type: string, name: string, credits: number):
     const { maxHull, maxShields, maxEnergy, cargoCapacity } = calculateShipStats(spec, equippedSlots);
     
     return {
-        // FIX: Added missing 'id' property to conform to the 'Ship' type.
         id: `player-${Date.now()}`,
         name: name,
         type: type,

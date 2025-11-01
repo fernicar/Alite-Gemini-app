@@ -1,3 +1,4 @@
+
 import { ShipForSale } from '../types';
 
 export const SHIPS_FOR_SALE: ShipForSale[] = [
@@ -12,7 +13,9 @@ export const SHIPS_FOR_SALE: ShipForSale[] = [
             cargoCapacity: 4,
             maxEnergy: 12,
             speed: 340,
+            turnRate: 4,
             jumpRange: 8,
+            mass: 50,
             slots: [
                 { type: 'Hardpoint', size: 1 },
                 { type: 'Hardpoint', size: 1 },
@@ -38,7 +41,9 @@ export const SHIPS_FOR_SALE: ShipForSale[] = [
             cargoCapacity: 20,
             maxEnergy: 10,
             speed: 280,
+            turnRate: 3,
             jumpRange: 10,
+            mass: 180,
             slots: [
                 { type: 'Hardpoint', size: 1 },
                 { type: 'Hardpoint', size: 1 },
@@ -66,7 +71,9 @@ export const SHIPS_FOR_SALE: ShipForSale[] = [
             cargoCapacity: 22,
             maxEnergy: 9,
             speed: 300,
+            turnRate: 2.5,
             jumpRange: 12,
+            mass: 120,
             slots: [
                 { type: 'Hardpoint', size: 2 },
                 { type: 'UtilityMount', size: 1 },
@@ -93,7 +100,9 @@ export const SHIPS_FOR_SALE: ShipForSale[] = [
             cargoCapacity: 200,
             maxEnergy: 20,
             speed: 200,
+            turnRate: 1.5,
             jumpRange: 15,
+            mass: 350,
             slots: [
                 { type: 'Hardpoint', size: 3 },
                 { type: 'Hardpoint', size: 3 },
