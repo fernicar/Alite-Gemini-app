@@ -67,6 +67,7 @@ export interface ShipSpec {
     shields: number; // Base shields
     maxFuel: number;
     cargoCapacity: number; // Base cargo capacity
+    maxEnergy: number; // Base energy from ship's built-in reactor
     speed: number;
     jumpRange: number;
     slots: { type: ShipSlotType; size: number }[];

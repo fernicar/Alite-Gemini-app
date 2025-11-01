@@ -1,6 +1,5 @@
-
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { Ship, StarSystem, NPC, Salvage, CargoItem, ShipSlot, Mission } from './types';
+import { Ship, StarSystem, NPC, Salvage, CargoItem, ShipSlot, Mission, EquipmentItem, ShipSpec } from './types';
 import { GALAXY_MAP, GALAXY_WIDTH, GALAXY_HEIGHT } from './constants';
 import { generateSystemDescription } from './services/geminiService';
 import { JumpIcon } from './components/icons';
@@ -15,24 +14,31 @@ import { EQUIPMENT_LIST } from './data/equipment';
 import { SHIPS_FOR_SALE } from './data/ships';
 import { MarkdownRenderer } from './components/MarkdownRenderer';
 import { audioService } from './services/audioService';
+import { updateCombatState } from './services/combatService';
+
+const PIRATE_SHIP_TYPES = ['Viper Mk I', 'Adder', 'Cobra Mk III'];
 
 // Helper to create the initial ship state without side-effects
 const createInitialShip = (): Ship => {
-    const cobraSpec = SHIPS_FOR_SALE.find(s => s.type === 'Cobra Mk III');
-    const initialSlots: ShipSlot[] = cobraSpec?.spec.slots.map(s => ({ ...s, equippedItem: null })) || [];
+    const cobraSpecData = SHIPS_FOR_SALE.find(s => s.type === 'Cobra Mk III');
+    if (!cobraSpecData) {
+        throw new Error("Could not find ship spec for 'Cobra Mk III'");
+    }
+    const cobraSpec = cobraSpecData.spec;
+    const initialSlots: ShipSlot[] = cobraSpec.slots.map(s => ({ ...s, equippedItem: null }));
 
     let ppSet = false, sgSet = false, laserSet = false;
     const equippedSlots = initialSlots.map(slot => {
         const newSlot = { ...slot };
-        if (!ppSet && newSlot.type === 'CoreInternal' && newSlot.size === 4) {
+        if (!ppSet && newSlot.type === 'CoreInternal' && newSlot.size >= 4) {
             newSlot.equippedItem = EQUIPMENT_LIST.find(e => e.id === '4E_PowerPlant') || null;
             ppSet = true;
         }
-        if (!sgSet && newSlot.type === 'OptionalInternal' && newSlot.size === 4) {
+        if (!sgSet && newSlot.type === 'OptionalInternal' && newSlot.size >= 4) {
             newSlot.equippedItem = EQUIPMENT_LIST.find(e => e.id === '4E_ShieldGen') || null;
             sgSet = true;
         }
-        if (!laserSet && newSlot.type === 'Hardpoint' && newSlot.size === 1) {
+        if (!laserSet && newSlot.type === 'Hardpoint' && newSlot.size >= 1) {
             newSlot.equippedItem = EQUIPMENT_LIST.find(e => e.id === '1E_PulseLaser') || null;
             laserSet = true;
         }
@@ -42,33 +48,62 @@ const createInitialShip = (): Ship => {
     const powerPlant = equippedSlots.find(s => s.equippedItem?.category === 'Core' && s.equippedItem.name.includes('Power Plant'))?.equippedItem;
     const shieldGen = equippedSlots.find(s => s.equippedItem?.stats?.shieldStrength)?.equippedItem;
 
-    const maxEnergy = powerPlant?.stats?.powerGenerated || 100;
-    const maxShields = shieldGen?.stats?.shieldStrength || 100;
+    const cargoIncrease = equippedSlots
+        .map(s => s.equippedItem?.stats?.cargoIncrease || 0)
+        .reduce((sum, increase) => sum + increase, 0);
+
+    const maxEnergy = powerPlant?.stats?.powerGenerated || cobraSpec.maxEnergy;
+    const maxShields = shieldGen?.stats?.shieldStrength || cobraSpec.shields;
+    const cargoCapacity = cobraSpec.cargoCapacity + cargoIncrease;
 
     return {
         name: 'Stardust Drifter',
         type: 'Cobra Mk III',
-        hull: 100,
-        maxHull: 100,
+        hull: cobraSpec.hull,
+        maxHull: cobraSpec.hull,
         shields: maxShields,
         maxShields: maxShields,
-        fuel: 10,
-        maxFuel: 10,
+        fuel: cobraSpec.maxFuel,
+        maxFuel: cobraSpec.maxFuel,
         energy: maxEnergy,
         maxEnergy: maxEnergy,
-        cargoCapacity: 20,
+        cargoCapacity: cargoCapacity,
         cargo: [
             { name: 'Food Rations', quantity: 5, weight: 1 },
             { name: 'Machine Parts', quantity: 2, weight: 5 },
         ],
         credits: 5000,
-        basePrice: 35000,
+        basePrice: cobraSpec.basePrice,
         slots: equippedSlots,
         position: { x: 0, y: 0 },
         velocity: { x: 0, y: 0 },
         angle: 0,
     };
 };
+
+const createNpcShip = (shipType: string, npcType: 'Pirate' | 'Trader' | 'Police'): NPC | null => {
+    const shipSpecData = SHIPS_FOR_SALE.find(s => s.type === shipType);
+    if (!shipSpecData) {
+        console.error(`Could not find ship spec for '${shipType}'`);
+        return null;
+    }
+    const spec = shipSpecData.spec;
+    
+    // NPCs might not have all fancy equipment, but they should at least have shields if the spec says so.
+    // For simplicity, we'll assume they have stock E-rated shields from their spec.
+    return {
+        id: `${npcType.toLowerCase()}-${Date.now()}-${Math.random()}`,
+        type: npcType,
+        shipType: shipType,
+        hull: spec.hull,
+        maxHull: spec.hull,
+        shields: spec.shields,
+        maxShields: spec.shields,
+        position: { x: (Math.random() - 0.5) * 1200, y: (Math.random() - 0.5) * 800 },
+        isHostile: npcType === 'Pirate',
+    };
+};
+
 
 const initialShip = createInitialShip();
 
@@ -156,6 +191,9 @@ const App: React.FC = () => {
     const [detailedDescription, setDetailedDescription] = useState<string>('');
     const [descriptionLoading, setDescriptionLoading] = useState<boolean>(false);
     const [npcs, setNpcs] = useState<NPC[]>([]);
+    const npcsRef = useRef(npcs);
+    useEffect(() => { npcsRef.current = npcs; }, [npcs]);
+
     const [salvage, setSalvage] = useState<Salvage[]>([]);
     const [target, setTarget] = useState<NPC | null>(null);
     const [activeMission, setActiveMission] = useState<Mission | null>(null);
@@ -199,12 +237,11 @@ const App: React.FC = () => {
       const numPirates = isAnarchy ? Math.floor(Math.random() * 4) + 2 : Math.floor(Math.random() * 2);
       const newNpcs: NPC[] = [];
       for (let i = 0; i < numPirates; i++) {
-        newNpcs.push({
-          id: `pirate-${Date.now()}-${i}`,
-          type: 'Pirate', shipType: 'Viper Mk I', hull: 80, maxHull: 80, shields: 0, maxShields: 120,
-          position: { x: (Math.random() - 0.5) * 1200, y: (Math.random() - 0.5) * 800 },
-          isHostile: true,
-        });
+        const randomShipType = PIRATE_SHIP_TYPES[Math.floor(Math.random() * PIRATE_SHIP_TYPES.length)];
+        const npc = createNpcShip(randomShipType, 'Pirate');
+        if (npc) {
+            newNpcs.push(npc);
+        }
       }
       setNpcs(newNpcs);
     }, [currentSystem]);
@@ -231,30 +268,9 @@ const App: React.FC = () => {
         if (view !== 'SYSTEM') return;
         
         const gameLoop = setInterval(() => {
-            let totalDamage = 0;
-
-            setNpcs(currentNpcs => currentNpcs.map(npc => {
-                if (npc.isHostile) {
-                    const playerPos = shipRef.current.position;
-                    const distToPlayer = Math.sqrt((npc.position.x - playerPos.x)**2 + (npc.position.y - playerPos.y)**2);
-                    
-                    if (distToPlayer > 400) { // Move closer if far
-                        const angleToPlayer = Math.atan2(playerPos.y - npc.position.y, playerPos.x - npc.position.x);
-                        return {
-                            ...npc,
-                            position: {
-                                x: npc.position.x + Math.cos(angleToPlayer) * 2, // NPC speed
-                                y: npc.position.y + Math.sin(angleToPlayer) * 2,
-                            }
-                        };
-                    } else { // Fire if close
-                      if (Math.random() < 0.02) { // slower fire rate with faster loop
-                        totalDamage += Math.random() * 10;
-                      }
-                    }
-                }
-                return npc;
-            }));
+            // --- NPC Combat Logic ---
+            const { updatedNpcs, damageToPlayer } = updateCombatState(shipRef.current, npcsRef.current);
+            setNpcs(updatedNpcs);
             
             setShip(s => {
                 let newAngle = s.angle;
@@ -290,8 +306,8 @@ const App: React.FC = () => {
                 newPosition.y += newVelocity.y;
                 
                 // --- Damage & Recharge ---
-                if (totalDamage > 0) {
-                    const tempShields = newShields - totalDamage;
+                if (damageToPlayer > 0) {
+                    const tempShields = newShields - damageToPlayer;
                     if (tempShields < 0) {
                         newHull += tempShields;
                         newShields = 0;

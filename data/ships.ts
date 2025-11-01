@@ -10,6 +10,7 @@ export const SHIPS_FOR_SALE: ShipForSale[] = [
             shields: 120,
             maxFuel: 6,
             cargoCapacity: 4,
+            maxEnergy: 12,
             speed: 340,
             jumpRange: 8,
             slots: [
@@ -35,6 +36,7 @@ export const SHIPS_FOR_SALE: ShipForSale[] = [
             shields: 100,
             maxFuel: 10,
             cargoCapacity: 20,
+            maxEnergy: 10,
             speed: 280,
             jumpRange: 10,
             slots: [
@@ -62,6 +64,7 @@ export const SHIPS_FOR_SALE: ShipForSale[] = [
             shields: 90,
             maxFuel: 8,
             cargoCapacity: 22,
+            maxEnergy: 9,
             speed: 300,
             jumpRange: 12,
             slots: [
@@ -88,6 +91,7 @@ export const SHIPS_FOR_SALE: ShipForSale[] = [
             shields: 200,
             maxFuel: 16,
             cargoCapacity: 200,
+            maxEnergy: 20,
             speed: 200,
             jumpRange: 15,
             slots: [

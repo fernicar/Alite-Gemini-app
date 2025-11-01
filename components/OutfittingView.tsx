@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
-import { Ship, StarSystem, ShipSlot, EquipmentItem } from '../types';
+import { Ship, StarSystem, ShipSlot, EquipmentItem, ShipSpec } from '../types';
 import { EQUIPMENT_LIST } from '../data/equipment';
 import { ShipStatusPanel } from './ShipStatusPanel';
+import { SHIPS_FOR_SALE } from '../data/ships';
 
 const OutfittingView: React.FC<{
   currentSystem: StarSystem;
@@ -11,6 +12,10 @@ const OutfittingView: React.FC<{
 }> = ({ currentSystem, ship, setShip, onReturnToStation }) => {
     const [selectedSlot, setSelectedSlot] = useState<ShipSlot | null>(null);
 
+    const currentShipSpec = useMemo(() => {
+        return SHIPS_FOR_SALE.find(s => s.type === ship.type)?.spec;
+    }, [ship.type]);
+
     const availableEquipmentForSlot = useMemo(() => {
         if (!selectedSlot) return [];
         return EQUIPMENT_LIST.filter(item => 
@@ -19,22 +24,36 @@ const OutfittingView: React.FC<{
         );
     }, [selectedSlot]);
     
-    const recalculateShipStats = (newSlots: ShipSlot[], baseCargo: number): Partial<Ship> => {
-        let maxShields = 0;
-        let cargoCapacity = baseCargo;
+    const recalculateShipStats = (newSlots: ShipSlot[], shipSpec: ShipSpec | undefined): Partial<Pick<Ship, 'maxShields' | 'cargoCapacity' | 'maxEnergy'>> => {
+        const baseCargo = shipSpec?.cargoCapacity ?? 0;
+        const baseShields = shipSpec?.shields ?? 0;
+        const baseEnergy = shipSpec?.maxEnergy ?? 0;
 
-        newSlots.forEach(slot => {
-            if (slot.equippedItem) {
-                if (slot.equippedItem.stats.shieldStrength) {
-                    maxShields += slot.equippedItem.stats.shieldStrength;
-                }
-                if (slot.equippedItem.stats.cargoIncrease) {
-                    cargoCapacity += slot.equippedItem.stats.cargoIncrease;
-                }
-            }
-        });
+        // Shield strength is determined by the best shield generator equipped, and does not stack.
+        // If no shield generator is equipped, the ship's base shield strength is used.
+        const shieldGenerators = newSlots
+            .map(s => s.equippedItem)
+            .filter((item): item is EquipmentItem => !!(item?.stats?.shieldStrength));
+            
+        const maxShieldStrength = shieldGenerators.reduce((max, sg) => Math.max(max, sg.stats!.shieldStrength!), 0);
+        const maxShields = maxShieldStrength > 0 ? maxShieldStrength : baseShields;
+
+        // Cargo capacity is the ship's base capacity plus any increases from cargo racks.
+        const cargoIncrease = newSlots
+            .map(s => s.equippedItem?.stats?.cargoIncrease || 0)
+            .reduce((sum, increase) => sum + increase, 0);
         
-        return { maxShields, cargoCapacity };
+        const cargoCapacity = baseCargo + cargoIncrease;
+        
+        // Max energy is determined by the best power plant equipped.
+        const powerPlants = newSlots
+            .map(s => s.equippedItem)
+            .filter((item): item is EquipmentItem => !!(item?.stats?.powerGenerated));
+
+        const maxPowerGenerated = powerPlants.reduce((max, pp) => Math.max(max, pp.stats!.powerGenerated!), 0);
+        const maxEnergy = maxPowerGenerated > 0 ? maxPowerGenerated : baseEnergy;
+
+        return { maxShields, cargoCapacity, maxEnergy };
     };
 
     const handleEquipItem = (itemToEquip: EquipmentItem) => {
@@ -56,7 +75,7 @@ const OutfittingView: React.FC<{
                 return s;
             });
 
-            const newStats = recalculateShipStats(newSlots, 20); // Assuming 20 base cargo for Cobra
+            const newStats = recalculateShipStats(newSlots, currentShipSpec);
 
             return {
                 ...prevShip,
@@ -64,6 +83,7 @@ const OutfittingView: React.FC<{
                 slots: newSlots,
                 ...newStats,
                 shields: Math.min(prevShip.shields, newStats.maxShields || 0), // Cap current shields to new max
+                energy: Math.min(prevShip.energy, newStats.maxEnergy || 0), // Cap current energy
             };
         });
         setSelectedSlot(null);
@@ -82,7 +102,7 @@ const OutfittingView: React.FC<{
                 }
                 return s;
             });
-            const newStats = recalculateShipStats(newSlots, 20); // Assuming 20 base cargo for Cobra
+            const newStats = recalculateShipStats(newSlots, currentShipSpec);
             
             return {
                 ...prevShip,
@@ -90,6 +110,7 @@ const OutfittingView: React.FC<{
                 slots: newSlots,
                 ...newStats,
                 shields: Math.min(prevShip.shields, newStats.maxShields || 0),
+                energy: Math.min(prevShip.energy, newStats.maxEnergy || 0),
             };
         });
         setSelectedSlot(null);
