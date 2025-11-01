@@ -1,4 +1,5 @@
 
+
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Ship, StarSystem, NPC, Salvage, CargoItem, ShipSlot, Mission, EquipmentItem, ShipSpec } from './types';
 import { generateSystemDescription } from './services/geminiService';
@@ -15,99 +16,13 @@ import { EQUIPMENT_LIST } from './data/equipment';
 import { SHIPS_FOR_SALE } from './data/ships';
 import { MarkdownRenderer } from './components/MarkdownRenderer';
 import { audioService } from './services/audioService';
-import { updateCombatState, handlePlayerAttack } from './services/combatService';
 import { updatePlayerShip } from './services/playerService';
+import { createInitialShip } from './services/shipService';
+import { aiService } from './services/aiService';
+import { combatCoordinator } from './services/combatCoordinator';
 
-const PIRATE_SHIP_TYPES = ['Viper Mk I', 'Adder', 'Cobra Mk III'];
+
 const GALAXY_MAP = getGalaxy();
-
-// Helper to create the initial ship state without side-effects
-const createInitialShip = (): Ship => {
-    const cobraSpecData = SHIPS_FOR_SALE.find(s => s.type === 'Cobra Mk III');
-    if (!cobraSpecData) {
-        throw new Error("Could not find ship spec for 'Cobra Mk III'");
-    }
-    const cobraSpec = cobraSpecData.spec;
-    const initialSlots: ShipSlot[] = cobraSpec.slots.map(s => ({ ...s, equippedItem: null }));
-
-    let ppSet = false, sgSet = false, laserSet = false;
-    const equippedSlots = initialSlots.map(slot => {
-        const newSlot = { ...slot };
-        if (!ppSet && newSlot.type === 'CoreInternal' && newSlot.size >= 4) {
-            newSlot.equippedItem = EQUIPMENT_LIST.find(e => e.id === '4E_PowerPlant') || null;
-            ppSet = true;
-        }
-        if (!sgSet && newSlot.type === 'OptionalInternal' && newSlot.size >= 4) {
-            newSlot.equippedItem = EQUIPMENT_LIST.find(e => e.id === '4E_ShieldGen') || null;
-            sgSet = true;
-        }
-        if (!laserSet && newSlot.type === 'Hardpoint' && newSlot.size >= 1) {
-            newSlot.equippedItem = EQUIPMENT_LIST.find(e => e.id === '1E_PulseLaser') || null;
-            laserSet = true;
-        }
-        return newSlot;
-    });
-
-    const powerPlant = equippedSlots.find(s => s.equippedItem?.category === 'Core' && s.equippedItem.name.includes('Power Plant'))?.equippedItem;
-    const shieldGen = equippedSlots.find(s => s.equippedItem?.stats?.shieldStrength)?.equippedItem;
-
-    const cargoIncrease = equippedSlots
-        .map(s => s.equippedItem?.stats?.cargoIncrease || 0)
-        .reduce((sum, increase) => sum + increase, 0);
-
-    const maxEnergy = powerPlant?.stats?.powerGenerated || cobraSpec.maxEnergy;
-    const maxShields = shieldGen?.stats?.shieldStrength || cobraSpec.shields;
-    const cargoCapacity = cobraSpec.cargoCapacity + cargoIncrease;
-
-    return {
-        name: 'Stardust Drifter',
-        type: 'Cobra Mk III',
-        hull: cobraSpec.hull,
-        maxHull: cobraSpec.hull,
-        shields: maxShields,
-        maxShields: maxShields,
-        fuel: cobraSpec.maxFuel,
-        maxFuel: cobraSpec.maxFuel,
-        energy: maxEnergy,
-        maxEnergy: maxEnergy,
-        cargoCapacity: cargoCapacity,
-        cargo: [
-            { name: 'Food Rations', quantity: 5, weight: 1 },
-            { name: 'Machine Parts', quantity: 2, weight: 5 },
-        ],
-        credits: 5000,
-        basePrice: cobraSpec.basePrice,
-        slots: equippedSlots,
-        position: { x: 0, y: 0 },
-        velocity: { x: 0, y: 0 },
-        angle: 0,
-    };
-};
-
-const createNpcShip = (shipType: string, npcType: 'Pirate' | 'Trader' | 'Police'): NPC | null => {
-    const shipSpecData = SHIPS_FOR_SALE.find(s => s.type === shipType);
-    if (!shipSpecData) {
-        console.error(`Could not find ship spec for '${shipType}'`);
-        return null;
-    }
-    const spec = shipSpecData.spec;
-    
-    // NPCs might not have all fancy equipment, but they should at least have shields if the spec says so.
-    // For simplicity, we'll assume they have stock E-rated shields from their spec.
-    return {
-        id: `${npcType.toLowerCase()}-${Date.now()}-${Math.random()}`,
-        type: npcType,
-        shipType: shipType,
-        hull: spec.hull,
-        maxHull: spec.hull,
-        shields: spec.shields,
-        maxShields: spec.shields,
-        position: { x: (Math.random() - 0.5) * 1200, y: (Math.random() - 0.5) * 800 },
-        isHostile: npcType === 'Pirate',
-    };
-};
-
-
 const initialShip = createInitialShip();
 const initialSystem = GALAXY_MAP.find(s => s.name === 'Lave') || GALAXY_MAP[0];
 
@@ -184,20 +99,33 @@ const App: React.FC = () => {
     const [ship, setShip] = useState<Ship>(initialShip);
     const shipRef = useRef(ship);
     useEffect(() => { shipRef.current = ship; }, [ship]);
-
+    
     const [currentSystem, setCurrentSystem] = useState<StarSystem>(initialSystem);
     const [selectedSystem, setSelectedSystem] = useState<StarSystem>(initialSystem);
     const [detailedDescription, setDetailedDescription] = useState<string>('');
     const [descriptionLoading, setDescriptionLoading] = useState<boolean>(false);
-    const [npcs, setNpcs] = useState<NPC[]>([]);
-    const npcsRef = useRef(npcs);
-    useEffect(() => { npcsRef.current = npcs; }, [npcs]);
-
-    const [salvage, setSalvage] = useState<Salvage[]>([]);
-    const [target, setTarget] = useState<NPC | null>(null);
+    
     const [activeMission, setActiveMission] = useState<Mission | null>(null);
-    const [systemCleared, setSystemCleared] = useState<boolean>(false);
     const pressedKeys = useRef(new Set<string>());
+
+    // State to force re-renders when services update
+    const [_, forceUpdate] = useState(0);
+
+    useEffect(() => {
+        const reRender = () => forceUpdate(c => c + 1);
+
+        const unsubAi = aiService.subscribe(reRender);
+        const unsubCombat = combatCoordinator.subscribe(reRender);
+
+        return () => {
+            unsubAi();
+            unsubCombat();
+        }
+    }, []);
+
+    const npcs = useMemo(() => aiService.getNpcs(), [_, aiService]);
+    const target = useMemo(() => combatCoordinator.getTarget(), [_, combatCoordinator]);
+    const salvage = useMemo(() => combatCoordinator.getSalvage(), [_, combatCoordinator]);
 
     const handleSelectSystem = useCallback((system: StarSystem) => {
         setSelectedSystem(system);
@@ -225,31 +153,16 @@ const App: React.FC = () => {
         setShip(prev => ({ ...prev, fuel: prev.fuel - jumpDistance, position: {x:0, y:0}, velocity: {x:0, y:0} }));
         setCurrentSystem(selectedSystem);
         setDetailedDescription('');
-        setNpcs([]);
-        setSalvage([]);
-        setTarget(null);
-        setSystemCleared(false);
+        aiService.clearNpcs();
+        combatCoordinator.clearSalvage();
+        combatCoordinator.setTarget(null);
     }, [selectedSystem, currentSystem, ship.fuel, jumpDistance]);
 
-    const spawnEntities = useCallback(() => {
-      const isAnarchy = currentSystem.government === 'Anarchy';
-      const numPirates = isAnarchy ? Math.floor(Math.random() * 4) + 2 : Math.floor(Math.random() * 2);
-      const newNpcs: NPC[] = [];
-      for (let i = 0; i < numPirates; i++) {
-        const randomShipType = PIRATE_SHIP_TYPES[Math.floor(Math.random() * PIRATE_SHIP_TYPES.length)];
-        const npc = createNpcShip(randomShipType, 'Pirate');
-        if (npc) {
-            newNpcs.push(npc);
-        }
-      }
-      setNpcs(newNpcs);
-    }, [currentSystem]);
-
     useEffect(() => {
-        if (view === 'SYSTEM' && npcs.length === 0 && !systemCleared) {
-            spawnEntities();
+        if (view === 'SYSTEM' && aiService.getNpcCount() === 0 && !aiService.isSystemCleared()) {
+            aiService.spawnEntities(currentSystem);
         }
-    }, [view, currentSystem, spawnEntities, npcs.length, systemCleared]);
+    }, [view, currentSystem, aiService]);
 
     useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => pressedKeys.current.add(e.key.toLowerCase());
@@ -267,15 +180,15 @@ const App: React.FC = () => {
         if (view !== 'SYSTEM') return;
         
         const gameLoop = setInterval(() => {
-            // --- NPC Combat Logic ---
-            const { updatedNpcs, damageToPlayer } = updateCombatState(shipRef.current, npcsRef.current);
-
-            // --- Player Ship Logic ---
+            // AI decides what to do
+            const actions = aiService.update(shipRef.current);
+            // Combat coordinator executes actions and updates world state
+            combatCoordinator.update(shipRef.current, actions);
+            
+            const damageToPlayer = combatCoordinator.getAndClearDamageToPlayer();
             const updatedShip = updatePlayerShip(shipRef.current, pressedKeys.current, damageToPlayer);
-
-            // --- Update State ---
-            setNpcs(updatedNpcs);
             setShip(updatedShip);
+
         }, 50); // 20 FPS game loop
 
         return () => clearInterval(gameLoop);
@@ -291,87 +204,33 @@ const App: React.FC = () => {
 
     const handleFire = () => {
         if (!target) return;
+        const { playerEnergyUsed, targetDestroyed } = combatCoordinator.handlePlayerAttack(ship);
 
-        const {
-            playerEnergyUsed,
-            updatedNpcs,
-            newSalvage,
-            targetDestroyed,
-            updatedTarget,
-        } = handlePlayerAttack(ship, target, npcs);
-
-        if (playerEnergyUsed === 0) {
-            // Not enough energy or no weapons, maybe play a 'click' sound.
-            return;
-        }
+        if (playerEnergyUsed === 0) return;
 
         audioService.playLaserSound();
         setShip(s => ({ ...s, energy: s.energy - playerEnergyUsed }));
     
-        const hadHostiles = npcs.some(n => n.isHostile);
-    
-        setNpcs(updatedNpcs);
-    
         if (targetDestroyed) {
             audioService.playExplosionSound();
-            if (newSalvage) {
-                setSalvage(s => [...s, newSalvage]);
-            }
-            setTarget(null);
-
             if (activeMission && activeMission.type === 'Bounty' && activeMission.status === 'InProgress') {
                 if (target.type === activeMission.targetNPC?.type && currentSystem.id === activeMission.systemId) {
                     setActiveMission(prev => prev ? ({ ...prev, status: 'Completed' }) : null);
                     alert(`Target ${activeMission.title} destroyed! Return to a station in this system to claim your reward.`);
                 }
             }
-        } else if (updatedTarget) {
-            // Target was damaged but not destroyed
-            setTarget(updatedTarget);
-        }
-
-        if (hadHostiles && updatedNpcs.every(n => !n.isHostile)) {
-            setSystemCleared(true);
         }
     };
 
     const handleTargetNext = () => {
-        const hostiles = npcs.filter(n => n.isHostile);
-        if (hostiles.length === 0) {
-            setTarget(null);
-            return;
-        }
-        const currentTargetIndex = target ? hostiles.findIndex(n => n.id === target.id) : -1;
-        const nextIndex = (currentTargetIndex + 1) % hostiles.length;
-        setTarget(hostiles[nextIndex]);
+        combatCoordinator.targetNextEnemy(ship, aiService.getNpcs());
     };
 
     const handleScoop = (salvageId: string) => {
-        const item = salvage.find(s => s.id === salvageId);
-        if (!item) return;
-
-        const totalWeight = ship.cargo.reduce((acc, c) => acc + (c.quantity * c.weight), 0);
-        if (totalWeight + (item.contents.quantity * item.contents.weight) > ship.cargoCapacity) {
-          return;
-        }
-        
-        setShip(s => {
-            const existingItemIndex = s.cargo.findIndex(c => c.name === item.contents.name);
-            let newCargo;
-            if (existingItemIndex > -1) {
-                newCargo = s.cargo.map((cargoItem, index) => {
-                    if (index === existingItemIndex) {
-                        return { ...cargoItem, quantity: cargoItem.quantity + item.contents.quantity };
-                    }
-                    return cargoItem;
-                });
-            } else {
-                newCargo = [...s.cargo, item.contents];
-            }
-            return { ...s, cargo: newCargo };
-        });
-
-        setSalvage(s => s.filter(i => i.id !== salvageId));
+      const result = combatCoordinator.scoopSalvage(ship, salvageId);
+      if(result.success) {
+        setShip(result.ship!);
+      }
     };
 
     const handleDock = () => {

@@ -1,8 +1,9 @@
+
 import React, { useState, useMemo } from 'react';
-import { Ship, StarSystem, ShipSlot, EquipmentItem, ShipSpec } from '../types';
+import { Ship, StarSystem, ShipSlot, EquipmentItem } from '../types';
 import { EQUIPMENT_LIST } from '../data/equipment';
 import { ShipStatusPanel } from './ShipStatusPanel';
-import { SHIPS_FOR_SALE } from '../data/ships';
+import { shipyardService } from '../services/shipyardService';
 
 const OutfittingView: React.FC<{
   currentSystem: StarSystem;
@@ -12,10 +13,6 @@ const OutfittingView: React.FC<{
 }> = ({ currentSystem, ship, setShip, onReturnToStation }) => {
     const [selectedSlot, setSelectedSlot] = useState<ShipSlot | null>(null);
 
-    const currentShipSpec = useMemo(() => {
-        return SHIPS_FOR_SALE.find(s => s.type === ship.type)?.spec;
-    }, [ship.type]);
-
     const availableEquipmentForSlot = useMemo(() => {
         if (!selectedSlot) return [];
         return EQUIPMENT_LIST.filter(item => 
@@ -24,96 +21,28 @@ const OutfittingView: React.FC<{
         );
     }, [selectedSlot]);
     
-    const recalculateShipStats = (newSlots: ShipSlot[], shipSpec: ShipSpec | undefined): Partial<Pick<Ship, 'maxShields' | 'cargoCapacity' | 'maxEnergy'>> => {
-        const baseCargo = shipSpec?.cargoCapacity ?? 0;
-        const baseShields = shipSpec?.shields ?? 0;
-        const baseEnergy = shipSpec?.maxEnergy ?? 0;
-
-        // Shield strength is determined by the best shield generator equipped, and does not stack.
-        // If no shield generator is equipped, the ship's base shield strength is used.
-        const shieldGenerators = newSlots
-            .map(s => s.equippedItem)
-            .filter((item): item is EquipmentItem => !!(item?.stats?.shieldStrength));
-            
-        const maxShieldStrength = shieldGenerators.reduce((max, sg) => Math.max(max, sg.stats!.shieldStrength!), 0);
-        const maxShields = maxShieldStrength > 0 ? maxShieldStrength : baseShields;
-
-        // Cargo capacity is the ship's base capacity plus any increases from cargo racks.
-        const cargoIncrease = newSlots
-            .map(s => s.equippedItem?.stats?.cargoIncrease || 0)
-            .reduce((sum, increase) => sum + increase, 0);
-        
-        const cargoCapacity = baseCargo + cargoIncrease;
-        
-        // Max energy is determined by the best power plant equipped.
-        const powerPlants = newSlots
-            .map(s => s.equippedItem)
-            .filter((item): item is EquipmentItem => !!(item?.stats?.powerGenerated));
-
-        const maxPowerGenerated = powerPlants.reduce((max, pp) => Math.max(max, pp.stats!.powerGenerated!), 0);
-        const maxEnergy = maxPowerGenerated > 0 ? maxPowerGenerated : baseEnergy;
-
-        return { maxShields, cargoCapacity, maxEnergy };
-    };
-
     const handleEquipItem = (itemToEquip: EquipmentItem) => {
         if (!selectedSlot) return;
 
-        const currentItem = selectedSlot.equippedItem;
-        const priceDifference = itemToEquip.price - (currentItem?.price || 0);
-
-        if (ship.credits < priceDifference) {
-            alert("Insufficient credits.");
-            return;
+        const result = shipyardService.equipModule(ship, selectedSlot, itemToEquip);
+        if (result.success && result.newShip) {
+            setShip(result.newShip);
+            setSelectedSlot(null);
+        } else {
+            alert(result.error || "Failed to equip module.");
         }
-
-        setShip(prevShip => {
-            const newSlots = prevShip.slots.map(s => {
-                if (s === selectedSlot) {
-                    return { ...s, equippedItem: itemToEquip };
-                }
-                return s;
-            });
-
-            const newStats = recalculateShipStats(newSlots, currentShipSpec);
-
-            return {
-                ...prevShip,
-                credits: prevShip.credits - priceDifference,
-                slots: newSlots,
-                ...newStats,
-                shields: Math.min(prevShip.shields, newStats.maxShields || 0), // Cap current shields to new max
-                energy: Math.min(prevShip.energy, newStats.maxEnergy || 0), // Cap current energy
-            };
-        });
-        setSelectedSlot(null);
     };
 
     const handleSellItem = () => {
         if (!selectedSlot || !selectedSlot.equippedItem) return;
         
-        const itemToSell = selectedSlot.equippedItem;
-        const sellPrice = Math.round(itemToSell.price * 0.9); // Sell for 90% of value
-
-        setShip(prevShip => {
-            const newSlots = prevShip.slots.map(s => {
-                if (s === selectedSlot) {
-                    return { ...s, equippedItem: null };
-                }
-                return s;
-            });
-            const newStats = recalculateShipStats(newSlots, currentShipSpec);
-            
-            return {
-                ...prevShip,
-                credits: prevShip.credits + sellPrice,
-                slots: newSlots,
-                ...newStats,
-                shields: Math.min(prevShip.shields, newStats.maxShields || 0),
-                energy: Math.min(prevShip.energy, newStats.maxEnergy || 0),
-            };
-        });
-        setSelectedSlot(null);
+        const result = shipyardService.sellModule(ship, selectedSlot);
+        if (result.success && result.newShip) {
+            setShip(result.newShip);
+            setSelectedSlot(null);
+        } else {
+            alert(result.error || "Failed to sell module.");
+        }
     };
 
     const groupedSlots = useMemo(() => {

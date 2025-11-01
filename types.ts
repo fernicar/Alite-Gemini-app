@@ -1,4 +1,5 @@
 
+
 export interface StarSystem {
   id: number;
   name: string;
@@ -82,6 +83,8 @@ export interface ShipForSale {
     price: number;
 }
 
+export type AIState = 'IDLE' | 'PATROLLING' | 'ATTACKING' | 'FLEEING';
+
 export interface NPC {
   id: string;
   type: 'Pirate' | 'Trader' | 'Police';
@@ -92,6 +95,7 @@ export interface NPC {
   maxShields: number;
   position: { x: number; y: number };
   isHostile: boolean;
+  aiState: AIState;
 }
 
 export interface Ship {

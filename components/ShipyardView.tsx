@@ -1,8 +1,9 @@
+
 import React, { useState, useMemo } from 'react';
 import { Ship, StarSystem, ShipForSale } from '../types';
 import { SHIPS_FOR_SALE } from '../data/ships';
-import { EQUIPMENT_LIST } from '../data/equipment';
 import { ShipStatusPanel } from './ShipStatusPanel';
+import { shipyardService } from '../services/shipyardService';
 
 const StatRow: React.FC<{ label: string; currentValue: number | string; newValue: number | string; reverseColors?: boolean }> = ({ label, currentValue, newValue, reverseColors }) => {
     const currentNum = typeof currentValue === 'string' ? parseFloat(currentValue) : currentValue;
@@ -48,57 +49,17 @@ const ShipyardView: React.FC<{
     const handlePurchase = () => {
         if (!selectedShip) return;
 
-        if (ship.credits < tradeInData.finalCost) {
-            alert("Error: Insufficient credits for this transaction.");
-            return;
+        const result = shipyardService.purchaseShip(ship, selectedShip);
+
+        if (result.success && result.newShip) {
+            setShip(result.newShip);
+            alert(`Congratulations on your new ${selectedShip.type}!`);
+            setShowConfirm(false);
+            setSelectedShip(null);
+            onReturnToStation();
+        } else {
+            alert(result.error || "Purchase failed.");
         }
-
-        setShip(prevShip => {
-            const spec = selectedShip.spec;
-            const slots = spec.slots.map(s => ({...s, equippedItem: null}));
-            
-            // Add default E-rated core internals
-            const powerPlant = EQUIPMENT_LIST.find(e => e.category === 'Core' && e.name.includes('Power Plant') && e.class <= (slots.find(s => s.type === 'CoreInternal')?.size || 0));
-            const thrusters = EQUIPMENT_LIST.find(e => e.category === 'Core' && e.name.includes('Thrusters') && e.class <= (slots.find(s => s.type === 'CoreInternal')?.size || 0));
-            const fsd = EQUIPMENT_LIST.find(e => e.category === 'Core' && e.name.includes('FSD') && e.class <= (slots.find(s => s.type === 'CoreInternal')?.size || 0));
-            const shieldGen = EQUIPMENT_LIST.find(e => e.category === 'Core' && e.name.includes('Shield') && e.class <= (slots.find(s => s.type === 'OptionalInternal')?.size || 0));
-
-            slots.find(s => s.type === 'CoreInternal' && !s.equippedItem)!.equippedItem = powerPlant || null;
-            slots.find(s => s.type === 'CoreInternal' && !s.equippedItem)!.equippedItem = thrusters || null;
-            slots.find(s => s.type === 'CoreInternal' && !s.equippedItem)!.equippedItem = fsd || null;
-            slots.find(s => s.type === 'OptionalInternal' && !s.equippedItem)!.equippedItem = shieldGen || null;
-
-            // @google/genai-codex-fix: Derive maxEnergy from the equipped power plant.
-            const maxEnergy = powerPlant?.stats?.powerGenerated || 10;
-
-            const newShip: Ship = {
-                name: selectedShip.type,
-                type: selectedShip.type,
-                hull: spec.hull,
-                maxHull: spec.hull,
-                shields: shieldGen?.stats.shieldStrength || spec.shields,
-                maxShields: shieldGen?.stats.shieldStrength || spec.shields,
-                fuel: spec.maxFuel,
-                maxFuel: spec.maxFuel,
-                cargoCapacity: spec.cargoCapacity,
-                cargo: [],
-                credits: prevShip.credits - tradeInData.finalCost,
-                basePrice: spec.basePrice,
-                slots: slots,
-                energy: maxEnergy,
-                maxEnergy: maxEnergy,
-                // Fix: Add missing properties to conform to Ship type
-                position: prevShip.position,
-                velocity: { x: 0, y: 0 },
-                angle: 0,
-            };
-            return newShip;
-        });
-        
-        alert(`Congratulations on your new ${selectedShip.type}!`);
-        setShowConfirm(false);
-        setSelectedShip(null);
-        onReturnToStation();
     };
 
     return (
