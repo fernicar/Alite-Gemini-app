@@ -1,5 +1,5 @@
 
-import React, { useMemo, useEffect, useRef } from 'react';
+import React, { useMemo, useEffect, useRef, useState } from 'react';
 import { Ship, StarSystem, NPC, Salvage, Projectile, VisualEffect } from '../types';
 import { ShipStatusPanel } from './ShipStatusPanel';
 import { StationIcon, FireIcon, SalvageIcon } from './icons';
@@ -48,6 +48,87 @@ const SystemView: React.FC<{
   // Parallax background refs
   const backgroundCanvasRef = useRef<HTMLCanvasElement>(null);
   const starsRef = useRef<{ x: number; y: number; size: number; opacity: number; }[][]>([]);
+
+  // Refs for orbital parameters, to prevent re-generation on every render
+  const orbitalParamsRef = useRef<Record<string, { radius: number; period: number; startAngle: number }>>({});
+  const planetPropsRef = useRef<Record<string, { type: 'terrestrial' | 'gas_giant' | 'rocky'; size: number }>>({});
+
+  // State for the dynamic positions of celestial bodies
+  const [celestialBodyPositions, setCelestialBodyPositions] = useState<Record<string, { x: number; y: number }>>({});
+
+  // Effect to generate orbital parameters whenever the system changes
+  useEffect(() => {
+      // Simple seeded PRNG (Pseudo-Random Number Generator)
+      const seededRandom = (seed: number) => {
+          let s = seed;
+          return () => {
+              s = Math.sin(s) * 10000;
+              return s - Math.floor(s);
+          };
+      };
+      const random = seededRandom(currentSystem.id);
+
+      const params: Record<string, { radius: number; period: number; startAngle: number }> = {};
+      const props: Record<string, { type: 'terrestrial' | 'gas_giant' | 'rocky'; size: number }> = {};
+
+      // Station
+      params['station'] = {
+          radius: 200 + random() * 50, // 200-250
+          period: 400 + random() * 200, // 400-600s
+          startAngle: random() * Math.PI * 2,
+      };
+
+      // Planets
+      const planetTypes: ('terrestrial' | 'gas_giant' | 'rocky')[] = ['terrestrial', 'rocky', 'gas_giant'];
+      for (let i = 1; i <= 3; i++) {
+          const id = `planet${i}`;
+          params[id] = {
+              radius: 150 * i + random() * 100, // Orbits get larger: ~200, ~350, ~500
+              period: (250 + 150 * i) * (1 + random() * 0.5), // Outer planets are slower
+              startAngle: random() * Math.PI * 2,
+          };
+          props[id] = {
+              type: planetTypes[i-1],
+              size: 24 + Math.floor(random() * 17) // 24-40
+          };
+      }
+      
+      orbitalParamsRef.current = params;
+      planetPropsRef.current = props;
+
+  }, [currentSystem.id]);
+
+    // Effect for animation loop
+    useEffect(() => {
+        let animationFrameId: number;
+        const startTime = Date.now();
+
+        const animate = () => {
+            const elapsedTime = (Date.now() - startTime) / 1000; // in seconds
+            const newPositions: Record<string, { x: number; y: number }> = {};
+
+            for (const id in orbitalParamsRef.current) {
+                const params = orbitalParamsRef.current[id];
+                // clockwise orbit
+                const angle = params.startAngle - (2 * Math.PI * elapsedTime / params.period);
+                newPositions[id] = {
+                    x: params.radius * Math.cos(angle),
+                    y: params.radius * Math.sin(angle),
+                };
+            }
+
+            setCelestialBodyPositions(newPositions);
+            animationFrameId = requestAnimationFrame(animate);
+        };
+
+        if (Object.keys(orbitalParamsRef.current).length > 0) {
+          animate();
+        }
+
+        return () => {
+            cancelAnimationFrame(animationFrameId);
+        };
+    }, [currentSystem.id]); // Re-start animation when system changes
 
   // Generate stars once on component mount
   useEffect(() => {
@@ -141,6 +222,57 @@ const SystemView: React.FC<{
       };
 
   }, [ship.position]); // Redraw when ship position changes
+
+  const scannerObjects = useMemo(() => {
+    const SCANNER_RANGE = 3000; // World units
+    const SCANNER_RADIUS = 95; // SVG units
+
+    const celestialObjects = Object.entries(celestialBodyPositions).map(([id, position]) => ({
+        id,
+        type: id === 'station' ? 'station' : 'planet',
+        position,
+    }));
+
+    const allObjects: (NPC | Salvage | typeof celestialObjects[0])[] = [
+        ...npcs,
+        ...salvage,
+        ...celestialObjects,
+    ];
+
+    return allObjects.map(obj => {
+        const deltaX = obj.position.x - ship.position.x;
+        const deltaY = obj.position.y - ship.position.y;
+        const distance = Math.sqrt(deltaX**2 + deltaY**2);
+        
+        let scannerX = 100 + (deltaX / SCANNER_RANGE) * SCANNER_RADIUS;
+        let scannerY = 100 + (deltaY / SCANNER_RANGE) * SCANNER_RADIUS;
+
+        const isClamped = distance > SCANNER_RANGE;
+
+        if (isClamped) {
+            scannerX = 100 + (deltaX / distance) * SCANNER_RADIUS;
+            scannerY = 100 + (deltaY / distance) * SCANNER_RADIUS;
+        }
+        
+        let objectType;
+        if ('isHostile' in obj) {
+            objectType = obj.isHostile ? 'hostile' : 'neutral';
+        } else if ('contents' in obj) {
+            objectType = 'salvage';
+        } else {
+            objectType = obj.type;
+        }
+
+        return {
+            id: obj.id,
+            type: objectType,
+            x: scannerX,
+            y: scannerY,
+            angle: (obj as NPC).angle || 0,
+            isTarget: target?.id === obj.id,
+        };
+    });
+  }, [npcs, salvage, ship.position, target, celestialBodyPositions]);
   
   return (
     <main className="grid flex-grow grid-cols-1 gap-4 p-4 min-h-0 lg:grid-cols-[350px_1fr]">
@@ -204,7 +336,7 @@ const SystemView: React.FC<{
           {/* Scanner HUD */}
           <div className="absolute w-[80vmin] h-[80vmin] pointer-events-none">
               {/* Grid */}
-              <svg width="100%" height="100%" viewBox="0 0 200 200" className="absolute inset-0 z-1">
+              <svg width="100%" height="100%" viewBox="0 0 200 200" className="absolute inset-0 z-10">
                   <defs>
                       <radialGradient id="scannerGlow" cx="50%" cy="50%" r="50%" fx="50%" fy="50%">
                           <stop offset="85%" stopColor="rgba(0, 40, 40, 0)" />
@@ -212,18 +344,16 @@ const SystemView: React.FC<{
                       </radialGradient>
                   </defs>
                   <circle cx="100" cy="100" r="99" fill="url(#scannerGlow)" />
-
                   <circle cx="100" cy="100" r="33" fill="none" stroke="rgba(0, 255, 255, 0.1)" strokeWidth="0.5" />
                   <circle cx="100" cy="100" r="66" fill="none" stroke="rgba(0, 255, 255, 0.1)" strokeWidth="0.5" />
                   <circle cx="100" cy="100" r="99" fill="none" stroke="rgba(0, 255, 255, 0.2)" strokeWidth="0.5" />
-
                   <line x1="100" y1="0" x2="100" y2="200" stroke="rgba(0, 255, 255, 0.1)" strokeWidth="0.5" />
                   <line x1="0" y1="100" x2="200" y2="100" stroke="rgba(0, 255, 255, 0.1)" strokeWidth="0.5" />
                   <line x1="29.3" y1="29.3" x2="170.7" y2="170.7" stroke="rgba(0, 255, 255, 0.1)" strokeWidth="0.5" />
                   <line x1="29.3" y1="170.7" x2="170.7" y2="29.3" stroke="rgba(0, 255, 255, 0.1)" strokeWidth="0.5" />
               </svg>
               {/* Sweep */}
-              <div className="absolute inset-0 w-full h-full animate-spin-radar z-2" style={{ transformOrigin: '50% 50%' }}>
+              <div className="absolute inset-0 w-full h-full animate-spin-radar z-10" style={{ transformOrigin: '50% 50%' }}>
                   <div className="absolute top-0 left-0 w-full h-full"
                       style={{
                           background: 'conic-gradient(from 0deg at 50% 50%, transparent 0deg, transparent 270deg, rgba(0, 255, 255, 0.4) 358deg, transparent 360deg)',
@@ -231,8 +361,63 @@ const SystemView: React.FC<{
                       }}
                   />
               </div>
+              {/* Blips */}
+              <div className="absolute inset-0 z-10">
+                <svg width="100%" height="100%" viewBox="0 0 200 200">
+                    <line x1="98" y1="100" x2="102" y2="100" stroke="#0ea5e9" strokeWidth="1" />
+                    <line x1="100" y1="98" x2="100" y2="102" stroke="#0ea5e9" strokeWidth="1" />
+                    
+                    {scannerObjects.map(obj => {
+                        const key = `${obj.id}-${obj.type}`;
+                        let blip = null;
+                        switch(obj.type) {
+                            case 'hostile':
+                                blip = <polygon key={key} points="-3,4 0,-4 3,4" fill="#ef4444" transform={`translate(${obj.x} ${obj.y}) rotate(${obj.angle})`} stroke="#f87171" strokeWidth="0.3" />;
+                                break;
+                            case 'neutral':
+                                blip = <rect key={key} x={obj.x - 2} y={obj.y - 2} width="4" height="4" fill="#22c55e" stroke="#4ade80" strokeWidth="0.3" />;
+                                break;
+                            case 'salvage':
+                                blip = <polygon key={key} points="0,-3 3,0 0,3 -3,0" fill="#facc15" transform={`translate(${obj.x} ${obj.y})`} />;
+                                break;
+                            case 'station':
+                                blip = <circle key={key} cx={obj.x} cy={obj.y} r="4" fill="none" stroke="#22d3ee" strokeWidth="1" />;
+                                break;
+                            case 'planet':
+                                blip = <circle key={key} cx={obj.x} cy={obj.y} r="3" fill="white" opacity="0.4" />;
+                                break;
+                        }
+                        
+                        return (
+                            <g key={`g-${key}`}>
+                                {blip}
+                                {obj.isTarget && <circle cx={obj.x} cy={obj.y} r="8" fill="none" stroke="red" className="animate-pulse-blip" />}
+                            </g>
+                        )
+                    })}
+                </svg>
+              </div>
           </div>
           
+          {/* Orbital Paths */}
+          <div className="absolute left-1/2 top-1/2 pointer-events-none z-1"
+                style={{ transform: `translate(-50%, -50%) translate(${-ship.position.x}px, ${-ship.position.y}px)` }}>
+              <svg width="1200" height="1200" viewBox="0 0 1200 1200" className="absolute -left-[600px] -top-[600px]">
+                  {Object.values(orbitalParamsRef.current).map((params, i) => (
+                      <circle
+                          key={`orbit-${i}`}
+                          cx="600"
+                          cy="600"
+                          r={params.radius}
+                          fill="none"
+                          stroke="rgba(0, 255, 255, 0.1)"
+                          strokeWidth="1"
+                          strokeDasharray="2 4"
+                      />
+                  ))}
+              </svg>
+          </div>
+
           {/* Player Ship */}
           <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10"
               style={{ transform: `rotate(${ship.angle}deg)` }}>
@@ -240,7 +425,7 @@ const SystemView: React.FC<{
           </div>
 
           {/* Central Star (position relative to player) */}
-          <div className="absolute w-32 h-32 bg-yellow-400 rounded-full shadow-[0_0_50px_10px_rgba(250,204,21,0.5)] animate-pulse z-3"
+          <div className="absolute w-32 h-32 bg-yellow-400 rounded-full shadow-[0_0_50px_10px_rgba(250,204,21,0.5)] animate-pulse z-2"
              style={{ 
                 left: '50%', top: '50%',
                 transform: `translate(-50%, -50%) translate(${-ship.position.x}px, ${-ship.position.y}px)`
@@ -248,29 +433,33 @@ const SystemView: React.FC<{
           ></div>
 
           {/* Station */}
-          <div className="absolute z-3" style={{ 
-                left: '50%', top: '50%',
-                transform: `translate(-50%, -50%) translate(${200 * Math.cos(2.09) - ship.position.x}px, ${200 * Math.sin(2.09) - ship.position.y}px)` 
-            }}>
-            <div className="animate-spin-slow w-20 h-20">
-              <StationIcon className="w-20 h-20 text-cyan-300 opacity-75" />
+          {celestialBodyPositions['station'] && (
+            <div className="absolute z-3" style={{ 
+                  left: '50%', top: '50%',
+                  transform: `translate(-50%, -50%) translate(${celestialBodyPositions['station'].x - ship.position.x}px, ${celestialBodyPositions['station'].y - ship.position.y}px)` 
+              }}>
+              <div className="animate-spin-slow w-20 h-20">
+                <StationIcon className="w-20 h-20 text-cyan-300 opacity-75" />
+              </div>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="w-4 h-4 bg-red-500 rounded-full animate-ping"></div>
+              </div>
+              <p className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-xs text-cyan-200 font-mono">{currentSystem.name} Station</p>
             </div>
-            <div className="absolute inset-0 flex items-center justify-center">
-               <div className="w-4 h-4 bg-red-500 rounded-full animate-ping"></div>
-            </div>
-            <p className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-xs text-cyan-200 font-mono">{currentSystem.name} Station</p>
-          </div>
+          )}
 
           {/* Planets */}
-          <div className="absolute z-3" style={{ left: '50%', top: '50%', transform: `translate(-50%,-50%) translate(${150*Math.cos(0.78)-ship.position.x}px, ${150*Math.sin(0.78)-ship.position.y}px)` }}>
-            <PlanetIcon type="terrestrial" size={32} seed={`${currentSystem.id}-1`} />
-          </div>
-          <div className="absolute z-3" style={{ left: '50%', top: '50%', transform: `translate(-50%,-50%) translate(${250*Math.cos(2.61)-ship.position.x}px, ${250*Math.sin(2.61)-ship.position.y}px)` }}>
-            <PlanetIcon type="rocky" size={24} seed={`${currentSystem.id}-2`} />
-          </div>
-          <div className="absolute z-3" style={{ left: '50%', top: '50%', transform: `translate(-50%,-50%) translate(${350*Math.cos(4.88)-ship.position.x}px, ${350*Math.sin(4.88)-ship.position.y}px)` }}>
-            <PlanetIcon type="gas_giant" size={40} seed={`${currentSystem.id}-3`} />
-          </div>
+          {Object.entries(celestialBodyPositions).map(([id, pos]) => {
+            if (!id.startsWith('planet')) return null;
+            const props = planetPropsRef.current[id];
+            if (!props) return null;
+            const planetNum = id.replace('planet', '');
+            return (
+              <div key={id} className="absolute z-3" style={{ left: '50%', top: '50%', transform: `translate(-50%,-50%) translate(${pos.x - ship.position.x}px, ${pos.y - ship.position.y}px)` }}>
+                  <PlanetIcon type={props.type} size={props.size} seed={`${currentSystem.id}-${planetNum}`} />
+              </div>
+            );
+          })}
 
 
           {/* NPCs */}

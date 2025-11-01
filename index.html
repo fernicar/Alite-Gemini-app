@@ -30,6 +30,13 @@
       .animate-spin-radar {
         animation: spin-radar 4s linear infinite;
       }
+      @keyframes pulse-blip {
+        0%, 100% { opacity: 1; stroke-width: 1; }
+        50% { opacity: 0.7; stroke-width: 2; }
+      }
+      .animate-pulse-blip {
+        animation: pulse-blip 1s infinite;
+      }
     </style>
   <script type="importmap">
 {
