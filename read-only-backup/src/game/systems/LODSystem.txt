@@ -1,0 +1,341 @@
+/**
+ * LOD (Level of Detail) System - Dynamic rendering optimization based on object distance and importance
+ * Reduces computational overhead by rendering objects at appropriate detail levels
+ */
+
+export interface LODSettings {
+  maxDistance: number;
+  highDetailDistance: number;
+  mediumDetailDistance: number;
+  lowDetailDistance: number;
+  cullingDistance: number;
+  enableDynamicLOD: boolean;
+  enableFrustumCulling: boolean;
+  enableOcclusionCulling: boolean;
+}
+
+export enum DetailLevel {
+  ULTRA_HIGH = 'ultra_high',
+  HIGH = 'high',
+  MEDIUM = 'medium',
+  LOW = 'low',
+  ULTRA_LOW = 'ultra_low',
+  CULLED = 'culled'
+}
+
+export interface LODObject {
+  id: string;
+  position: { x: number; y: number; z: number };
+  baseDetailLevel: DetailLevel;
+  distanceFromCamera: number;
+  visible: boolean;
+  frustumVisible: boolean;
+  currentDetailLevel: DetailLevel;
+  importance: number; // 0-1, higher importance maintains detail longer
+  updateInterval: number; // ms between LOD updates
+  lastUpdate: number;
+}
+
+export interface Camera {
+  position: { x: number; y: number; z: number };
+  direction: { x: number; y: number; z: number };
+  up: { x: number; y: number; z: number };
+  fov: number;
+  near: number;
+  far: number;
+  aspect: number;
+}
+
+export class LODSystem {
+  private static instance: LODSystem;
+  
+  private lodObjects: Map<string, LODObject> = new Map();
+  private settings: LODSettings;
+  private camera: Camera;
+  private updateCounter: number = 0;
+  private maxUpdatesPerFrame: number = 100; // Limit LOD updates per frame
+
+  private constructor() {
+    this.settings = {
+      maxDistance: 10000,
+      highDetailDistance: 1000,
+      mediumDetailDistance: 3000,
+      lowDetailDistance: 7000,
+      cullingDistance: 15000,
+      enableDynamicLOD: true,
+      enableFrustumCulling: true,
+      enableOcclusionCulling: false // Future enhancement
+    };
+
+    this.camera = {
+      position: { x: 0, y: 0, z: 0 },
+      direction: { x: 0, y: 0, z: -1 },
+      up: { x: 0, y: 1, z: 0 },
+      fov: Math.PI / 3, // 60 degrees
+      near: 1,
+      far: 50000,
+      aspect: 16 / 9
+    };
+  }
+
+  public static getInstance(): LODSystem {
+    if (!LODSystem.instance) {
+      LODSystem.instance = new LODSystem();
+    }
+    return LODSystem.instance;
+  }
+
+  public registerObject(
+    id: string, 
+    position: { x: number; y: number; z: number }, 
+    baseDetailLevel: DetailLevel = DetailLevel.HIGH,
+    importance: number = 0.5,
+    updateInterval: number = 100
+  ): void {
+    const lodObject: LODObject = {
+      id,
+      position: { ...position },
+      baseDetailLevel,
+      distanceFromCamera: 0,
+      visible: true,
+      frustumVisible: true,
+      currentDetailLevel: baseDetailLevel,
+      importance,
+      updateInterval,
+      lastUpdate: 0
+    };
+
+    this.lodObjects.set(id, lodObject);
+  }
+
+  public unregisterObject(id: string): boolean {
+    return this.lodObjects.delete(id);
+  }
+
+  public updateObjectPosition(id: string, position: { x: number; y: number; z: number }): void {
+    const object = this.lodObjects.get(id);
+    if (object) {
+      object.position = { ...position };
+    }
+  }
+
+  public updateCamera(camera: Partial<Camera>): void {
+    this.camera = { ...this.camera, ...camera };
+  }
+
+  public updateLOD(deltaTime: number): void {
+    this.updateCounter++;
+    
+    // Update LOD for objects in batches to avoid frame drops
+    const objects = Array.from(this.lodObjects.values());
+    const startIndex = (this.updateCounter % Math.ceil(objects.length / this.maxUpdatesPerFrame)) * this.maxUpdatesPerFrame;
+    const endIndex = Math.min(startIndex + this.maxUpdatesPerFrame, objects.length);
+    
+    for (let i = startIndex; i < endIndex; i++) {
+      if (i < objects.length) {
+        this.updateObjectLOD(objects[i]);
+      }
+    }
+  }
+
+  private updateObjectLOD(object: LODObject): void {
+    const now = Date.now();
+    if (now - object.lastUpdate < object.updateInterval && this.settings.enableDynamicLOD) {
+      return; // Skip update if not time yet
+    }
+
+    // Calculate distance from camera
+    const dx = object.position.x - this.camera.position.x;
+    const dy = object.position.y - this.camera.position.y;
+    const dz = object.position.z - this.camera.position.z;
+    object.distanceFromCamera = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+    // Check frustum culling
+    object.frustumVisible = this.isInFrustum(object);
+    object.visible = object.frustumVisible;
+
+    // Determine LOD level based on distance and importance
+    if (this.settings.enableDynamicLOD) {
+      object.currentDetailLevel = this.calculateDetailLevel(object);
+    }
+
+    object.lastUpdate = now;
+  }
+
+  private calculateDetailLevel(object: LODObject): DetailLevel {
+    const distance = object.distanceFromCamera;
+    const importance = object.importance;
+    
+    // Adjust distances based on importance (higher importance = maintain detail longer)
+    const adjustedDistances = {
+      high: this.settings.highDetailDistance * (1 + importance * 0.5),
+      medium: this.settings.mediumDetailDistance * (1 + importance * 0.3),
+      low: this.settings.lowDetailDistance * (1 + importance * 0.2),
+      cull: this.settings.cullingDistance * (1 + importance * 0.1)
+    };
+
+    if (!object.frustumVisible) {
+      return DetailLevel.CULLED;
+    }
+
+    if (distance > this.settings.maxDistance) {
+      return DetailLevel.CULLED;
+    }
+
+    if (distance <= adjustedDistances.high) {
+      return DetailLevel.HIGH;
+    } else if (distance <= adjustedDistances.medium) {
+      return DetailLevel.MEDIUM;
+    } else if (distance <= adjustedDistances.low) {
+      return DetailLevel.LOW;
+    } else {
+      return DetailLevel.ULTRA_LOW;
+    }
+  }
+
+  private isInFrustum(object: LODObject): boolean {
+    if (!this.settings.enableFrustumCulling) return true;
+
+    // Simple frustum culling (bounding box check)
+    const { x, y, z } = object.position;
+    
+    // Calculate view frustum planes
+    const aspect = this.camera.aspect;
+    const fov = this.camera.fov;
+    const near = this.camera.near;
+    const far = this.camera.far;
+    
+    // Calculate frustum boundaries
+    const halfHeight = Math.tan(fov / 2) * near;
+    const halfWidth = halfHeight * aspect;
+    
+    // Check if object is within view frustum
+    const dx = x - this.camera.position.x;
+    const dy = y - this.camera.position.y;
+    const dz = z - this.camera.position.z;
+    
+    // Simple distance and angle check
+    const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (distance < near || distance > far) {
+      return false;
+    }
+    
+    // Check if object is within horizontal and vertical FOV
+    const horizontalAngle = Math.atan2(dx, dz);
+    const verticalAngle = Math.atan2(dy, Math.sqrt(dx * dx + dz * dz));
+    
+    const maxHorizontalAngle = Math.atan(halfWidth / near);
+    const maxVerticalAngle = Math.atan(halfHeight / near);
+    
+    return Math.abs(horizontalAngle) <= maxHorizontalAngle && 
+           Math.abs(verticalAngle) <= maxVerticalAngle;
+  }
+
+  public getVisibleObjects(): LODObject[] {
+    return Array.from(this.lodObjects.values()).filter(obj => obj.visible && obj.currentDetailLevel !== DetailLevel.CULLED);
+  }
+
+  public getObjectsByDetailLevel(detailLevel: DetailLevel): LODObject[] {
+    return Array.from(this.lodObjects.values()).filter(obj => obj.currentDetailLevel === detailLevel);
+  }
+
+  public getStatistics(): {
+    total: number;
+    visible: number;
+    culled: number;
+    byLevel: Record<DetailLevel, number>;
+    averageDistance: number;
+  } {
+    const objects = Array.from(this.lodObjects.values());
+    const byLevel: Record<DetailLevel, number> = {
+      [DetailLevel.ULTRA_HIGH]: 0,
+      [DetailLevel.HIGH]: 0,
+      [DetailLevel.MEDIUM]: 0,
+      [DetailLevel.LOW]: 0,
+      [DetailLevel.ULTRA_LOW]: 0,
+      [DetailLevel.CULLED]: 0
+    };
+
+    let visible = 0;
+    let totalDistance = 0;
+    let distanceCount = 0;
+
+    objects.forEach(obj => {
+      byLevel[obj.currentDetailLevel]++;
+      if (obj.visible) visible++;
+      if (obj.distanceFromCamera > 0) {
+        totalDistance += obj.distanceFromCamera;
+        distanceCount++;
+      }
+    });
+
+    return {
+      total: objects.length,
+      visible,
+      culled: objects.length - visible,
+      byLevel,
+      averageDistance: distanceCount > 0 ? totalDistance / distanceCount : 0
+    };
+  }
+
+  public setLODSettings(settings: Partial<LODSettings>): void {
+    this.settings = { ...this.settings, ...settings };
+  }
+
+  public getLODSettings(): LODSettings {
+    return { ...this.settings };
+  }
+
+  public forceUpdateAll(): void {
+    const now = Date.now();
+    this.lodObjects.forEach(obj => {
+      obj.lastUpdate = 0; // Force update on next cycle
+    });
+  }
+
+  public getOptimizationHints(): string[] {
+    const stats = this.getStatistics();
+    const hints: string[] = [];
+
+    if (stats.culled > stats.total * 0.3) {
+      hints.push('Consider reducing culling distance for better performance');
+    }
+
+    if (stats.byLevel[DetailLevel.ULTRA_HIGH] + stats.byLevel[DetailLevel.HIGH] > stats.total * 0.7) {
+      hints.push('Many objects at high detail - consider reducing high detail distance');
+    }
+
+    if (stats.averageDistance < 1000) {
+      hints.push('Objects are close - can increase detail distances for better visuals');
+    } else if (stats.averageDistance > 5000) {
+      hints.push('Objects are far away - consider increasing culling distance');
+    }
+
+    return hints;
+  }
+
+  public adjustForPerformance(targetFPS: number, currentFPS: number): void {
+    const fpsRatio = currentFPS / targetFPS;
+    
+    if (fpsRatio < 0.8) {
+      // Performance is poor, reduce detail
+      this.settings.highDetailDistance *= 0.8;
+      this.settings.mediumDetailDistance *= 0.8;
+      this.settings.lowDetailDistance *= 0.8;
+      this.settings.cullingDistance *= 0.9;
+      console.log('LOD adjusted for performance: reduced distances');
+    } else if (fpsRatio > 1.1) {
+      // Performance is good, increase detail
+      this.settings.highDetailDistance *= 1.1;
+      this.settings.mediumDetailDistance *= 1.1;
+      this.settings.lowDetailDistance *= 1.1;
+      this.settings.cullingDistance *= 1.05;
+      console.log('LOD adjusted for performance: increased distances');
+    }
+  }
+
+  public clear(): void {
+    this.lodObjects.clear();
+    this.updateCounter = 0;
+  }
+}

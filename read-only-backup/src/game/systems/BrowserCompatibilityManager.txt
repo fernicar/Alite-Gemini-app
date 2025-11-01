@@ -1,0 +1,562 @@
+/**
+ * Browser Compatibility Manager - Cross-browser compatibility and fallback system
+ * Handles WebGL/Canvas limitations, audio autoplay, and other browser-specific issues
+ */
+
+export interface BrowserCapabilities {
+  webgl: boolean;
+  webgl2: boolean;
+  webAudio: boolean;
+  webAudioContext: any;
+  canvas: boolean;
+  es6: boolean;
+  asyncAwait: boolean;
+  localStorage: boolean;
+  indexedDB: boolean;
+  serviceWorker: boolean;
+  webAssembly: boolean;
+  vibrate: boolean;
+  fullscreen: boolean;
+  devicePixelRatio: number;
+  maxTouchPoints: number;
+}
+
+export interface BrowserInfo {
+  name: string;
+  version: string;
+  engine: string;
+  platform: string;
+  isMobile: boolean;
+  isTablet: boolean;
+  isDesktop: boolean;
+  isIOS: boolean;
+  isAndroid: boolean;
+  userAgent: string;
+  language: string;
+  cookieEnabled: boolean;
+  onLine: boolean;
+}
+
+export interface CompatibilitySettings {
+  enableWebGL: boolean;
+  fallbackToCanvas: boolean;
+  enableWebAudio: boolean;
+  fallbackToHTMLAudio: boolean;
+  enableServiceWorker: boolean;
+  enableOfflineMode: boolean;
+  debugMode: boolean;
+  performanceMode: boolean;
+}
+
+export enum CompatibilityLevel {
+  EXCELLENT = 'excellent',
+  GOOD = 'good',
+  ACCEPTABLE = 'acceptable',
+  LIMITED = 'limited',
+  MINIMAL = 'minimal'
+}
+
+export class BrowserCompatibilityManager {
+  private static instance: BrowserCompatibilityManager;
+  
+  private browserInfo: BrowserInfo;
+  private capabilities: BrowserCapabilities;
+  private settings: CompatibilitySettings;
+  private compatibilityLevel: CompatibilityLevel;
+  private webglContext: WebGLRenderingContext | null = null;
+  private canvasContext: CanvasRenderingContext2D | null = null;
+  private webAudioContext: AudioContext | null = null;
+  private featureTests: Map<string, boolean> = new Map();
+
+  private constructor() {
+    this.browserInfo = this.detectBrowser();
+    this.capabilities = this.detectCapabilities();
+    this.settings = this.getDefaultSettings();
+    this.compatibilityLevel = this.calculateCompatibilityLevel();
+    this.initializeCompatibility();
+  }
+
+  public static getInstance(): BrowserCompatibilityManager {
+    if (!BrowserCompatibilityManager.instance) {
+      BrowserCompatibilityManager.instance = new BrowserCompatibilityManager();
+    }
+    return BrowserCompatibilityManager.instance;
+  }
+
+  private detectBrowser(): BrowserInfo {
+    const userAgent = navigator.userAgent;
+    const language = navigator.language || 'en-US';
+    const cookieEnabled = navigator.cookieEnabled;
+    const onLine = navigator.onLine;
+
+    // Detect browser name and version
+    let browserName = 'Unknown';
+    let browserVersion = 'Unknown';
+    let engine = 'Unknown';
+
+    if (userAgent.includes('Chrome')) {
+      browserName = 'Chrome';
+      browserVersion = userAgent.match(/Chrome\/(\d+)/)?.[1] || 'Unknown';
+      engine = 'Blink';
+    } else if (userAgent.includes('Firefox')) {
+      browserName = 'Firefox';
+      browserVersion = userAgent.match(/Firefox\/(\d+)/)?.[1] || 'Unknown';
+      engine = 'Gecko';
+    } else if (userAgent.includes('Safari') && !userAgent.includes('Chrome')) {
+      browserName = 'Safari';
+      browserVersion = userAgent.match(/Version\/(\d+)/)?.[1] || 'Unknown';
+      engine = 'WebKit';
+    } else if (userAgent.includes('Edge')) {
+      browserName = 'Edge';
+      browserVersion = userAgent.match(/Edge\/(\d+)/)?.[1] || 'Unknown';
+      engine = 'EdgeHTML';
+    } else if (userAgent.includes('Opera') || userAgent.includes('OPR')) {
+      browserName = 'Opera';
+      browserVersion = userAgent.match(/(?:Opera|OPR)\/(\d+)/)?.[1] || 'Unknown';
+      engine = 'Blink';
+    }
+
+    // Detect platform
+    const isIOS = /iPhone|iPad|iPod/i.test(userAgent);
+    const isAndroid = /Android/i.test(userAgent);
+    const isMobile = isIOS || isAndroid || /Mobile/i.test(userAgent);
+    const isTablet = /iPad|Android(?!.*Mobile)/i.test(userAgent);
+    const isDesktop = !isMobile && !isTablet;
+
+    return {
+      name: browserName,
+      version: browserVersion,
+      engine,
+      platform: navigator.platform,
+      isMobile,
+      isTablet,
+      isDesktop,
+      isIOS,
+      isAndroid,
+      userAgent,
+      language,
+      cookieEnabled,
+      onLine
+    };
+  }
+
+  private detectCapabilities(): BrowserCapabilities {
+    return {
+      webgl: this.testFeature(() => {
+        const canvas = document.createElement('canvas');
+        return !!(canvas.getContext('webgl') || canvas.getContext('experimental-webgl'));
+      }),
+      webgl2: this.testFeature(() => {
+        const canvas = document.createElement('canvas');
+        return !!(canvas.getContext('webgl2'));
+      }),
+      webAudio: 'AudioContext' in window || 'webkitAudioContext' in window,
+      webAudioContext: window.AudioContext || (window as any).webkitAudioContext,
+      canvas: this.testFeature(() => {
+        const canvas = document.createElement('canvas');
+        return !!(canvas.getContext && canvas.getContext('2d'));
+      }),
+      es6: this.testFeature(() => {
+        try {
+          eval('class Test {}');
+          return true;
+        } catch (e) {
+          return false;
+        }
+      }),
+      asyncAwait: this.testFeature(() => {
+        try {
+          eval('async function test() {}');
+          return true;
+        } catch (e) {
+          return false;
+        }
+      }),
+      localStorage: this.testFeature(() => {
+        try {
+          localStorage.setItem('test', 'test');
+          localStorage.removeItem('test');
+          return true;
+        } catch (e) {
+          return false;
+        }
+      }),
+      indexedDB: 'indexedDB' in window,
+      serviceWorker: 'serviceWorker' in navigator,
+      webAssembly: 'WebAssembly' in window,
+      vibrate: 'vibrate' in navigator,
+      fullscreen: !!(document.fullscreenEnabled || (document as any).webkitFullscreenEnabled || (document as any).mozFullScreenEnabled || (document as any).msFullscreenEnabled),
+      devicePixelRatio: window.devicePixelRatio || 1,
+      maxTouchPoints: navigator.maxTouchPoints || 0
+    };
+  }
+
+  private testFeature(testFn: () => boolean): boolean {
+    try {
+      return testFn();
+    } catch (e) {
+      return false;
+    }
+  }
+
+  private getDefaultSettings(): CompatibilitySettings {
+    return {
+      enableWebGL: this.capabilities.webgl && this.browserInfo.name !== 'Safari',
+      fallbackToCanvas: true,
+      enableWebAudio: this.capabilities.webAudio,
+      fallbackToHTMLAudio: true,
+      enableServiceWorker: this.capabilities.serviceWorker,
+      enableOfflineMode: true,
+      debugMode: false,
+      performanceMode: false
+    };
+  }
+
+  private calculateCompatibilityLevel(): CompatibilityLevel {
+    let score = 0;
+
+    // Score based on capabilities
+    if (this.capabilities.webgl) score += 20;
+    if (this.capabilities.webgl2) score += 10;
+    if (this.capabilities.webAudio) score += 15;
+    if (this.capabilities.canvas) score += 10;
+    if (this.capabilities.es6) score += 10;
+    if (this.capabilities.asyncAwait) score += 10;
+    if (this.capabilities.localStorage) score += 5;
+    if (this.capabilities.indexedDB) score += 10;
+    if (this.capabilities.serviceWorker) score += 10;
+
+    // Adjust for known issues
+    if (this.browserInfo.name === 'Safari') {
+      score -= 5; // Known WebGL issues
+    }
+    if (this.browserInfo.isMobile) {
+      score -= 3; // Mobile limitations
+    }
+
+    // Determine level
+    if (score >= 80) return CompatibilityLevel.EXCELLENT;
+    if (score >= 60) return CompatibilityLevel.GOOD;
+    if (score >= 40) return CompatibilityLevel.ACCEPTABLE;
+    if (score >= 20) return CompatibilityLevel.LIMITED;
+    return CompatibilityLevel.MINIMAL;
+  }
+
+  private initializeCompatibility(): void {
+    this.setupWebGLFallback();
+    this.setupAudioFallback();
+    this.setupStorageFallback();
+    this.setupErrorHandling();
+    this.setupPerformanceOptimization();
+  }
+
+  private setupWebGLFallback(): void {
+    if (this.settings.enableWebGL && this.capabilities.webgl) {
+      try {
+        const canvas = document.createElement('canvas');
+        this.webglContext = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+        
+        if (!this.webglContext) {
+          console.warn('WebGL not available, falling back to Canvas 2D');
+          this.fallbackToCanvas();
+        }
+      } catch (error) {
+        console.warn('WebGL initialization failed, falling back to Canvas 2D:', error);
+        this.fallbackToCanvas();
+      }
+    } else {
+      this.fallbackToCanvas();
+    }
+  }
+
+  private fallbackToCanvas(): void {
+    if (this.settings.fallbackToCanvas && this.capabilities.canvas) {
+      const canvas = document.createElement('canvas');
+      this.canvasContext = canvas.getContext('2d');
+      
+      if (!this.canvasContext) {
+        throw new Error('Canvas 2D not available');
+      }
+      
+      console.log('Using Canvas 2D rendering');
+    } else {
+      throw new Error('No rendering context available');
+    }
+  }
+
+  private setupAudioFallback(): void {
+    if (this.settings.enableWebAudio && this.capabilities.webAudio) {
+      try {
+        const AudioContextClass = this.capabilities.webAudioContext;
+        this.webAudioContext = new AudioContextClass();
+        
+        // Handle audio context state changes
+        this.webAudioContext.addEventListener('statechange', () => {
+          console.log('Audio context state:', this.webAudioContext?.state);
+        });
+        
+      } catch (error) {
+        console.warn('Web Audio initialization failed:', error);
+        this.fallbackToHTMLAudio();
+      }
+    } else {
+      this.fallbackToHTMLAudio();
+    }
+  }
+
+  private fallbackToHTMLAudio(): void {
+    console.log('Using HTML Audio fallback');
+    // HTML Audio will be used through standard audio elements
+  }
+
+  private setupStorageFallback(): void {
+    if (!this.capabilities.localStorage) {
+      console.warn('localStorage not available, falling back to memory storage');
+      // Memory-based storage fallback would be implemented here
+    }
+    
+    if (!this.capabilities.indexedDB) {
+      console.warn('IndexedDB not available, falling back to localStorage');
+      // Fallback to localStorage for larger data storage
+    }
+  }
+
+  private setupErrorHandling(): void {
+    window.addEventListener('error', (event) => {
+      this.handleBrowserError(event.error);
+    });
+
+    window.addEventListener('unhandledrejection', (event) => {
+      this.handlePromiseRejection(event.reason);
+    });
+  }
+
+  private handleBrowserError(error: Error): void {
+    console.error('Browser error:', error);
+    
+    // Detect specific browser issues
+    if (error.message.includes('SecurityError')) {
+      console.warn('Security error detected, may need HTTPS');
+    }
+    
+    if (error.message.includes('NotAllowedError')) {
+      console.warn('Permission denied, may need user gesture');
+    }
+    
+    if (this.settings.debugMode) {
+      this.reportCompatibilityIssue('runtime_error', error.message);
+    }
+  }
+
+  private handlePromiseRejection(reason: any): void {
+    console.error('Unhandled promise rejection:', reason);
+  }
+
+  private setupPerformanceOptimization(): void {
+    if (this.settings.performanceMode) {
+      // Reduce frame rate for lower-end browsers
+      if (this.compatibilityLevel === CompatibilityLevel.LIMITED || 
+          this.compatibilityLevel === CompatibilityLevel.MINIMAL) {
+        this.reducePerformance();
+      }
+    }
+  }
+
+  private reducePerformance(): void {
+    console.log('Reducing performance for compatibility');
+    // Implementation would reduce rendering quality, update frequency, etc.
+  }
+
+  public initializeWebGL(options?: WebGLContextAttributes): WebGLRenderingContext | null {
+    if (!this.settings.enableWebGL || !this.capabilities.webgl) {
+      return null;
+    }
+
+    try {
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('webgl', options) || 
+                     canvas.getContext('experimental-webgl', options);
+      
+      if (context) {
+        console.log('WebGL context initialized successfully');
+        return context as WebGLRenderingContext;
+      }
+    } catch (error) {
+      console.warn('WebGL initialization failed:', error);
+    }
+
+    return null;
+  }
+
+  public initializeWebAudio(): AudioContext | null {
+    if (!this.settings.enableWebAudio || !this.capabilities.webAudio) {
+      return null;
+    }
+
+    try {
+      const AudioContextClass = this.capabilities.webAudioContext;
+      const context = new AudioContextClass();
+      
+      console.log('Web Audio context initialized successfully');
+      return context;
+    } catch (error) {
+      console.warn('Web Audio initialization failed:', error);
+      return null;
+    }
+  }
+
+  public requestFullscreen(element: HTMLElement): Promise<void> {
+    if (!this.capabilities.fullscreen) {
+      return Promise.reject(new Error('Fullscreen not supported'));
+    }
+
+    const requestMethod = element.requestFullscreen || 
+                         (element as any).webkitRequestFullscreen || 
+                         (element as any).mozRequestFullScreen || 
+                         (element as any).msRequestFullscreen;
+
+    if (!requestMethod) {
+      return Promise.reject(new Error('Fullscreen request method not available'));
+    }
+
+    return requestMethod.call(element);
+  }
+
+  public exitFullscreen(): Promise<void> {
+    const exitMethod = document.exitFullscreen || 
+                      (document as any).webkitExitFullscreen || 
+                      (document as any).mozCancelFullScreen || 
+                      (document as any).msExitFullscreen;
+
+    if (!exitMethod) {
+      return Promise.reject(new Error('Fullscreen exit method not available'));
+    }
+
+    return exitMethod.call(document);
+  }
+
+  public isFullscreen(): boolean {
+    return !!(document.fullscreenElement || 
+             (document as any).webkitFullscreenElement || 
+             (document as any).mozFullScreenElement || 
+             (document as any).msFullscreenElement);
+  }
+
+  public handleAudioAutoplay(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (!this.webAudioContext) {
+        reject(new Error('Web Audio not available'));
+        return;
+      }
+
+      if (this.webAudioContext.state === 'running') {
+        resolve();
+        return;
+      }
+
+      this.webAudioContext.resume().then(() => {
+        console.log('Audio context resumed after user interaction');
+        resolve();
+      }).catch((error) => {
+        console.warn('Failed to resume audio context:', error);
+        reject(error);
+      });
+    });
+  }
+
+  public registerServiceWorker(url: string): Promise<ServiceWorkerRegistration> {
+    if (!this.capabilities.serviceWorker || !this.settings.enableServiceWorker) {
+      return Promise.reject(new Error('Service Worker not supported'));
+    }
+
+    return navigator.serviceWorker.register(url);
+  }
+
+  public getCompatibilityReport(): string {
+    return `
+Browser Compatibility Report
+=============================
+Browser: ${this.browserInfo.name} ${this.browserInfo.version}
+Engine: ${this.browserInfo.engine}
+Platform: ${this.browserInfo.platform}
+Compatibility Level: ${this.compatibilityLevel.toUpperCase()}
+
+Capabilities:
+- WebGL: ${this.capabilities.webgl ? '✓' : '✗'}
+- WebGL2: ${this.capabilities.webgl2 ? '✓' : '✗'}
+- Web Audio: ${this.capabilities.webAudio ? '✓' : '✗'}
+- Canvas: ${this.capabilities.canvas ? '✓' : '✗'}
+- ES6: ${this.capabilities.es6 ? '✓' : '✗'}
+- Async/Await: ${this.capabilities.asyncAwait ? '✓' : '✗'}
+- Local Storage: ${this.capabilities.localStorage ? '✓' : '✗'}
+- IndexedDB: ${this.capabilities.indexedDB ? '✓' : '✗'}
+- Service Worker: ${this.capabilities.serviceWorker ? '✓' : '✗'}
+- WebAssembly: ${this.capabilities.webAssembly ? '✓' : '✗'}
+
+Settings:
+- WebGL Enabled: ${this.settings.enableWebGL}
+- Audio Enabled: ${this.settings.enableWebAudio}
+- Offline Mode: ${this.settings.enableOfflineMode}
+`;
+  }
+
+  public getBrowserInfo(): BrowserInfo {
+    return { ...this.browserInfo };
+  }
+
+  public getCapabilities(): BrowserCapabilities {
+    return { ...this.capabilities };
+  }
+
+  public getSettings(): CompatibilitySettings {
+    return { ...this.settings };
+  }
+
+  public updateSettings(updates: Partial<CompatibilitySettings>): void {
+    this.settings = { ...this.settings, ...updates };
+    
+    // Re-initialize if necessary
+    if (updates.enableWebGL !== undefined) {
+      this.setupWebGLFallback();
+    }
+    if (updates.enableWebAudio !== undefined) {
+      this.setupAudioFallback();
+    }
+  }
+
+  private reportCompatibilityIssue(type: string, details: string): void {
+    console.warn(`Compatibility issue: ${type} - ${details}`);
+    // This would send telemetry data in a production environment
+  }
+
+  public shouldUseCanvasFallback(): boolean {
+    return !this.settings.enableWebGL || !this.capabilities.webgl || !this.webglContext;
+  }
+
+  public shouldUseHTMLAudioFallback(): boolean {
+    return !this.settings.enableWebAudio || !this.capabilities.webAudio || !this.webAudioContext;
+  }
+
+  public isFeatureSupported(feature: string): boolean {
+    return this.featureTests.get(feature) || false;
+  }
+
+  public testCustomFeature(name: string, testFn: () => boolean): void {
+    this.featureTests.set(name, testFn());
+  }
+
+  public getRecommendedSettings(): Partial<CompatibilitySettings> {
+    const recommendations: Partial<CompatibilitySettings> = {};
+    
+    if (this.compatibilityLevel === CompatibilityLevel.MINIMAL || 
+        this.compatibilityLevel === CompatibilityLevel.LIMITED) {
+      recommendations.enableWebGL = false;
+      recommendations.enableWebAudio = false;
+      recommendations.performanceMode = true;
+    } else if (this.browserInfo.name === 'Safari') {
+      recommendations.enableWebGL = false; // Safari WebGL issues
+    }
+    
+    return recommendations;
+  }
+}

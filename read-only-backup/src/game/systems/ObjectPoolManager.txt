@@ -1,0 +1,396 @@
+/**
+ * Object Pooling System - Efficient memory management for frequently created/destroyed objects
+ * Optimizes performance by reusing objects instead of creating new ones
+ */
+
+export interface Poolable {
+  reset(): void;
+  isActive(): boolean;
+  setActive(active: boolean): void;
+}
+
+export interface PoolConfiguration {
+  initialSize: number;
+  maxSize: number;
+  growthRate: number;
+  cleanupThreshold: number;
+  enableMetrics: boolean;
+}
+
+export class ObjectPool<T extends Poolable> {
+  private pool: T[] = [];
+  private activeObjects: Set<T> = new Set();
+  private configuration: PoolConfiguration;
+  private creationCount: number = 0;
+  private reuseCount: number = 0;
+  private cleanupCount: number = 0;
+  private constructorFn: () => T;
+  private name: string;
+
+  constructor(
+    constructorFn: () => T,
+    configuration: Partial<PoolConfiguration> = {},
+    name: string = 'UnnamedPool'
+  ) {
+    this.constructorFn = constructorFn;
+    this.name = name;
+    
+    this.configuration = {
+      initialSize: 10,
+      maxSize: 1000,
+      growthRate: 1.5,
+      cleanupThreshold: 0.8,
+      enableMetrics: true,
+      ...configuration
+    };
+
+    this.initializePool();
+  }
+
+  private initializePool(): void {
+    for (let i = 0; i < this.configuration.initialSize; i++) {
+      this.pool.push(this.constructorFn());
+    }
+  }
+
+  public get(): T {
+    let object: T;
+    
+    if (this.pool.length > 0) {
+      object = this.pool.pop()!;
+      this.reuseCount++;
+    } else if (this.activeObjects.size < this.configuration.maxSize) {
+      object = this.constructorFn();
+      this.creationCount++;
+    } else {
+      // Pool is full, reuse the oldest active object
+      const oldestObject = this.activeObjects.values().next().value as T;
+      this.release(oldestObject);
+      object = this.pool.pop()!;
+      this.reuseCount++;
+    }
+
+    object.setActive(true);
+    this.activeObjects.add(object);
+    
+    return object;
+  }
+
+  public release(object: T): void {
+    if (this.activeObjects.has(object)) {
+      object.setActive(false);
+      object.reset();
+      this.activeObjects.delete(object);
+      this.pool.push(object);
+      
+      // Clean up pool if it's getting too large
+      if (this.pool.length > this.configuration.maxSize * this.configuration.cleanupThreshold) {
+        this.cleanup();
+      }
+    }
+  }
+
+  private cleanup(): void {
+    const excessCount = Math.floor(this.pool.length * 0.3); // Remove 30% of excess objects
+    for (let i = 0; i < excessCount; i++) {
+      this.pool.pop();
+      this.cleanupCount++;
+    }
+  }
+
+  public getActiveObjects(): T[] {
+    return Array.from(this.activeObjects);
+  }
+
+  public getActiveCount(): number {
+    return this.activeObjects.size;
+  }
+
+  public getPooledCount(): number {
+    return this.pool.length;
+  }
+
+  public getTotalCount(): number {
+    return this.getActiveCount() + this.getPooledCount();
+  }
+
+  public getMetrics(): { 
+    active: number; 
+    pooled: number; 
+    total: number; 
+    creationCount: number; 
+    reuseCount: number; 
+    cleanupCount: number;
+    efficiency: number;
+  } {
+    const totalCreated = this.creationCount + this.reuseCount;
+    const efficiency = totalCreated > 0 ? this.reuseCount / totalCreated : 0;
+    
+    return {
+      active: this.getActiveCount(),
+      pooled: this.getPooledCount(),
+      total: this.getTotalCount(),
+      creationCount: this.creationCount,
+      reuseCount: this.reuseCount,
+      cleanupCount: this.cleanupCount,
+      efficiency: efficiency
+    };
+  }
+
+  public setMaxSize(maxSize: number): void {
+    this.configuration.maxSize = maxSize;
+  }
+
+  public clear(): void {
+    this.pool.forEach(obj => obj.reset());
+    this.pool = [];
+    this.activeObjects.forEach(obj => obj.setActive(false));
+    this.activeObjects.clear();
+  }
+
+  public shrink(): void {
+    const targetSize = Math.max(this.configuration.initialSize, Math.floor(this.activeObjects.size * 1.2));
+    while (this.pool.length > targetSize) {
+      this.pool.pop();
+    }
+  }
+}
+
+export class Projectile implements Poolable {
+  public position: { x: number; y: number; z: number } = { x: 0, y: 0, z: 0 };
+  public velocity: { x: number; y: number; z: number } = { x: 0, y: 0, z: 0 };
+  public damage: number = 0;
+  public ownerId: string = '';
+  public projectileType: string = 'laser';
+  public lifetime: number = 0;
+  public maxLifetime: number = 5000; // 5 seconds
+  public active: boolean = false;
+
+  public reset(): void {
+    this.position.x = 0;
+    this.position.y = 0;
+    this.position.z = 0;
+    this.velocity.x = 0;
+    this.velocity.y = 0;
+    this.velocity.z = 0;
+    this.damage = 0;
+    this.ownerId = '';
+    this.projectileType = 'laser';
+    this.lifetime = 0;
+  }
+
+  public isActive(): boolean {
+    return this.active && this.lifetime < this.maxLifetime;
+  }
+
+  public setActive(active: boolean): void {
+    this.active = active;
+    if (!active) {
+      this.lifetime = 0;
+    }
+  }
+
+  public update(deltaTime: number): void {
+    if (!this.active) return;
+    
+    this.lifetime += deltaTime;
+    
+    // Update position based on velocity
+    this.position.x += this.velocity.x * deltaTime;
+    this.position.y += this.velocity.y * deltaTime;
+    this.position.z += this.velocity.z * deltaTime;
+  }
+}
+
+export class Particle implements Poolable {
+  public position: { x: number; y: number; z: number } = { x: 0, y: 0, z: 0 };
+  public velocity: { x: number; y: number; z: number } = { x: 0, y: 0, z: 0 };
+  public color: string = '#ffffff';
+  public size: number = 1;
+  public opacity: number = 1;
+  public lifetime: number = 0;
+  public maxLifetime: number = 1000; // 1 second
+  public particleType: string = 'explosion';
+  public active: boolean = false;
+
+  public reset(): void {
+    this.position.x = 0;
+    this.position.y = 0;
+    this.position.z = 0;
+    this.velocity.x = 0;
+    this.velocity.y = 0;
+    this.velocity.z = 0;
+    this.color = '#ffffff';
+    this.size = 1;
+    this.opacity = 1;
+    this.lifetime = 0;
+    this.particleType = 'explosion';
+  }
+
+  public isActive(): boolean {
+    return this.active && this.lifetime < this.maxLifetime;
+  }
+
+  public setActive(active: boolean): void {
+    this.active = active;
+    if (!active) {
+      this.lifetime = 0;
+    }
+  }
+
+  public update(deltaTime: number): void {
+    if (!this.active) return;
+    
+    this.lifetime += deltaTime;
+    
+    // Update position based on velocity
+    this.position.x += this.velocity.x * deltaTime;
+    this.position.y += this.velocity.y * deltaTime;
+    this.position.z += this.velocity.z * deltaTime;
+    
+    // Apply physics
+    this.velocity.y -= 50 * deltaTime; // Gravity
+    
+    // Fade out
+    const progress = this.lifetime / this.maxLifetime;
+    this.opacity = 1 - progress;
+    this.size *= (1 - deltaTime * 0.001);
+  }
+}
+
+export class ObjectPoolManager {
+  private static instance: ObjectPoolManager;
+  private pools: Map<string, ObjectPool<Poolable>> = new Map();
+
+  private constructor() {}
+
+  public static getInstance(): ObjectPoolManager {
+    if (!ObjectPoolManager.instance) {
+      ObjectPoolManager.instance = new ObjectPoolManager();
+    }
+    return ObjectPoolManager.instance;
+  }
+
+  public createPool<T extends Poolable>(
+    name: string,
+    constructorFn: () => T,
+    configuration?: Partial<PoolConfiguration>
+  ): ObjectPool<T> {
+    if (this.pools.has(name)) {
+      throw new Error(`Pool ${name} already exists`);
+    }
+
+    const pool = new ObjectPool<T>(constructorFn, configuration, name);
+    this.pools.set(name, pool);
+    return pool;
+  }
+
+  public getPool<T extends Poolable>(name: string): ObjectPool<T> | null {
+    return this.pools.get(name) as ObjectPool<T> || null;
+  }
+
+  public getProjectilePool(): ObjectPool<Projectile> {
+    const poolName = 'projectiles';
+    let pool = this.pools.get(poolName) as ObjectPool<Projectile>;
+    
+    if (!pool) {
+      pool = this.createPool<Projectile>(
+        poolName,
+        () => new Projectile(),
+        {
+          initialSize: 50,
+          maxSize: 2000,
+          growthRate: 1.2,
+          enableMetrics: true
+        }
+      );
+    }
+    
+    return pool;
+  }
+
+  public getParticlePool(): ObjectPool<Particle> {
+    const poolName = 'particles';
+    let pool = this.pools.get(poolName) as ObjectPool<Particle>;
+    
+    if (!pool) {
+      pool = this.createPool<Particle>(
+        poolName,
+        () => new Particle(),
+        {
+          initialSize: 100,
+          maxSize: 5000,
+          growthRate: 1.5,
+          enableMetrics: true
+        }
+      );
+    }
+    
+    return pool;
+  }
+
+  public getAllMetrics(): Map<string, any> {
+    const metrics = new Map<string, any>();
+    
+    this.pools.forEach((pool, name) => {
+      metrics.set(name, pool.getMetrics());
+    });
+    
+    return metrics;
+  }
+
+  public getGlobalMetrics(): {
+    totalPools: number;
+    totalActiveObjects: number;
+    totalPooledObjects: number;
+    totalObjects: number;
+    averageEfficiency: number;
+  } {
+    let totalActive = 0;
+    let totalPooled = 0;
+    let totalEfficiency = 0;
+    let poolCount = 0;
+
+    this.pools.forEach(pool => {
+      const metrics = pool.getMetrics();
+      totalActive += metrics.active;
+      totalPooled += metrics.pooled;
+      totalEfficiency += metrics.efficiency;
+      poolCount++;
+    });
+
+    return {
+      totalPools: this.pools.size,
+      totalActiveObjects: totalActive,
+      totalPooledObjects: totalPooled,
+      totalObjects: totalActive + totalPooled,
+      averageEfficiency: poolCount > 0 ? totalEfficiency / poolCount : 0
+    };
+  }
+
+  public cleanupAll(): void {
+    this.pools.forEach(pool => {
+      pool.clear();
+    });
+  }
+
+  public optimizeAll(): void {
+    this.pools.forEach(pool => {
+      pool.shrink();
+    });
+  }
+
+  public removePool(name: string): boolean {
+    const pool = this.pools.get(name);
+    if (pool) {
+      pool.clear();
+      this.pools.delete(name);
+      return true;
+    }
+    return false;
+  }
+
+  public getPoolNames(): string[] {
+    return Array.from(this.pools.keys());
+  }
+}

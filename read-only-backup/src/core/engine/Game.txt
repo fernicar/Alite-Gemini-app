@@ -1,0 +1,481 @@
+import { Logger, PerformanceMonitor } from '@utils/Logging';
+import { GameState, ScreenType, GameEvent, EventListener } from '@types/index';
+
+/**
+ * Core game engine class that manages the main game loop, timing, and state
+ */
+export class Game {
+  private static instance: Game;
+  private canvas: HTMLCanvasElement;
+  private ctx: CanvasRenderingContext2D;
+  private isRunning: boolean = false;
+  private isPaused: boolean = false;
+  private lastTime: number = 0;
+  private currentState: GameState = GameState.LOADING;
+  private targetFPS: number = 60;
+  private targetFrameTime: number = 1000 / this.targetFPS;
+  private screens: Map<GameState, any> = new Map();
+  private eventListeners: Map<string, EventListener[]> = new Map();
+  private performanceMonitor: PerformanceMonitor;
+  private logger: Logger;
+
+  // Screen management
+  private currentScreen: any = null;
+  private screenStack: any[] = [];
+
+  // Timing and delta time
+  private accumulatedTime: number = 0;
+  private frameCount: number = 0;
+
+  private constructor() {
+    this.logger = Logger.getInstance();
+    this.performanceMonitor = PerformanceMonitor.getInstance();
+  }
+
+  public static getInstance(): Game {
+    if (!Game.instance) {
+      Game.instance = new Game();
+    }
+    return Game.instance;
+  }
+
+  /**
+   * Initialize the game engine
+   */
+  public async initialize(canvas: HTMLCanvasElement): Promise<void> {
+    try {
+      this.logger.info('Initializing Alite game engine...');
+      
+      // Initialize canvas
+      this.canvas = canvas;
+      this.ctx = canvas.getContext('2d');
+      
+      if (!this.ctx) {
+        throw new Error('Failed to get 2D context from canvas');
+      }
+
+      // Configure canvas for high DPI displays
+      this.setupCanvas();
+
+      // Set up event listeners
+      this.setupEventListeners();
+
+      // Initialize screens
+      await this.initializeScreens();
+
+      this.logger.info('Game engine initialized successfully');
+    } catch (error) {
+      this.logger.error('Failed to initialize game engine', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Start the main game loop
+   */
+  public start(): void {
+    if (this.isRunning) {
+      this.logger.warn('Game is already running');
+      return;
+    }
+
+    this.logger.info('Starting game loop...');
+    this.isRunning = true;
+    this.lastTime = performance.now();
+    
+    // Start the main loop
+    this.gameLoop();
+  }
+
+  /**
+   * Stop the main game loop
+   */
+  public stop(): void {
+    this.logger.info('Stopping game loop...');
+    this.isRunning = false;
+  }
+
+  /**
+   * Pause the game
+   */
+  public pause(): void {
+    this.isPaused = true;
+    this.logger.debug('Game paused');
+  }
+
+  /**
+   * Resume the game
+   */
+  public resume(): void {
+    this.isPaused = false;
+    this.logger.debug('Game resumed');
+  }
+
+  /**
+   * Change the current game state
+   */
+  public changeState(newState: GameState, data?: any): void {
+    if (this.currentState === newState) {
+      return;
+    }
+
+    this.logger.info(`Changing state from ${this.currentState} to ${newState}`);
+
+    // Exit current state
+    if (this.currentScreen && this.currentScreen.exit) {
+      this.currentScreen.exit();
+    }
+
+    // Enter new state
+    this.currentState = newState;
+    this.currentScreen = this.screens.get(newState);
+    
+    if (this.currentScreen && this.currentScreen.enter) {
+      this.currentScreen.enter(data);
+    }
+
+    // Emit state change event
+    this.emit('stateChanged', {
+      oldState: this.currentState,
+      newState: newState,
+      data
+    });
+  }
+
+  /**
+   * Get the current game state
+   */
+  public getCurrentState(): GameState {
+    return this.currentState;
+  }
+
+  /**
+   * Get the current screen
+   */
+  public getCurrentScreen(): any {
+    return this.currentScreen;
+  }
+
+  /**
+   * Get canvas context
+   */
+  public getContext(): CanvasRenderingContext2D {
+    return this.ctx;
+  }
+
+  /**
+   * Get canvas element
+   */
+  public getCanvas(): HTMLCanvasElement {
+    return this.canvas;
+  }
+
+  /**
+   * Resize the canvas
+   */
+  public resize(width: number, height: number): void {
+    this.canvas.width = width;
+    this.canvas.height = height;
+    this.setupCanvas();
+    
+    // Notify screens of resize
+    if (this.currentScreen && this.currentScreen.resize) {
+      this.currentScreen.resize(width, height);
+    }
+  }
+
+  /**
+   * Register a screen for a specific state
+   */
+  public registerScreen(state: GameState, screen: any): void {
+    this.screens.set(state, screen);
+    this.logger.debug(`Registered screen for state: ${state}`);
+  }
+
+  /**
+   * Add event listener
+   */
+  public on(event: string, listener: EventListener): void {
+    if (!this.eventListeners.has(event)) {
+      this.eventListeners.set(event, []);
+    }
+    this.eventListeners.get(event)!.push(listener);
+  }
+
+  /**
+   * Remove event listener
+   */
+  public off(event: string, listener: EventListener): void {
+    const listeners = this.eventListeners.get(event);
+    if (listeners) {
+      const index = listeners.indexOf(listener);
+      if (index > -1) {
+        listeners.splice(index, 1);
+      }
+    }
+  }
+
+  /**
+   * Emit event to all listeners
+   */
+  public emit(event: string, data?: any): void {
+    const listeners = this.eventListeners.get(event);
+    if (listeners) {
+      const gameEvent: GameEvent = {
+        type: event,
+        data,
+        timestamp: Date.now()
+      };
+      listeners.forEach(listener => listener(gameEvent));
+    }
+  }
+
+  /**
+   * Get performance metrics
+   */
+  public getPerformanceMetrics(): any {
+    return this.performanceMonitor.getMetrics();
+  }
+
+  /**
+   * Check if game is running
+   */
+  public getIsRunning(): boolean {
+    return this.isRunning;
+  }
+
+  /**
+   * Check if game is paused
+   */
+  public getIsPaused(): boolean {
+    return this.isPaused;
+  }
+
+  // Private methods
+
+  private setupCanvas(): void {
+    const dpr = window.devicePixelRatio || 1;
+    const rect = this.canvas.getBoundingClientRect();
+    
+    // Set the internal size to account for device pixel ratio
+    this.canvas.width = rect.width * dpr;
+    this.canvas.height = rect.height * dpr;
+    
+    // Scale the context
+    this.ctx.scale(dpr, dpr);
+    
+    // Set the actual size
+    this.canvas.style.width = rect.width + 'px';
+    this.canvas.style.height = rect.height + 'px';
+    
+    this.logger.debug(`Canvas initialized: ${rect.width}x${rect.height} (DPR: ${dpr})`);
+  }
+
+  private setupEventListeners(): void {
+    // Window resize
+    window.addEventListener('resize', this.handleResize.bind(this));
+    
+    // Visibility change (tab switching)
+    document.addEventListener('visibilitychange', this.handleVisibilityChange.bind(this));
+    
+    // Keyboard events
+    window.addEventListener('keydown', this.handleKeyDown.bind(this));
+    window.addEventListener('keyup', this.handleKeyUp.bind(this));
+    
+    // Mouse events
+    this.canvas.addEventListener('mousedown', this.handleMouseDown.bind(this));
+    this.canvas.addEventListener('mouseup', this.handleMouseUp.bind(this));
+    this.canvas.addEventListener('mousemove', this.handleMouseMove.bind(this));
+    
+    // Touch events
+    this.canvas.addEventListener('touchstart', this.handleTouchStart.bind(this));
+    this.canvas.addEventListener('touchend', this.handleTouchEnd.bind(this));
+    this.canvas.addEventListener('touchmove', this.handleTouchMove.bind(this));
+  }
+
+  private async initializeScreens(): Promise<void> {
+    // Import and register all screen classes
+    const screens = [
+      { state: GameState.MENU, path: './screens/MenuScreen' },
+      { state: GameState.GALAXY_MAP, path: './screens/GalaxyMapScreen' },
+      { state: GameState.LOCAL_SYSTEM, path: './screens/LocalSystemScreen' },
+      { state: GameState.FLIGHT, path: './screens/FlightScreen' },
+      { state: GameState.DOCKED, path: './screens/DockedScreen' }
+    ];
+
+    // For now, we'll create placeholder screens
+    // In a real implementation, these would be actual screen classes
+    screens.forEach(({ state }) => {
+      this.screens.set(state, new PlaceholderScreen(state));
+    });
+
+    this.logger.debug(`Initialized ${screens.length} screens`);
+  }
+
+  private gameLoop = (): void => {
+    if (!this.isRunning) {
+      return;
+    }
+
+    const currentTime = performance.now();
+    const deltaTime = currentTime - this.lastTime;
+    this.lastTime = currentTime;
+
+    // Performance monitoring
+    this.performanceMonitor.startFrame();
+
+    try {
+      // Update
+      if (!this.isPaused) {
+        this.update(deltaTime);
+      }
+
+      // Render
+      this.render();
+
+    } catch (error) {
+      this.logger.error('Error in game loop', error);
+    }
+
+    // End frame monitoring
+    this.performanceMonitor.endFrame();
+
+    // Schedule next frame
+    requestAnimationFrame(this.gameLoop);
+  };
+
+  private update(deltaTime: number): void {
+    // Update current screen
+    if (this.currentScreen && this.currentScreen.update) {
+      this.currentScreen.update(deltaTime);
+    }
+
+    // Update timing
+    this.accumulatedTime += deltaTime;
+    this.frameCount++;
+  }
+
+  private render(): void {
+    // Clear canvas
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    
+    // Fill with space background
+    this.ctx.fillStyle = '#000011';
+    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+    // Render current screen
+    if (this.currentScreen && this.currentScreen.render) {
+      this.currentScreen.render(this.ctx);
+    }
+  }
+
+  // Event handlers
+
+  private handleResize(event: Event): void {
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    this.resize(width, height);
+    
+    this.emit('resized', { width, height });
+  }
+
+  private handleVisibilityChange(): void {
+    if (document.hidden) {
+      this.pause();
+    } else {
+      this.resume();
+    }
+  }
+
+  private handleKeyDown(event: KeyboardEvent): void {
+    this.emit('keyDown', event);
+  }
+
+  private handleKeyUp(event: KeyboardEvent): void {
+    this.emit('keyUp', event);
+  }
+
+  private handleMouseDown(event: MouseEvent): void {
+    const rect = this.canvas.getBoundingClientRect();
+    this.emit('mouseDown', {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+      button: event.button
+    });
+  }
+
+  private handleMouseUp(event: MouseEvent): void {
+    const rect = this.canvas.getBoundingClientRect();
+    this.emit('mouseUp', {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+      button: event.button
+    });
+  }
+
+  private handleMouseMove(event: MouseEvent): void {
+    const rect = this.canvas.getBoundingClientRect();
+    this.emit('mouseMove', {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top
+    });
+  }
+
+  private handleTouchStart(event: TouchEvent): void {
+    event.preventDefault();
+    const rect = this.canvas.getBoundingClientRect();
+    const touch = event.touches[0];
+    this.emit('touchStart', {
+      x: touch.clientX - rect.left,
+      y: touch.clientY - rect.top,
+      touchId: touch.identifier
+    });
+  }
+
+  private handleTouchEnd(event: TouchEvent): void {
+    event.preventDefault();
+    // Handle touch end events
+  }
+
+  private handleTouchMove(event: TouchEvent): void {
+    event.preventDefault();
+    const rect = this.canvas.getBoundingClientRect();
+    const touch = event.touches[0];
+    this.emit('touchMove', {
+      x: touch.clientX - rect.left,
+      y: touch.clientY - rect.top,
+      touchId: touch.identifier
+    });
+  }
+}
+
+/**
+ * Placeholder screen for development
+ */
+class PlaceholderScreen {
+  constructor(private state: GameState) {}
+
+  enter(data?: any): void {
+    console.log(`Entering ${this.state} screen`);
+  }
+
+  exit(): void {
+    console.log(`Exiting ${this.state} screen`);
+  }
+
+  update(deltaTime: number): void {
+    // Placeholder update
+  }
+
+  render(ctx: CanvasRenderingContext2D): void {
+    // Placeholder render - draw state name
+    ctx.fillStyle = '#40e0ff';
+    ctx.font = '24px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(`Screen: ${this.state}`, ctx.canvas.width / 2, ctx.canvas.height / 2);
+  }
+
+  resize(width: number, height: number): void {
+    // Handle resize if needed
+  }
+}

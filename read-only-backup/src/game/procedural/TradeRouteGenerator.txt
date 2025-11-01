@@ -1,0 +1,643 @@
+/**
+ * Trade Route Generation System
+ * Creates realistic trading paths between star systems based on economic factors
+ */
+
+import { NameGenerator } from './NameGenerator.js';
+import { EconomyType, GovernmentType } from '../models/Galaxy.js';
+import { SeededRandomGenerator } from './SeededRandomGenerator.js';
+
+/**
+ * Trade route types
+ */
+export enum TradeRouteType {
+  STANDARD = 'Standard Trade Route',
+  HIGH_VOLUME = 'High Volume Route',
+  SPECIALIZED = 'Specialized Route',
+  SMUGGLER = 'Smuggler Route',
+  BULK_CARGO = 'Bulk Cargo Route',
+  LUXURY = 'Luxury Route',
+  RATIONED = 'Rationed Route',
+  EMERGENCY = 'Emergency Supply Route'
+}
+
+/**
+ * Trade good categories for route specialization
+ */
+export enum TradeCategory {
+  FOOD = 'Food',
+  CONSUMER = 'Consumer Goods',
+  INDUSTRIAL = 'Industrial',
+  LUXURY = 'Luxury',
+  RAW_MATERIALS = 'Raw Materials',
+  TECHNOLOGY = 'Technology',
+  MILITARY = 'Military',
+  ILLEGAL = 'Illegal'
+}
+
+/**
+ * Route profitability levels
+ */
+export enum Profitability {
+  LOSS = -0.05,
+  BREAK_EVEN = 0.02,
+  LOW = 0.05,
+  MODERATE = 0.10,
+  GOOD = 0.15,
+  EXCELLENT = 0.25,
+  EXTREME = 0.40
+}
+
+/**
+ * Trade route data
+ */
+export interface TradeRouteData {
+  id: string;
+  name: string;
+  type: TradeRouteType;
+  startSystem: string;
+  endSystem: string;
+  
+  // Route characteristics
+  distance: number; // Light years
+  travelTime: number; // Days
+  difficulty: number; // 1-10
+  riskLevel: number; // 0-100
+  
+  // Economic data
+  profitability: Profitability;
+  cargoCapacity: number; // Max cargo per trip
+  averageProfitPerUnit: number;
+  demand: number; // Route demand (0-100)
+  capacity: number; // Route capacity (ships per day)
+  
+  // Specialization
+  category: TradeCategory;
+  specializedGoods: string[];
+  restrictions: RouteRestriction[];
+  
+  // Route dynamics
+  stability: number; // 0-100 (how stable the route is)
+  frequency: RouteFrequency;
+  seasonality: RouteSeasonal[];
+  
+  // Competition and risks
+  competition: number; // 0-100
+  piracyRisk: number; // 0-100
+  patrolRisk: number; // 0-100
+  naturalRisks: number; // 0-100
+  
+  // Generation data
+  createdBy: string; // Who created this route
+  discovered: boolean; // Whether route is known publicly
+  lastUpdated: number;
+  generationSeed: string;
+}
+
+/**
+ * Route restrictions
+ */
+export enum RouteRestriction {
+  GOVERNMENT_LICENSED = 'Government Licensed',
+  CORPORATE_ONLY = 'Corporate Only',
+  CIVILIAN_RESTRICTED = 'Civilian Restricted',
+  EMERGENCY_ONLY = 'Emergency Only',
+  IMPORT_QUOTA = 'Import Quota',
+  EXPORT_QUOTA = 'Export Quota',
+  SECURITY_CLEARANCE = 'Security Clearance Required',
+  CREDIT_REQUIRED = 'Good Credit Required'
+}
+
+/**
+ * Route frequency options
+ */
+export enum RouteFrequency {
+  DAILY = 'Daily',
+  WEEKLY = 'Weekly',
+  BIWEEKLY = 'Bi-weekly',
+  MONTHLY = 'Monthly',
+  SEASONAL = 'Seasonal',
+  IRREGULAR = 'Irregular'
+}
+
+/**
+ * Seasonal route variations
+ */
+export interface RouteSeasonal {
+  season: 'Spring' | 'Summer' | 'Autumn' | 'Winter';
+  multiplier: number;
+  description: string;
+}
+
+/**
+ * Trade route generator system
+ */
+export class TradeRouteGenerator {
+  private nameGenerator: NameGenerator;
+  private random: SeededRandomGenerator;
+  
+  constructor(seed: number | string) {
+    this.nameGenerator = new NameGenerator(seed);
+    this.random = new SeededRandomGenerator(seed + '_trade');
+  }
+
+  /**
+   * Generate trade routes for a galaxy
+   */
+  generateTradeRoutes(
+    systems: Array<{
+      name: string;
+      economyType: EconomyType;
+      governmentType: GovernmentType;
+      techLevel: number;
+      population: number;
+      position: { x: number; y: number };
+    }>
+  ): TradeRouteData[] {
+    const routes: TradeRouteData[] = [];
+    
+    // Generate routes based on system characteristics
+    for (let i = 0; i < systems.length; i++) {
+      for (let j = i + 1; j < systems.length; j++) {
+        const route = this.generateRouteBetweenSystems(systems[i], systems[j], systems);
+        if (route) {
+          routes.push(route);
+        }
+      }
+    }
+    
+    // Filter and optimize routes
+    return this.filterAndOptimizeRoutes(routes);
+  }
+
+  /**
+   * Generate trade route between two systems
+   */
+  private generateRouteBetweenSystems(
+    systemA: any,
+    systemB: any,
+    allSystems: any[]
+  ): TradeRouteData | null {
+    const distance = this.calculateDistance(systemA.position, systemB.position);
+    
+    // Skip very distant systems
+    if (distance > 100) return null;
+    
+    // Calculate route viability
+    const viability = this.calculateRouteViability(systemA, systemB, distance);
+    if (viability < 0.3) return null; // Minimum viability threshold
+    
+    // Generate route properties
+    const routeType = this.determineRouteType(systemA, systemB, distance);
+    const profitability = this.calculateProfitability(systemA, systemB, routeType, distance);
+    const category = this.determineTradeCategory(systemA, systemB);
+    const riskLevel = this.calculateRiskLevel(systemA, systemB, distance, routeType);
+    
+    // Create route data
+    const routeId = this.generateRouteId(systemA.name, systemB.name);
+    const routeName = this.nameGenerator.generateTradeRouteName(systemA.name, systemB.name);
+    
+    return {
+      id: routeId,
+      name: routeName,
+      type: routeType,
+      startSystem: systemA.name,
+      endSystem: systemB.name,
+      distance,
+      travelTime: this.calculateTravelTime(distance),
+      difficulty: this.calculateDifficulty(systemA, systemB, distance),
+      riskLevel,
+      profitability,
+      cargoCapacity: this.calculateCargoCapacity(systemA.techLevel, systemB.techLevel),
+      averageProfitPerUnit: this.calculateAverageProfit(profitability, category),
+      demand: this.calculateRouteDemand(systemA, systemB),
+      capacity: this.calculateRouteCapacity(systemA.population, systemB.population),
+      category,
+      specializedGoods: this.generateSpecializedGoods(systemA, systemB, category),
+      restrictions: this.generateRouteRestrictions(systemA, systemB, routeType),
+      stability: this.calculateStability(systemA, systemB),
+      frequency: this.determineFrequency(systemA, systemB, routeType),
+      seasonality: this.generateSeasonality(systemA, systemB),
+      competition: this.calculateCompetition(systemA, systemB),
+      piracyRisk: this.calculatePiracyRisk(systemA, systemB, routeType),
+      patrolRisk: this.calculatePatrolRisk(systemA, systemB),
+      naturalRisks: this.calculateNaturalRisks(distance),
+      createdBy: this.determineRouteCreator(systemA, systemB),
+      discovered: this.random.next() > 0.3, // 70% chance of being known
+      lastUpdated: Date.now(),
+      generationSeed: this.random.getSeed().toString()
+    };
+  }
+
+  /**
+   * Calculate Euclidean distance between two systems
+   */
+  private calculateDistance(posA: { x: number; y: number }, posB: { x: number; y: number }): number {
+    return Math.sqrt(Math.pow(posB.x - posA.x, 2) + Math.pow(posB.y - posA.y, 2));
+  }
+
+  /**
+   * Calculate route viability based on economic factors
+   */
+  private calculateRouteViability(systemA: any, systemB: any, distance: number): number {
+    let viability = 0.5; // Base viability
+    
+    // Economy compatibility
+    if (systemA.economyType !== systemB.economyType) {
+      viability += 0.2; // Different economies trade more
+    }
+    
+    // Technology level difference
+    const techDiff = Math.abs(systemA.techLevel - systemB.techLevel);
+    if (techDiff > 0 && techDiff < 8) {
+      viability += 0.1; // Moderate tech differences are good
+    }
+    
+    // Population factor
+    if (systemA.population > 100000 && systemB.population > 100000) {
+      viability += 0.1; // Major population centers
+    }
+    
+    // Distance penalty
+    if (distance > 50) {
+      viability -= 0.2;
+    } else if (distance > 30) {
+      viability -= 0.1;
+    }
+    
+    // Government compatibility
+    if (this.isGovernmentCompatible(systemA.governmentType, systemB.governmentType)) {
+      viability += 0.1;
+    }
+    
+    return Math.max(0, Math.min(1, viability));
+  }
+
+  /**
+   * Determine trade route type based on system characteristics
+   */
+  private determineRouteType(systemA: any, systemB: any, distance: number): TradeRouteType {
+    // High volume routes between industrial systems
+    if (systemA.economyType === EconomyType.INDUSTRIAL && systemB.economyType === EconomyType.INDUSTRIAL) {
+      return TradeRouteType.HIGH_VOLUME;
+    }
+    
+    // Luxury routes for high-tech and tourism systems
+    if ((systemA.economyType === EconomyType.HIGH_TECH || systemA.economyType === EconomyType.TOURISM) &&
+        (systemB.economyType === EconomyType.HIGH_TECH || systemB.economyType === EconomyType.TOURISM)) {
+      return TradeRouteType.LUXURY;
+    }
+    
+    // Smuggler routes in anarchy or restrictive governments
+    if (systemA.governmentType === GovernmentType.ANARCHY || systemB.governmentType === GovernmentType.ANARCHY ||
+        systemA.governmentType === GovernmentType.DICTATORSHIP || systemB.governmentType === GovernmentType.DICTATORSHIP) {
+      if (this.random.next() < 0.3) {
+        return TradeRouteType.SMUGGLER;
+      }
+    }
+    
+    // Emergency routes for military systems
+    if (systemA.economyType === EconomyType.MILITARY || systemB.economyType === EconomyType.MILITARY) {
+      return TradeRouteType.EMERGENCY;
+    }
+    
+    // Bulk cargo routes for mining systems
+    if (systemA.economyType === EconomyType.MINING || systemB.economyType === EconomyType.MINING) {
+      return TradeRouteType.BULK_CARGO;
+    }
+    
+    // Default to standard
+    return TradeRouteType.STANDARD;
+  }
+
+  /**
+   * Calculate route profitability
+   */
+  private calculateProfitability(systemA: any, systemB: any, routeType: TradeRouteType, distance: number): Profitability {
+    let baseProfit = Profitability.MODERATE;
+    
+    // Distance affects profitability
+    if (distance > 80) {
+      baseProfit = Profitability.EXCELLENT;
+    } else if (distance > 50) {
+      baseProfit = Profitability.GOOD;
+    } else if (distance < 20) {
+      baseProfit = Profitability.LOW;
+    }
+    
+    // Route type modifiers
+    switch (routeType) {
+      case TradeRouteType.SMUGGLER:
+        baseProfit = Profitability.EXTREME;
+        break;
+      case TradeRouteType.LUXURY:
+        baseProfit = Profitability.GOOD;
+        break;
+      case TradeRouteType.BULK_CARGO:
+        baseProfit = Profitability.MODERATE;
+        break;
+      case TradeRouteType.HIGH_VOLUME:
+        baseProfit = Profitability.LOW;
+        break;
+    }
+    
+    // Economy differences boost profitability
+    if (systemA.economyType !== systemB.economyType) {
+      const profitBoost = Object.values(Profitability)[Math.floor(this.random.next() * 2) + 1];
+      baseProfit = profitBoost;
+    }
+    
+    return baseProfit;
+  }
+
+  /**
+   * Determine primary trade category
+   */
+  private determineTradeCategory(systemA: any, systemB: any): TradeCategory {
+    const economyToCategory: Record<EconomyType, TradeCategory> = {
+      [EconomyType.AGRICULTURAL]: TradeCategory.FOOD,
+      [EconomyType.INDUSTRIAL]: TradeCategory.INDUSTRIAL,
+      [EconomyType.HIGH_TECH]: TradeCategory.TECHNOLOGY,
+      [EconomyType.MINING]: TradeCategory.RAW_MATERIALS,
+      [EconomyType.TOURISM]: TradeCategory.LUXURY,
+      [EconomyType.MILITARY]: TradeCategory.MILITARY
+    };
+    
+    const categoryA = economyToCategory[systemA.economyType];
+    const categoryB = economyToCategory[systemB.economyType];
+    
+    // Return the more common/safer category
+    return this.random.choice([categoryA, categoryB, TradeCategory.CONSUMER]);
+  }
+
+  /**
+   * Calculate route risk level
+   */
+  private calculateRiskLevel(systemA: any, systemB: any, distance: number, routeType: TradeRouteType): number {
+    let risk = 20; // Base risk
+    
+    // Distance increases risk
+    risk += distance * 0.5;
+    
+    // Government factors
+    if (systemA.governmentType === GovernmentType.ANARCHY || systemB.governmentType === GovernmentType.ANARCHY) {
+      risk += 30;
+    }
+    
+    if (systemA.governmentType === GovernmentType.IMPLANTED_EMPIRE || systemB.governmentType === GovernmentType.IMPLANTED_EMPIRE) {
+      risk += 40;
+    }
+    
+    // Route type affects risk
+    switch (routeType) {
+      case TradeRouteType.SMUGGLER:
+        risk += 50;
+        break;
+      case TradeRouteType.LUXURY:
+        risk += 20;
+        break;
+      case TradeRouteType.BULK_CARGO:
+        risk += 10;
+        break;
+    }
+    
+    return Math.min(100, risk);
+  }
+
+  /**
+   * Filter and optimize generated routes
+   */
+  private filterAndOptimizeRoutes(routes: TradeRouteData[]): TradeRouteData[] {
+    // Remove duplicate or very similar routes
+    const uniqueRoutes = this.removeDuplicateRoutes(routes);
+    
+    // Limit total number of routes per galaxy
+    const maxRoutes = Math.min(1000, uniqueRoutes.length);
+    return uniqueRoutes.slice(0, maxRoutes);
+  }
+
+  /**
+   * Remove duplicate routes (same start/end pair)
+   */
+  private removeDuplicateRoutes(routes: TradeRouteData[]): TradeRouteData[] {
+    const seen = new Set<string>();
+    return routes.filter(route => {
+      const key = `${route.startSystem}-${route.endSystem}`;
+      const reverseKey = `${route.endSystem}-${route.startSystem}`;
+      
+      if (seen.has(key) || seen.has(reverseKey)) {
+        return false;
+      }
+      
+      seen.add(key);
+      seen.add(reverseKey);
+      return true;
+    });
+  }
+
+  // Additional helper methods
+  private generateRouteId(systemA: string, systemB: string): string {
+    const sorted = [systemA, systemB].sort();
+    return `route_${sorted[0]}_${sorted[1]}`;
+  }
+
+  private calculateTravelTime(distance: number): number {
+    // Assume average ship speed of 0.5 light years per day
+    return Math.ceil(distance / 0.5);
+  }
+
+  private calculateDifficulty(systemA: any, systemB: any, distance: number): number {
+    return Math.floor((distance / 20) + (systemA.techLevel + systemB.techLevel) / 4);
+  }
+
+  private calculateCargoCapacity(techA: number, techB: number): number {
+    const avgTech = (techA + techB) / 2;
+    return Math.floor(avgTech * 100);
+  }
+
+  private calculateAverageProfit(profitability: Profitability, category: TradeCategory): number {
+    const baseProfits: Record<TradeCategory, number> = {
+      [TradeCategory.FOOD]: 10,
+      [TradeCategory.CONSUMER]: 25,
+      [TradeCategory.INDUSTRIAL]: 50,
+      [TradeCategory.LUXURY]: 100,
+      [TradeCategory.RAW_MATERIALS]: 30,
+      [TradeCategory.TECHNOLOGY]: 150,
+      [TradeCategory.MILITARY]: 200,
+      [TradeCategory.ILLEGAL]: 300
+    };
+    
+    return baseProfits[category] * profitability;
+  }
+
+  private calculateRouteDemand(systemA: any, systemB: any): number {
+    const popDemand = Math.log10(systemA.population + systemB.population + 2) * 10;
+    return Math.min(100, Math.floor(popDemand));
+  }
+
+  private calculateRouteCapacity(popA: number, popB: number): number {
+    return Math.floor((Math.log10(popA + 1) + Math.log10(popB + 1)) * 5);
+  }
+
+  private generateSpecializedGoods(systemA: any, systemB: any, category: TradeCategory): string[] {
+    // Return goods appropriate for the trade category and systems
+    const goodsMap: Record<TradeCategory, string[]> = {
+      [TradeCategory.FOOD]: ['Food Cartridges', 'Grain', 'Vegetables', 'Meat'],
+      [TradeCategory.CONSUMER]: ['Clothing', 'Consumer Electronics', 'Entertainment'],
+      [TradeCategory.INDUSTRIAL]: ['Machinery', 'Industrial Components', 'Manufacturing Equipment'],
+      [TradeCategory.LUXURY]: ['Luxury Goods', 'Art', 'Jewelry', 'Fine Wines'],
+      [TradeCategory.RAW_MATERIALS]: ['Metals', 'Minerals', 'Raw Materials'],
+      [TradeCategory.TECHNOLOGY]: ['Computers', 'Software', 'Advanced Electronics'],
+      [TradeCategory.MILITARY]: ['Weapons', 'Military Equipment', 'Defense Systems'],
+      [TradeCategory.ILLEGAL]: ['Contraband', 'Prohibited Items']
+    };
+    
+    const availableGoods = goodsMap[category] || ['Generic Goods'];
+    return this.random.sample(availableGoods, Math.min(3, availableGoods.length));
+  }
+
+  private generateRouteRestrictions(systemA: any, systemB: any, routeType: TradeRouteType): RouteRestriction[] {
+    const restrictions: RouteRestriction[] = [];
+    
+    if (routeType === TradeRouteType.SMUGGLER) {
+      restrictions.push(RouteRestriction.GOVERNMENT_LICENSED);
+    }
+    
+    if (systemA.governmentType === GovernmentType.IMPLANTED_EMPIRE || 
+        systemB.governmentType === GovernmentType.IMPLANTED_EMPIRE) {
+      restrictions.push(RouteRestriction.SECURITY_CLEARANCE);
+    }
+    
+    if (routeType === TradeRouteType.HIGH_VOLUME) {
+      restrictions.push(RouteRestriction.CORPORATE_ONLY);
+    }
+    
+    return restrictions;
+  }
+
+  private calculateStability(systemA: any, systemB: any): number {
+    let stability = 70; // Base stability
+    
+    // Democratic governments are more stable
+    if (systemA.governmentType === GovernmentType.DEMOCRACY) stability += 10;
+    if (systemB.governmentType === GovernmentType.DEMOCRACY) stability += 10;
+    
+    // Anarchy reduces stability
+    if (systemA.governmentType === GovernmentType.ANARCHY) stability -= 20;
+    if (systemB.governmentType === GovernmentType.ANARCHY) stability -= 20;
+    
+    return Math.max(0, Math.min(100, stability));
+  }
+
+  private determineFrequency(systemA: any, systemB: any, routeType: TradeRouteType): RouteFrequency {
+    if (routeType === TradeRouteType.EMERGENCY) {
+      return RouteFrequency.IRREGULAR;
+    }
+    
+    const avgPop = (systemA.population + systemB.population) / 2;
+    
+    if (avgPop > 1000000) {
+      return RouteFrequency.DAILY;
+    } else if (avgPop > 100000) {
+      return RouteFrequency.WEEKLY;
+    } else if (avgPop > 10000) {
+      return RouteFrequency.BIWEEKLY;
+    } else {
+      return RouteFrequency.MONTHLY;
+    }
+  }
+
+  private generateSeasonality(systemA: any, systemB: any): RouteSeasonal[] {
+    // Agricultural routes have strong seasonality
+    if (systemA.economyType === EconomyType.AGRICULTURAL || systemB.economyType === EconomyType.AGRICULTURAL) {
+      return [
+        { season: 'Spring', multiplier: 1.2, description: 'Planting season demand' },
+        { season: 'Summer', multiplier: 0.8, description: 'Growing season low demand' },
+        { season: 'Autumn', multiplier: 1.5, description: 'Harvest season high demand' },
+        { season: 'Winter', multiplier: 1.1, description: 'Storage and distribution' }
+      ];
+    }
+    
+    // Tourism routes peak in summer
+    if (systemA.economyType === EconomyType.TOURISM || systemB.economyType === EconomyType.TOURISM) {
+      return [
+        { season: 'Spring', multiplier: 1.0, description: 'Standard season' },
+        { season: 'Summer', multiplier: 1.3, description: 'Peak tourism season' },
+        { season: 'Autumn', multiplier: 0.9, description: 'Off-season travel' },
+        { season: 'Winter', multiplier: 1.1, description: 'Holiday travel' }
+      ];
+    }
+    
+    // Most routes are fairly stable
+    return [
+      { season: 'Spring', multiplier: 1.0, description: 'Standard demand' },
+      { season: 'Summer', multiplier: 1.0, description: 'Standard demand' },
+      { season: 'Autumn', multiplier: 1.0, description: 'Standard demand' },
+      { season: 'Winter', multiplier: 1.0, description: 'Standard demand' }
+    ];
+  }
+
+  private calculateCompetition(systemA: any, systemB: any): number {
+    const avgTech = (systemA.techLevel + systemB.techLevel) / 2;
+    const avgPop = (systemA.population + systemB.population) / 2;
+    
+    return Math.min(100, Math.floor(avgTech + Math.log10(avgPop)));
+  }
+
+  private calculatePiracyRisk(systemA: any, systemB: any, routeType: TradeRouteType): number {
+    let piracy = 10; // Base piracy
+    
+    // Anarchy systems increase piracy
+    if (systemA.governmentType === GovernmentType.ANARCHY || systemB.governmentType === GovernmentType.ANARCHY) {
+      piracy += 40;
+    }
+    
+    // High-profit routes attract pirates
+    if (routeType === TradeRouteType.LUXURY || routeType === TradeRouteType.SMUGGLER) {
+      piracy += 30;
+    }
+    
+    return Math.min(100, piracy);
+  }
+
+  private calculatePatrolRisk(systemA: any, systemB: any): number {
+    const patrolRisk = {
+      [GovernmentType.ANARCHY]: 0,
+      [GovernmentType.FEUDAL]: 30,
+      [GovernmentType.MULTI_GOVERNMENT]: 50,
+      [GovernmentType.DICTATORSHIP]: 70,
+      [GovernmentType.COMMUNIST]: 60,
+      [GovernmentType.CONFEDERATE]: 40,
+      [GovernmentType.DEMOCRACY]: 55,
+      [GovernmentType.CORPORATE_STATE]: 65,
+      [GovernmentType.IMPLANTED_EMPIRE]: 80
+    };
+    
+    const avgPatrol = (patrolRisk[systemA.governmentType] + patrolRisk[systemB.governmentType]) / 2;
+    return Math.floor(avgPatrol);
+  }
+
+  private calculateNaturalRisks(distance: number): number {
+    // Longer routes have more natural risks (storms, debris, etc.)
+    return Math.min(100, Math.floor(distance * 0.8));
+  }
+
+  private determineRouteCreator(systemA: any, systemB: any): string {
+    const creators = ['Independent Traders', 'Corporate Fleet', 'Government Authority', 'Guild Network'];
+    return this.random.choice(creators);
+  }
+
+  private isGovernmentCompatible(govA: GovernmentType, govB: GovernmentType): boolean {
+    const compatible = [
+      [GovernmentType.DEMOCRACY, GovernmentType.DEMOCRACY],
+      [GovernmentType.DEMOCRACY, GovernmentType.CONFEDERATE],
+      [GovernmentType.CONFEDERATE, GovernmentType.CONFEDERATE],
+      [GovernmentType.CORPORATE_STATE, GovernmentType.DEMOCRACY],
+      [GovernmentType.CORPORATE_STATE, GovernmentType.CORPORATE_STATE]
+    ];
+    
+    return compatible.some(([g1, g2]) => 
+      (govA === g1 && govB === g2) || (govA === g2 && govB === g1)
+    );
+  }
+}

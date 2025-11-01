@@ -1,0 +1,470 @@
+/**
+ * Projectile System - Physics and collision detection for projectiles
+ * Handles all projectile types including lasers, missiles, and explosive rounds
+ */
+
+import { Vector3D } from '../../types/index.js';
+import { WeaponType } from '../models/Ship.js';
+import { DamageSystem } from './DamageSystem.js';
+import { PhysicsSimulation } from './PhysicsSimulation.js';
+
+export interface Projectile {
+  id: string;
+  weaponId: string;
+  ownerId: string;
+  type: WeaponType;
+  position: Vector3D;
+  velocity: Vector3D;
+  target: {
+    id: string;
+    position: Vector3D;
+    velocity: Vector3D;
+    size: number;
+  };
+  damage: number;
+  speed: number;
+  lifeTime: number;
+  maxLifeTime: number;
+  isActive: boolean;
+  isGuided: boolean;
+  turnRate?: number; // For guided projectiles
+  explosiveRadius?: number; // For explosive projectiles
+  penetrationPower?: number; // For armor-piercing rounds
+}
+
+export interface ProjectilePhysics {
+  acceleration: Vector3D;
+  drag: number;
+  gravity: Vector3D;
+  maxSpeed: number;
+}
+
+export interface CollisionResult {
+  hit: boolean;
+  targetId?: string;
+  hitPosition?: Vector3D;
+  damage?: number;
+  splashDamage?: number;
+  explosionRadius?: number;
+}
+
+export interface ProjectileCreationData {
+  weaponId: string;
+  position: Vector3D;
+  target: {
+    id: string;
+    position: Vector3D;
+    velocity: Vector3D;
+    size: number;
+  };
+  damage: number;
+  speed: number;
+  type: WeaponType;
+  ownerId: string;
+  guided?: boolean;
+  explosiveRadius?: number;
+  penetrationPower?: number;
+}
+
+/**
+ * Advanced Projectile Physics and Collision System
+ */
+export class ProjectileSystem {
+  private projectiles: Map<string, Projectile>;
+  private projectileCounter: number = 0;
+  private damageSystem: DamageSystem;
+  private physics: PhysicsSimulation;
+  private physicsConstants: ProjectilePhysics;
+
+  constructor(damageSystem: DamageSystem, physics: PhysicsSimulation) {
+    this.projectiles = new Map();
+    this.damageSystem = damageSystem;
+    this.physics = physics;
+    
+    this.physicsConstants = {
+      acceleration: { x: 0, y: 0, z: 0 },
+      drag: 0.99, // Slight drag in space
+      gravity: { x: 0, y: 0, z: 0 }, // Zero gravity by default
+      maxSpeed: 1000
+    };
+  }
+
+  /**
+   * Create a new projectile
+   */
+  createProjectile(data: ProjectileCreationData): string {
+    const projectileId = `projectile_${++this.projectileCounter}`;
+    
+    const projectile: Projectile = {
+      id: projectileId,
+      weaponId: data.weaponId,
+      ownerId: data.ownerId,
+      type: data.type,
+      position: { ...data.position },
+      target: { ...data.target },
+      damage: data.damage,
+      speed: data.speed,
+      velocity: this.calculateInitialVelocity(data.position, data.target),
+      lifeTime: 0,
+      maxLifeTime: this.calculateMaxLifetime(data.type, data.speed),
+      isActive: true,
+      isGuided: data.guided || false,
+      turnRate: data.type === WeaponType.MISSILES ? 180 : 0, // Degrees per second
+      explosiveRadius: data.explosiveRadius || 0,
+      penetrationPower: data.penetrationPower || 0
+    };
+
+    this.projectiles.set(projectileId, projectile);
+    return projectileId;
+  }
+
+  /**
+   * Update all projectiles (called every frame)
+   */
+  update(deltaTime: number): CollisionResult[] {
+    const results: CollisionResult[] = [];
+    
+    this.projectiles.forEach((projectile, id) => {
+      if (!projectile.isActive) return;
+
+      // Update projectile physics
+      this.updateProjectilePhysics(projectile, deltaTime);
+      
+      // Check for collision
+      const collision = this.checkCollision(projectile);
+      if (collision.hit) {
+        results.push(collision);
+        
+        // Handle projectile effects
+        this.handleProjectileEffects(projectile, collision);
+        
+        // Deactivate projectile
+        projectile.isActive = false;
+        this.projectiles.delete(id);
+      }
+      
+      // Check life time expiration
+      projectile.lifeTime += deltaTime;
+      if (projectile.lifeTime >= projectile.maxLifeTime) {
+        projectile.isActive = false;
+        this.projectiles.delete(id);
+      }
+    });
+
+    return results;
+  }
+
+  /**
+   * Get all active projectiles
+   */
+  getActiveProjectiles(): Projectile[] {
+    return Array.from(this.projectiles.values()).filter(p => p.isActive);
+  }
+
+  /**
+   * Get projectile by ID
+   */
+  getProjectile(projectileId: string): Projectile | undefined {
+    return this.projectiles.get(projectileId);
+  }
+
+  /**
+   * Remove projectiles by owner (e.g., when ship is destroyed)
+   */
+  removeProjectilesByOwner(ownerId: string): void {
+    const toRemove: string[] = [];
+    this.projectiles.forEach((projectile, id) => {
+      if (projectile.ownerId === ownerId) {
+        toRemove.push(id);
+      }
+    });
+    
+    toRemove.forEach(id => this.projectiles.delete(id));
+  }
+
+  /**
+   * Update projectile physics and movement
+   */
+  private updateProjectilePhysics(projectile: Projectile, deltaTime: number): void {
+    // Update velocity based on physics constants
+    this.physics.updateVelocity(deltaTime, this.physicsConstants.acceleration, 1);
+    
+    // Apply drag
+    projectile.velocity.x *= Math.pow(this.physicsConstants.drag, deltaTime);
+    projectile.velocity.y *= Math.pow(this.physicsConstants.drag, deltaTime);
+    projectile.velocity.z *= Math.pow(this.physicsConstants.drag, deltaTime);
+    
+    // Apply gravity
+    projectile.velocity.x += this.physicsConstants.gravity.x * deltaTime;
+    projectile.velocity.y += this.physicsConstants.gravity.y * deltaTime;
+    projectile.velocity.z += this.physicsConstants.gravity.z * deltaTime;
+    
+    // Limit maximum speed
+    const speed = Math.sqrt(
+      projectile.velocity.x ** 2 + 
+      projectile.velocity.y ** 2 + 
+      projectile.velocity.z ** 2
+    );
+    
+    if (speed > this.physicsConstants.maxSpeed) {
+      const ratio = this.physicsConstants.maxSpeed / speed;
+      projectile.velocity.x *= ratio;
+      projectile.velocity.y *= ratio;
+      projectile.velocity.z *= ratio;
+    }
+
+    // Guided projectiles (missiles) adjust trajectory
+    if (projectile.isGuided && projectile.turnRate) {
+      this.updateGuidedTrajectory(projectile, deltaTime);
+    }
+    
+    // Update position
+    projectile.position.x += projectile.velocity.x * deltaTime;
+    projectile.position.y += projectile.velocity.y * deltaTime;
+    projectile.position.z += projectile.velocity.z * deltaTime;
+  }
+
+  /**
+   * Check collision with target or environment
+   */
+  private checkCollision(projectile: Projectile): CollisionResult {
+    // Check collision with target
+    if (projectile.target && projectile.target.id) {
+      const distance = this.calculateDistance(projectile.position, projectile.target.position);
+      const hitDistance = projectile.target.size;
+      
+      if (distance <= hitDistance) {
+        return {
+          hit: true,
+          targetId: projectile.target.id,
+          hitPosition: { ...projectile.position },
+          damage: projectile.damage,
+          splashDamage: projectile.explosiveRadius ? projectile.damage * 0.5 : 0,
+          explosionRadius: projectile.explosiveRadius
+        };
+      }
+    }
+    
+    // Check collision with other objects in the area (environmental hazards, asteroids, etc.)
+    // This would be implemented with actual environmental collision detection
+    
+    return { hit: false };
+  }
+
+  /**
+   * Handle projectile effects (damage, explosions, etc.)
+   */
+  private handleProjectileEffects(projectile: Projectile, collision: CollisionResult): void {
+    if (!collision.hit || !collision.targetId) return;
+    
+    // Direct hit damage
+    this.damageSystem.applyDamage(collision.targetId, collision.damage || 0, projectile.type);
+    
+    // Splash damage for explosive projectiles
+    if (collision.explosionRadius && collision.explosionRadius > 0) {
+      this.applySplashDamage(collision.hitPosition || projectile.position, collision.explosionRadius, collision.damage || 0);
+    }
+    
+    // Penetration effects
+    if (projectile.penetrationPower && projectile.penetrationPower > 0) {
+      this.damageSystem.applyPenetrationDamage(collision.targetId, projectile.penetrationPower);
+    }
+    
+    // Visual and audio effects would be triggered here
+    this.createProjectileEffects(projectile, collision);
+  }
+
+  /**
+   * Apply splash damage to nearby targets
+   */
+  private applySplashDamage(center: Vector3D, radius: number, baseDamage: number): void {
+    // This would query nearby entities and apply reduced damage
+    // For now, just a placeholder for the damage calculation
+    const damageFalloff = (distance: number) => Math.max(0, baseDamage * (1 - distance / radius));
+    
+    // Environmental damage (station hull, etc.)
+    this.damageSystem.applyAreaDamage(center, radius, damageFalloff);
+  }
+
+  /**
+   * Create visual and audio effects for projectiles
+   */
+  private createProjectileEffects(projectile: Projectile, collision: CollisionResult): void {
+    // This would integrate with the particle system and audio system
+    // For now, just a placeholder for effect creation
+    
+    const effectData = {
+      type: projectile.type,
+      position: collision.hitPosition || projectile.position,
+      intensity: Math.min(1.0, projectile.damage / 100),
+      duration: projectile.type === WeaponType.LASER ? 0.1 : 0.5
+    };
+    
+    // Trigger particle effects
+    // Trigger sound effects
+  }
+
+  /**
+   * Calculate initial velocity for projectile
+   */
+  private calculateInitialVelocity(source: Vector3D, target: any): Vector3D {
+    const dx = target.position.x - source.x;
+    const dy = target.position.y - source.y;
+    const dz = target.position.z - source.z;
+    const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    
+    if (distance === 0) {
+      return { x: 0, y: 0, z: 0 };
+    }
+    
+    // Lead target based on target velocity
+    const leadTime = distance / 300; // Simplified lead calculation
+    const predictedTargetX = target.position.x + target.velocity.x * leadTime;
+    const predictedTargetY = target.position.y + target.velocity.y * leadTime;
+    const predictedTargetZ = target.position.z + target.velocity.z * leadTime;
+    
+    const leadDx = predictedTargetX - source.x;
+    const leadDy = predictedTargetY - source.y;
+    const leadDz = predictedTargetZ - source.z;
+    const leadDistance = Math.sqrt(leadDx * leadDx + leadDy * leadDy + leadDz * leadDz);
+    
+    if (leadDistance === 0) {
+      return { x: 0, y: 0, z: 0 };
+    }
+    
+    // Normalize and scale by projectile speed
+    const velocityScale = 300 / leadDistance; // Assumes 300 m/s projectile speed
+    return {
+      x: leadDx * velocityScale,
+      y: leadDy * velocityScale,
+      z: leadDz * velocityScale
+    };
+  }
+
+  /**
+   * Calculate maximum lifetime for projectile
+   */
+  private calculateMaxLifetime(type: WeaponType, speed: number): number {
+    switch (type) {
+      case WeaponType.LASER:
+        return 2.0; // Lasers travel fast but short lived
+      case WeaponType.BALLISTICS:
+        return 5.0; // Kinetic rounds last longer
+      case WeaponType.MISSILES:
+        return 30.0; // Missiles can chase for longer
+      case WeaponType.MINES:
+        return Infinity; // Mines don't move
+      default:
+        return 10.0;
+    }
+  }
+
+  /**
+   * Update guided projectile trajectory
+   */
+  private updateGuidedTrajectory(projectile: Projectile, deltaTime: number): void {
+    if (!projectile.target || !projectile.turnRate) return;
+    
+    // Calculate direction to target
+    const targetDirection = {
+      x: projectile.target.position.x - projectile.position.x,
+      y: projectile.target.position.y - projectile.position.y,
+      z: projectile.target.position.z - projectile.position.z
+    };
+    
+    // Normalize target direction
+    const targetDistance = Math.sqrt(
+      targetDirection.x ** 2 + 
+      targetDirection.y ** 2 + 
+      targetDirection.z ** 2
+    );
+    
+    if (targetDistance === 0) return;
+    
+    targetDirection.x /= targetDistance;
+    targetDirection.y /= targetDistance;
+    targetDirection.z /= targetDistance;
+    
+    // Calculate current direction
+    const currentSpeed = Math.sqrt(
+      projectile.velocity.x ** 2 + 
+      projectile.velocity.y ** 2 + 
+      projectile.velocity.z ** 2
+    );
+    
+    if (currentSpeed === 0) return;
+    
+    const currentDirection = {
+      x: projectile.velocity.x / currentSpeed,
+      y: projectile.velocity.y / currentSpeed,
+      z: projectile.velocity.z / currentSpeed
+    };
+    
+    // Calculate turn amount (simplified)
+    const turnRate = projectile.turnRate * deltaTime;
+    const turnFactor = Math.min(1.0, turnRate / 180); // Normalize to 0-1
+    
+    // Blend current direction toward target direction
+    const newDirection = {
+      x: currentDirection.x + (targetDirection.x - currentDirection.x) * turnFactor,
+      y: currentDirection.y + (targetDirection.y - currentDirection.y) * turnFactor,
+      z: currentDirection.z + (targetDirection.z - currentDirection.z) * turnFactor
+    };
+    
+    // Normalize new direction
+    const newDirectionLength = Math.sqrt(
+      newDirection.x ** 2 + 
+      newDirection.y ** 2 + 
+      newDirection.z ** 2
+    );
+    
+    if (newDirectionLength > 0) {
+      newDirection.x /= newDirectionLength;
+      newDirection.y /= newDirectionLength;
+      newDirection.z /= newDirectionLength;
+      
+      // Update velocity with new direction
+      projectile.velocity.x = newDirection.x * currentSpeed;
+      projectile.velocity.y = newDirection.y * currentSpeed;
+      projectile.velocity.z = newDirection.z * currentSpeed;
+    }
+  }
+
+  /**
+   * Calculate distance between two 3D points
+   */
+  private calculateDistance(pos1: Vector3D, pos2: Vector3D): number {
+    const dx = pos2.x - pos1.x;
+    const dy = pos2.y - pos1.y;
+    const dz = pos2.z - pos1.z;
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  /**
+   * Clear all projectiles (used for system cleanup)
+   */
+  clearAllProjectiles(): void {
+    this.projectiles.clear();
+  }
+
+  /**
+   * Get projectile statistics
+   */
+  getProjectileStats(): { total: number; active: number; byType: Map<WeaponType, number> } {
+    const byType = new Map<WeaponType, number>();
+    let active = 0;
+    
+    this.projectiles.forEach(projectile => {
+      if (projectile.isActive) active++;
+      
+      const count = byType.get(projectile.type) || 0;
+      byType.set(projectile.type, count + 1);
+    });
+    
+    return {
+      total: this.projectiles.size,
+      active,
+      byType
+    };
+  }
+}

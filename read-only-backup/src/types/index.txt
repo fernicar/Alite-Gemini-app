@@ -1,0 +1,261 @@
+/**
+ * Core type definitions for Alite game engine
+ */
+
+// Basic math types
+export interface Vector2D {
+  x: number;
+  y: number;
+}
+
+export interface Vector3D {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface Rectangle {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface Color {
+  r: number;
+  g: number;
+  b: number;
+  a?: number;
+}
+
+// Game state types
+export enum GameState {
+  LOADING = 'LOADING',
+  MENU = 'MENU',
+  GALAXY_MAP = 'GALAXY_MAP',
+  LOCAL_SYSTEM = 'LOCAL_SYSTEM',
+  FLIGHT = 'FLIGHT',
+  DOCKED = 'DOCKED',
+  MARKET = 'MARKET',
+  SHIPYARD = 'SHIPYARD',
+  EQUIPMENT = 'EQUIPMENT',
+  SETTINGS = 'SETTINGS',
+  PAUSED = 'PAUSED',
+  GAME_OVER = 'GAME_OVER'
+}
+
+// Entity types
+export enum EntityType {
+  PLAYER_SHIP = 'PLAYER_SHIP',
+  NPC_SHIP = 'NPC_SHIP',
+  PLANET = 'PLANET',
+  STATION = 'STATION',
+  PROJECTILE = 'PROJECTILE',
+  PARTICLE = 'PARTICLE',
+  ASTEROID = 'ASTEROID'
+}
+
+// Screen types for navigation
+export enum ScreenType {
+  MAIN_MENU = 'MAIN_MENU',
+  GALAXY = 'GALAXY',
+  LOCAL = 'LOCAL',
+  FLIGHT = 'FLIGHT',
+  DOCKED = 'DOCKED',
+  MARKET = 'MARKET',
+  EQUIPMENT = 'EQUIPMENT',
+  STATUS = 'STATUS',
+  SAVE = 'SAVE',
+  LOAD = 'LOAD',
+  OPTIONS = 'OPTIONS'
+}
+
+// Input types
+export interface InputEvent {
+  type: string;
+  x: number;
+  y: number;
+  button?: number;
+  key?: string;
+  touchId?: number;
+}
+
+// Asset types
+export enum AssetType {
+  IMAGE = 'IMAGE',
+  SOUND = 'SOUND',
+  FONT = 'FONT',
+  DATA = 'DATA'
+}
+
+export interface Asset {
+  id: string;
+  type: AssetType;
+  url: string;
+  size?: number;
+  loaded: boolean;
+}
+
+// Performance monitoring
+export interface PerformanceMetrics {
+  fps: number;
+  frameTime: number;
+  memoryUsage: number;
+  renderTime: number;
+  updateTime: number;
+}
+
+// Logging levels
+export enum LogLevel {
+  DEBUG = 'DEBUG',
+  INFO = 'INFO',
+  WARN = 'WARN',
+  ERROR = 'ERROR'
+}
+
+// Screen coordinate systems
+export interface Viewport {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  scaleX: number;
+  scaleY: number;
+}
+
+// Audio types
+export interface AudioConfig {
+  masterVolume: number;
+  musicVolume: number;
+  sfxVolume: number;
+  spatialAudio: boolean;
+}
+
+// Settings configuration
+export interface GameSettings {
+  graphics: {
+    fullscreen: boolean;
+    vsync: boolean;
+    antialias: boolean;
+    textureQuality: 'LOW' | 'MEDIUM' | 'HIGH';
+    resolution: { width: number; height: number };
+  };
+  audio: AudioConfig;
+  controls: {
+    mouseSensitivity: number;
+    invertY: boolean;
+    enableJoystick: boolean;
+  };
+  game: {
+    difficulty: 'EASY' | 'NORMAL' | 'HARD';
+    showFPS: boolean;
+    autoSave: boolean;
+  };
+}
+
+// Save game data structure
+export interface SaveGameData {
+  version: string;
+  timestamp: number;
+  commander: CommanderData;
+  playerShip: PlayerShipData;
+  galaxy: GalaxyData;
+  settings: GameSettings;
+}
+
+// Commander/progression data
+export interface CommanderData {
+  name: string;
+  credits: number;
+  score: number;
+  rating: string;
+  legalStatus: number;
+  missionsCompleted: number;
+  shipsOwned: string[];
+  currentLocation: {
+    galaxy: number;
+    system: number;
+  };
+}
+
+// Player ship data
+export interface PlayerShipData {
+  type: string;
+  cargoCapacity: number;
+  cargo: CargoItem[];
+  equipment: string[];
+  hull: number;
+  shields: number;
+  fuel: number;
+  energy: number;
+}
+
+// Cargo item
+export interface CargoItem {
+  good: string;
+  quantity: number;
+}
+
+// Galaxy and system data
+export interface GalaxyData {
+  galaxies: Galaxy[];
+  currentGalaxy: number;
+  currentSystem: number;
+}
+
+export interface Galaxy {
+  id: number;
+  name: string;
+  systems: SystemData[];
+}
+
+export interface SystemData {
+  id: number;
+  name: string;
+  economy: string;
+  government: string;
+  techLevel: number;
+  population: number;
+  description: string;
+  market: MarketData;
+  hasDocking: boolean;
+}
+
+// Market data
+export interface MarketData {
+  goods: MarketGood[];
+  lastUpdated: number;
+}
+
+export interface MarketGood {
+  good: string;
+  quantity: number;
+  basePrice: number;
+  currentPrice: number;
+}
+
+// Plugin system types
+export interface PluginManifest {
+  id: string;
+  name: string;
+  version: string;
+  author: string;
+  description: string;
+  assets: string[];
+  dependencies: string[];
+}
+
+// Utility types
+export type Constructor<T = {}> = new (...args: any[]) => T;
+export type GameFunction = () => void;
+export type UpdateFunction = (deltaTime: number) => void;
+export type RenderFunction = (context: CanvasRenderingContext2D) => void;
+
+// Event system
+export interface GameEvent {
+  type: string;
+  data?: any;
+  timestamp: number;
+}
+
+export type EventListener = (event: GameEvent) => void;

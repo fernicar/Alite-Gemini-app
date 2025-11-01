@@ -1,0 +1,398 @@
+/**
+ * Advanced Name Generation System
+ * Implements the 32-syllable name generation algorithm from Elite with enhancements
+ */
+
+import { NameRandom } from './SeededRandomGenerator.js';
+import { EconomyType, GovernmentType } from '../models/Galaxy.js';
+
+/**
+ * Enhanced name generation templates and rules
+ */
+export class NameGenerator {
+  private nameRandom: NameRandom;
+
+  constructor(seed: number | string) {
+    this.nameRandom = new NameRandom(seed);
+  }
+
+  /**
+   * Generate system name using the Elite 32-syllable algorithm
+   * This matches the original game mechanics exactly
+   */
+  generateSystemName(
+    galaxyIndex: number, 
+    systemIndex: number, 
+    specialSystem?: boolean
+  ): string {
+    // Special named systems from Elite universe
+    const specialNames = this.getSpecialSystemNames();
+    
+    // Check if this is a special system
+    if (specialSystem || this.shouldBeSpecial(systemIndex)) {
+      return this.nameRandom.choice(specialNames);
+    }
+
+    // Use the original Elite algorithm
+    return this.generateEliteSystemName(galaxyIndex, systemIndex);
+  }
+
+  /**
+   * Generate name using the original Elite algorithm
+   */
+  private generateEliteSystemName(galaxyIndex: number, systemIndex: number): string {
+    const seed = this.combineSeeds(galaxyIndex, systemIndex);
+    const generator = new NameRandom(seed);
+
+    // Generate 2-4 syllable name
+    const syllableCount = generator.nextInt(2, 4);
+    const name = this.buildNameFromSyllables(generator, syllableCount);
+
+    return this.formatSystemName(name, generator);
+  }
+
+  /**
+   * Combine galaxy and system indices into a seed
+   */
+  private combineSeeds(galaxyIndex: number, systemIndex: number): number {
+    return (galaxyIndex * 256 + systemIndex) * 0x41C64E6D + 0x3039;
+  }
+
+  /**
+   * Build name from syllables using Elite rules
+   */
+  private buildNameFromSyllables(generator: NameRandom, syllableCount: number): string {
+    const syllables = NameRandom.SYLLABLES;
+    let name = '';
+
+    for (let i = 0; i < syllableCount; i++) {
+      // Use different syllable selection based on position
+      let syllable: string;
+      
+      if (i === 0) {
+        // First syllable - prefer more pronounceable combinations
+        syllable = generator.weightedChoice([
+          { item: 'Ar', weight: 1.5 },
+          { item: 'Be', weight: 1.5 },
+          { item: 'Ce', weight: 1.2 },
+          { item: 'Di', weight: 1.2 },
+          { item: 'Er', weight: 1.0 },
+          { item: 'Fa', weight: 1.0 },
+          { item: 'Le', weight: 1.5 },
+          { item: 'Ma', weight: 1.5 },
+          { item: 'Na', weight: 1.2 },
+          { item: 'Pa', weight: 1.2 },
+          { item: 'Re', weight: 1.0 },
+          { item: 'Sa', weight: 1.0 },
+          { item: 'Ta', weight: 1.2 },
+          { item: 'Ve', weight: 1.0 }
+        ]);
+      } else if (i === syllableCount - 1) {
+        // Last syllable - prefer endings that sound good
+        syllable = generator.weightedChoice([
+          { item: 'a', weight: 2.0 },
+          { item: 'e', weight: 2.0 },
+          { item: 'i', weight: 1.5 },
+          { item: 'o', weight: 1.5 },
+          { item: 'u', weight: 1.0 },
+          { item: 'al', weight: 1.5 },
+          { item: 'er', weight: 1.5 },
+          { item: 'on', weight: 1.5 },
+          { item: 'us', weight: 1.2 },
+          { item: 'is', weight: 1.2 }
+        ]);
+      } else {
+        // Middle syllables - any combination
+        syllable = generator.choice(syllables);
+      }
+
+      name += syllable;
+    }
+
+    return name;
+  }
+
+  /**
+   * Apply formatting rules to make names more realistic
+   */
+  private formatSystemName(name: string, generator: NameRandom): string {
+    // Remove duplicate letters for better pronunciation
+    name = name.replace(/([a-zA-Z])\1+/g, '$1');
+    
+    // Capitalize first letter
+    name = name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
+    
+    // Add prefixes/suffixes for specific system types
+    if (generator.next() < 0.1) { // 10% chance
+      const prefixes = ['New', 'Old', 'Grand', 'Royal', 'High', 'Low'];
+      const suffixes = ['Prime', 'Major', 'Minor', 'Central', 'Outer'];
+      
+      if (generator.nextBoolean()) {
+        name = `${generator.choice(prefixes)} ${name}`;
+      } else {
+        name = `${name} ${generator.choice(suffixes)}`;
+      }
+    }
+    
+    return name;
+  }
+
+  /**
+   * Get special named systems from the Elite universe
+   */
+  private getSpecialSystemNames(): string[] {
+    return [
+      // Original Elite special systems
+      'Lave', 'Diso', 'Leesti', 'Zaonce', 'Riedquat', 'Or之首',
+      'Ceti', 'Astral', 'Betelgeuse', 'Cassandra', 'Coriolis', 'Delphinus',
+      'Epsilon', 'Ferenginar', 'Galilean', 'Huygen', 'Inferno', 'Jovian',
+      'Kepler', 'Lyra', 'Mensa', 'Nebula', 'Orionis', 'Perseus',
+      'Quarantine', 'Regulus', 'Sirius', 'Taurus', 'Uranus', 'Vulcan',
+      'Xenon', 'Yukon', 'Zeta'
+    ];
+  }
+
+  /**
+   * Determine if a system index should be special (special systems are distributed throughout)
+   */
+  private shouldBeSpecial(systemIndex: number): boolean {
+    // Special systems appear at regular intervals
+    const specialIndices = [
+      0, 7, 17, 30, 45, 62, 80, 99, 119, 140, 
+      162, 185, 209, 234, 250, 255
+    ];
+    
+    return specialIndices.includes(systemIndex);
+  }
+
+  /**
+   * Generate faction name based on government type
+   */
+  generateFactionName(governmentType: GovernmentType): string {
+    const generator = new NameRandom(this.combineSeeds(0, this.getFactionSeed(governmentType)));
+    
+    const factionPrefixes = {
+      [GovernmentType.ANARCHY]: ['Outlaw', 'Pirate', 'Rogue', 'Independent'],
+      [GovernmentType.FEUDAL]: ['House', 'Dynasty', 'Clan', 'Noble'],
+      [GovernmentType.MULTI_GOVERNMENT]: ['Coalition', 'Confederation', 'Alliance', 'Union'],
+      [GovernmentType.DICTATORSHIP]: ['Empire', 'Regime', 'Dominion', 'Hegemony'],
+      [GovernmentType.COMMUNIST]: ['Collective', 'People\'s', 'Workers\'', 'Soviet'],
+      [GovernmentType.CONFEDERATE]: ['Republic', 'Federation', 'Commonwealth', 'States'],
+      [GovernmentType.DEMOCRACY]: ['Democratic', 'Republic', 'Free', 'Liberty'],
+      [GovernmentType.CORPORATE_STATE]: ['Corporation', 'Board', 'Trade', 'Commerce'],
+      [GovernmentType.IMPLANTED_EMPIRE]: ['Imperial', 'Royal', 'Celestial', 'Divine']
+    };
+
+    const factionSuffixes = [
+      'Alliance', 'Federation', 'Coalition', 'Commonwealth', 'Empire',
+      'Dominion', 'Hegemony', 'Republic', 'Confederation', 'Union',
+      'Collective', 'Assembly', 'Council', 'Syndicate', 'Cartel'
+    ];
+
+    const prefix = generator.choice(factionPrefixes[governmentType] || ['Independent']);
+    const suffix = generator.choice(factionSuffixes);
+    
+    return `${prefix} ${suffix}`;
+  }
+
+  /**
+   * Generate station name for a system
+   */
+  generateStationName(systemName: string, governmentType: GovernmentType): string {
+    const generator = new NameRandom(systemName + '_station');
+    
+    const stationTypes = {
+      [GovernmentType.CORPORATE_STATE]: ['Corporate', 'Industrial', 'Commercial', 'Trade'],
+      [GovernmentType.DEMOCRACY]: ['Civic', 'Democratic', 'Public', 'Popular'],
+      [GovernmentType.MILITARY]: ['Fleet', 'Military', 'Command', 'Defense'],
+      [GovernmentType.ANARCHY]: ['Underground', 'Smuggler\'s', 'Hidden', 'Secret'],
+      [GovernmentType.FEUDAL]: ['Noble', 'Royal', 'Baron\'s', 'Duke\'s'],
+      [GovernmentType.CONFEDERATE]: ['Confederate', 'Union', 'States\'', 'Regional'],
+      [GovernmentType.COMMUNIST]: ['People\'s', 'Workers\', 'Collective', 'Social'],
+      [GovernmentType.IMPLANTED_EMPIRE]: ['Imperial', 'Royal', 'Celestial', 'Divine']
+    };
+
+    const type = generator.choice(stationTypes[governmentType] || ['Main']);
+    const modifiers = ['Station', 'Port', 'Terminal', 'Hub', 'Complex', 'Center'];
+    
+    return `${type} ${generator.choice(modifiers)}`;
+  }
+
+  /**
+   * Generate planet names
+   */
+  generatePlanetNames(count: number): string[] {
+    const names: string[] = [];
+    
+    for (let i = 0; i < count; i++) {
+      const generator = new NameRandom(`planet_${i}`);
+      names.push(this.generatePlanetName(generator));
+    }
+    
+    return names;
+  }
+
+  /**
+   * Generate individual planet name
+   */
+  private generatePlanetName(generator: NameRandom): string {
+    const romanNumerals = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
+    const suffixes = ['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon', 'Zeta', 'Eta', 'Theta'];
+    
+    if (generator.next() < 0.3) { // 30% chance for roman numeral
+      return generator.choice(romanNumerals);
+    } else if (generator.next() < 0.4) { // 40% chance for greek letter
+      return generator.choice(suffixes);
+    } else {
+      // Generate unique planet name
+      const syllables = generator.nextInt(2, 3);
+      let name = '';
+      
+      for (let i = 0; i < syllables; i++) {
+        const syllable = generator.choice(NameRandom.SYLLABLES);
+        name += syllable;
+      }
+      
+      // Clean up and format
+      name = name.replace(/([a-zA-Z])\1+/g, '$1');
+      name = name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
+      
+      return name;
+    }
+  }
+
+  /**
+   * Generate trade route name
+   */
+  generateTradeRouteName(startSystem: string, endSystem: string): string {
+    const generator = new NameRandom(`route_${startSystem}_${endSystem}`);
+    
+    const routeTypes = [
+      'Main Route', 'Highway', 'Lane', 'Circuit', 'Connection',
+      'Trade Route', 'Supply Line', 'Commercial Way', 'Transport Corridor'
+    ];
+    
+    const route = generator.choice(routeTypes);
+    
+    if (generator.next() < 0.5) {
+      return `${startSystem}-${endSystem} ${route}`;
+    } else {
+      return `${startSystem} ${route}`;
+    }
+  }
+
+  /**
+   * Generate cargo manifest names
+   */
+  generateCargoManifest(): string {
+    const generator = new NameRandom('cargo_manifest');
+    
+    const prefixes = ['Freighter', 'Cargo', 'Supply', 'Transport', 'Mercury'];
+    const identifiers = ['Express', 'Direct', 'Express', 'Priority', 'Standard'];
+    const numbers = Array.from({ length: 100 }, (_, i) => (100 + i).toString());
+    
+    return `${generator.choice(prefixes)} ${generator.choice(identifiers)}-${generator.choice(numbers)}`;
+  }
+
+  /**
+   * Generate navigation beacon name
+   */
+  generateBeaconName(systemName: string): string {
+    const generator = new NameRandom(`beacon_${systemName}`);
+    
+    const beaconTypes = ['Navigation', 'Guidance', 'Beacon', 'Signal', 'Marker'];
+    return `${generator.choice(beaconTypes)} ${systemName}`;
+  }
+
+  /**
+   * Get faction seed based on government type
+   */
+  private getFactionSeed(governmentType: GovernmentType): number {
+    const seeds = {
+      [GovernmentType.ANARCHY]: 0x12345678,
+      [GovernmentType.FEUDAL]: 0x23456789,
+      [GovernmentType.MULTI_GOVERNMENT]: 0x34567890,
+      [GovernmentType.DICTATORSHIP]: 0x45678901,
+      [GovernmentType.COMMUNIST]: 0x56789012,
+      [GovernmentType.CONFEDERATE]: 0x67890123,
+      [GovernmentType.DEMOCRACY]: 0x78901234,
+      [GovernmentType.CORPORATE_STATE]: 0x89012345,
+      [GovernmentType.IMPLANTED_EMPIRE]: 0x90123456
+    };
+    
+    return seeds[governmentType] || 0xABCDEF00;
+  }
+
+  /**
+   * Generate system description based on properties
+   */
+  generateSystemDescription(
+    name: string,
+    economyType: EconomyType,
+    governmentType: GovernmentType,
+    techLevel: number
+  ): string {
+    const generator = new NameRandom(`desc_${name}_${economyType}_${governmentType}`);
+    
+    const economyDescriptions = {
+      [EconomyType.AGRICULTURAL]: [
+        'Fertile agricultural world',
+        'Major food production center',
+        'Rich farming settlements',
+        'Agricultural export hub'
+      ],
+      [EconomyType.INDUSTRIAL]: [
+        'Heavy manufacturing center',
+        'Industrial complex',
+        'Major production hub',
+        'Industrial powerhouse'
+      ],
+      [EconomyType.HIGH_TECH]: [
+        'Advanced technology center',
+        'Research and development hub',
+        'High-tech innovations center',
+        'Cutting-edge technology world'
+      ],
+      [EconomyType.MINING]: [
+        'Rich mineral extraction world',
+        'Major mining operation',
+        'Mineral processing center',
+        'Deep space mining hub'
+      ],
+      [EconomyType.TOURISM]: [
+        'Popular tourist destination',
+        'Resort and recreation world',
+        'Pleasure cruise terminus',
+        'Vacation and leisure planet'
+      ],
+      [EconomyType.MILITARY]: [
+        'Major military installation',
+        'Defense and security center',
+        'Fleet operations base',
+        'Strategic military hub'
+      ]
+    };
+
+    const governmentDescriptions = {
+      [GovernmentType.ANARCHY]: [
+        'No central government control',
+        'Independent settlements',
+        'Self-governing colonies',
+        'Free trade zone'
+      ],
+      [GovernmentType.DEMOCRACY]: [
+        'Democratic governance',
+        'Elected representative council',
+        'Democratic republic',
+        'Popular government'
+      ]
+      // Add more as needed
+    };
+
+    const description = generator.choice(
+      economyDescriptions[economyType] || ['Colonial world']
+    );
+
+    return description;
+  }
+}

@@ -1,0 +1,540 @@
+import { Logger } from '@utils/Logging';
+import { Vector2D, InputEvent } from '@types/index';
+
+/**
+ * Input manager for handling keyboard, mouse, and touch input
+ */
+export class InputManager {
+  private static instance: InputManager;
+  private game: any;
+  private logger: Logger;
+
+  // Input state tracking
+  private keysDown: Set<string> = new Set();
+  private keysPressed: Set<string> = new Set();
+  private keysReleased: Set<string> = new Set();
+  private mouseDown: Set<number> = new Set();
+  private mousePressed: Set<number> = new Set();
+  private mouseReleased: Set<number> = new Set();
+  private mousePosition: Vector2D = { x: 0, y: 0 };
+  private touchPositions: Map<number, Vector2D> = new Map();
+
+  // Event listeners
+  private listeners: Map<string, ((event: InputEvent) => void)[]> = new Map();
+
+  // Joystick state
+  private virtualJoystick: VirtualJoystick | null = null;
+  private showVirtualJoystick: boolean = false;
+
+  // Control mappings
+  private controlMappings: Map<string, ControlBinding[]> = new Map();
+
+  private constructor() {
+    this.logger = Logger.getInstance();
+  }
+
+  public static getInstance(): InputManager {
+    if (!InputManager.instance) {
+      InputManager.instance = new InputManager();
+    }
+    return InputManager.instance;
+  }
+
+  /**
+   * Initialize input manager
+   */
+  public initialize(game: any): void {
+    this.game = game;
+    this.setupDefaultControls();
+    this.setupEventListeners();
+    this.logger.info('Input manager initialized');
+  }
+
+  /**
+   * Setup default control mappings
+   */
+  private setupDefaultControls(): void {
+    // Movement controls
+    this.bindAction('MOVE_FORWARD', ['KeyW', 'ArrowUp']);
+    this.bindAction('MOVE_BACKWARD', ['KeyS', 'ArrowDown']);
+    this.bindAction('MOVE_LEFT', ['KeyA', 'ArrowLeft']);
+    this.bindAction('MOVE_RIGHT', ['KeyD', 'ArrowRight']);
+
+    // Game actions
+    this.bindAction('FIRE_PRIMARY', ['Space', 'MouseLeft']);
+    this.bindAction('FIRE_SECONDARY', ['KeyE', 'MouseRight']);
+    this.bindAction('TARGET_NEXT', ['Tab']);
+    this.bindAction('TARGET_PREVIOUS', ['Shift', 'Tab']);
+    this.bindAction('DOCK', ['KeyH']);
+
+    // System controls
+    this.bindAction('PAUSE', ['Escape', 'KeyP']);
+    this.bindAction('GALAXY_MAP', ['KeyG']);
+    this.bindAction('INVENTORY', ['KeyI']);
+    this.bindAction('EQUIPMENT', ['KeyR']);
+    this.bindAction('OPTIONS', ['F10']);
+
+    // Menu navigation
+    this.bindAction('MENU_UP', ['ArrowUp', 'KeyW']);
+    this.bindAction('MENU_DOWN', ['ArrowDown', 'KeyS']);
+    this.bindAction('MENU_LEFT', ['ArrowLeft', 'KeyA']);
+    this.bindAction('MENU_RIGHT', ['ArrowRight', 'KeyD']);
+    this.bindAction('MENU_SELECT', ['Enter', 'Space']);
+    this.bindAction('MENU_BACK', ['Escape', 'Backspace']);
+  }
+
+  /**
+   * Bind an action to key(s)
+   */
+  public bindAction(action: string, keys: string[]): void {
+    if (!this.controlMappings.has(action)) {
+      this.controlMappings.set(action, []);
+    }
+
+    const bindings = this.controlMappings.get(action)!;
+    keys.forEach(key => {
+      bindings.push({
+        key: key,
+        isMouse: key.startsWith('Mouse'),
+        buttonNumber: key.startsWith('Mouse') ? parseInt(key.replace('Mouse', '')) : -1
+      });
+    });
+  }
+
+  /**
+   * Check if an action is currently being pressed
+   */
+  public isActionPressed(action: string): boolean {
+    const bindings = this.controlMappings.get(action);
+    if (!bindings) return false;
+
+    return bindings.some(binding => {
+      if (binding.isMouse) {
+        return this.mouseDown.has(binding.buttonNumber);
+      } else {
+        return this.keysDown.has(binding.key);
+      }
+    });
+  }
+
+  /**
+   * Check if an action was just pressed this frame
+   */
+  public isActionJustPressed(action: string): boolean {
+    const bindings = this.controlMappings.get(action);
+    if (!bindings) return false;
+
+    return bindings.some(binding => {
+      if (binding.isMouse) {
+        return this.mousePressed.has(binding.buttonNumber);
+      } else {
+        return this.keysPressed.has(binding.key);
+      }
+    });
+  }
+
+  /**
+   * Check if an action was just released this frame
+   */
+  public isActionJustReleased(action: string): boolean {
+    const bindings = this.controlMappings.get(action);
+    if (!bindings) return false;
+
+    return bindings.some(binding => {
+      if (binding.isMouse) {
+        return this.mouseReleased.has(binding.buttonNumber);
+      } else {
+        return this.keysReleased.has(binding.key);
+      }
+    });
+  }
+
+  /**
+   * Get current mouse position
+   */
+  public getMousePosition(): Vector2D {
+    return { ...this.mousePosition };
+  }
+
+  /**
+   * Check if mouse button is down
+   */
+  public isMouseDown(button: number): boolean {
+    return this.mouseDown.has(button);
+  }
+
+  /**
+   * Check if mouse button was just pressed
+   */
+  public isMouseJustPressed(button: number): boolean {
+    return this.mousePressed.has(button);
+  }
+
+  /**
+   * Check if mouse button was just released
+   */
+  public isMouseJustReleased(button: number): boolean {
+    return this.mouseReleased.has(button);
+  }
+
+  /**
+   * Get virtual joystick value
+   */
+  public getVirtualJoystick(): Vector2D {
+    return this.virtualJoystick ? this.virtualJoystick.getValue() : { x: 0, y: 0 };
+  }
+
+  /**
+   * Enable virtual joystick for touch devices
+   */
+  public enableVirtualJoystick(canvas: HTMLCanvasElement): void {
+    this.showVirtualJoystick = true;
+    this.virtualJoystick = new VirtualJoystick(canvas);
+  }
+
+  /**
+   * Disable virtual joystick
+   */
+  public disableVirtualJoystick(): void {
+    this.showVirtualJoystick = false;
+    if (this.virtualJoystick) {
+      this.virtualJoystick.destroy();
+      this.virtualJoystick = null;
+    }
+  }
+
+  /**
+   * Update input state (called at end of frame)
+   */
+  public update(): void {
+    // Clear one-frame states
+    this.keysPressed.clear();
+    this.keysReleased.clear();
+    this.mousePressed.clear();
+    this.mouseReleased.clear();
+
+    // Update virtual joystick
+    if (this.virtualJoystick) {
+      this.virtualJoystick.update();
+    }
+  }
+
+  /**
+   * Add event listener
+   */
+  public addEventListener(eventType: string, listener: (event: InputEvent) => void): void {
+    if (!this.listeners.has(eventType)) {
+      this.listeners.set(eventType, []);
+    }
+    this.listeners.get(eventType)!.push(listener);
+  }
+
+  /**
+   * Remove event listener
+   */
+  public removeEventListener(eventType: string, listener: (event: InputEvent) => void): void {
+    const listeners = this.listeners.get(eventType);
+    if (listeners) {
+      const index = listeners.indexOf(listener);
+      if (index > -1) {
+        listeners.splice(index, 1);
+      }
+    }
+  }
+
+  /**
+   * Emit event to listeners
+   */
+  private emitEvent(eventType: string, event: InputEvent): void {
+    const listeners = this.listeners.get(eventType);
+    if (listeners) {
+      listeners.forEach(listener => listener(event));
+    }
+  }
+
+  /**
+   * Setup event listeners
+   */
+  private setupEventListeners(): void {
+    const canvas = this.game.getCanvas();
+
+    // Keyboard events
+    window.addEventListener('keydown', this.handleKeyDown.bind(this));
+    window.addEventListener('keyup', this.handleKeyUp.bind(this));
+
+    // Mouse events
+    canvas.addEventListener('mousedown', this.handleMouseDown.bind(this));
+    canvas.addEventListener('mouseup', this.handleMouseUp.bind(this));
+    canvas.addEventListener('mousemove', this.handleMouseMove.bind(this));
+
+    // Touch events
+    canvas.addEventListener('touchstart', this.handleTouchStart.bind(this), { passive: false });
+    canvas.addEventListener('touchend', this.handleTouchEnd.bind(this), { passive: false });
+    canvas.addEventListener('touchmove', this.handleTouchMove.bind(this), { passive: false });
+
+    // Prevent context menu
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    this.logger.debug('Input event listeners set up');
+  }
+
+  // Event handlers
+  private handleKeyDown(event: KeyboardEvent): void {
+    const key = event.code || event.key;
+    
+    if (!this.keysDown.has(key)) {
+      this.keysPressed.add(key);
+      this.emitEvent('keyPressed', {
+        type: 'keyPressed',
+        key: key,
+        x: this.mousePosition.x,
+        y: this.mousePosition.y
+      });
+    }
+    
+    this.keysDown.add(key);
+    this.emitEvent('keyDown', {
+      type: 'keyDown',
+      key: key,
+      x: this.mousePosition.x,
+      y: this.mousePosition.y
+    });
+  }
+
+  private handleKeyUp(event: KeyboardEvent): void {
+    const key = event.code || event.key;
+    
+    this.keysDown.delete(key);
+    this.keysReleased.add(key);
+    
+    this.emitEvent('keyReleased', {
+      type: 'keyReleased',
+      key: key,
+      x: this.mousePosition.x,
+      y: this.mousePosition.y
+    });
+  }
+
+  private handleMouseDown(event: MouseEvent): void {
+    const rect = this.game.getCanvas().getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    
+    if (!this.mouseDown.has(event.button)) {
+      this.mousePressed.add(event.button);
+    }
+    
+    this.mouseDown.add(event.button);
+    this.mousePosition = { x, y };
+    
+    this.emitEvent('mouseDown', {
+      type: 'mouseDown',
+      x,
+      y,
+      button: event.button
+    });
+  }
+
+  private handleMouseUp(event: MouseEvent): void {
+    this.mouseDown.delete(event.button);
+    this.mouseReleased.add(event.button);
+    
+    this.emitEvent('mouseUp', {
+      type: 'mouseUp',
+      x: this.mousePosition.x,
+      y: this.mousePosition.y,
+      button: event.button
+    });
+  }
+
+  private handleMouseMove(event: MouseEvent): void {
+    const rect = this.game.getCanvas().getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    
+    this.mousePosition = { x, y };
+    
+    this.emitEvent('mouseMove', {
+      type: 'mouseMove',
+      x,
+      y
+    });
+  }
+
+  private handleTouchStart(event: TouchEvent): void {
+    event.preventDefault();
+    const rect = this.game.getCanvas().getBoundingClientRect();
+    
+    for (let i = 0; i < event.touches.length; i++) {
+      const touch = event.touches[i];
+      const x = touch.clientX - rect.left;
+      const y = touch.clientY - rect.top;
+      
+      this.touchPositions.set(touch.identifier, { x, y });
+      
+      this.emitEvent('touchStart', {
+        type: 'touchStart',
+        x,
+        y,
+        touchId: touch.identifier
+      });
+    }
+  }
+
+  private handleTouchEnd(event: TouchEvent): void {
+    event.preventDefault();
+    
+    for (let i = 0; i < event.changedTouches.length; i++) {
+      const touch = event.changedTouches[i];
+      this.touchPositions.delete(touch.identifier);
+      
+      this.emitEvent('touchEnd', {
+        type: 'touchEnd',
+        x: 0,
+        y: 0,
+        touchId: touch.identifier
+      });
+    }
+  }
+
+  private handleTouchMove(event: TouchEvent): void {
+    event.preventDefault();
+    const rect = this.game.getCanvas().getBoundingClientRect();
+    
+    for (let i = 0; i < event.touches.length; i++) {
+      const touch = event.touches[i];
+      const x = touch.clientX - rect.left;
+      const y = touch.clientY - rect.top;
+      
+      this.touchPositions.set(touch.identifier, { x, y });
+      
+      this.emitEvent('touchMove', {
+        type: 'touchMove',
+        x,
+        y,
+        touchId: touch.identifier
+      });
+    }
+  }
+
+  /**
+   * Get control mappings for a specific action
+   */
+  public getControlMappings(action: string): ControlBinding[] {
+    return this.controlMappings.get(action) || [];
+  }
+
+  /**
+   * Get all control mappings
+   */
+  public getAllControlMappings(): Map<string, ControlBinding[]> {
+    return new Map(this.controlMappings);
+  }
+
+  /**
+   * Render virtual joystick if enabled
+   */
+  public render(ctx: CanvasRenderingContext2D): void {
+    if (this.virtualJoystick && this.showVirtualJoystick) {
+      this.virtualJoystick.render(ctx);
+    }
+  }
+}
+
+/**
+ * Virtual joystick for touch devices
+ */
+class VirtualJoystick {
+  private canvas: HTMLCanvasElement;
+  private center: Vector2D;
+  private radius: number = 50;
+  private knobRadius: number = 20;
+  private value: Vector2D = { x: 0, y: 0 };
+  private touchId: number | null = null;
+  private isActive: boolean = false;
+
+  constructor(canvas: HTMLCanvasElement) {
+    this.canvas = canvas;
+    this.center = { x: 100, y: canvas.height - 100 };
+  }
+
+  public update(): void {
+    // Update joystick position based on canvas size changes
+    this.center = { x: 100, y: this.canvas.height - 100 };
+  }
+
+  public getValue(): Vector2D {
+    return { ...this.value };
+  }
+
+  public handleTouch(touchId: number, x: number, y: number): void {
+    const distance = Math.sqrt(
+      Math.pow(x - this.center.x, 2) + Math.pow(y - this.center.y, 2)
+    );
+
+    if (distance <= this.radius) {
+      this.isActive = true;
+      this.touchId = touchId;
+      
+      // Calculate normalized value
+      if (distance > 0) {
+        const normalizedX = (x - this.center.x) / this.radius;
+        const normalizedY = (y - this.center.y) / this.radius;
+        
+        // Clamp to circle
+        const length = Math.sqrt(normalizedX * normalizedX + normalizedY * normalizedY);
+        if (length > 1) {
+          this.value.x = normalizedX / length;
+          this.value.y = normalizedY / length;
+        } else {
+          this.value.x = normalizedX;
+          this.value.y = normalizedY;
+        }
+      }
+    }
+  }
+
+  public handleTouchEnd(touchId: number): void {
+    if (this.touchId === touchId) {
+      this.isActive = false;
+      this.touchId = null;
+      this.value = { x: 0, y: 0 };
+    }
+  }
+
+  public render(ctx: CanvasRenderingContext2D): void {
+    // Draw joystick base
+    ctx.strokeStyle = 'rgba(64, 224, 255, 0.5)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(this.center.x, this.center.y, this.radius, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Draw joystick knob
+    const knobX = this.center.x + this.value.x * this.radius;
+    const knobY = this.center.y + this.value.y * this.radius;
+    
+    ctx.fillStyle = 'rgba(64, 224, 255, 0.8)';
+    ctx.beginPath();
+    ctx.arc(knobX, knobY, this.knobRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Draw center indicator
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(this.center.x, this.center.y, 5, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  public destroy(): void {
+    // Cleanup if needed
+  }
+}
+
+// Types
+interface ControlBinding {
+  key: string;
+  isMouse: boolean;
+  buttonNumber: number;
+}

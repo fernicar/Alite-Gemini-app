@@ -1,0 +1,666 @@
+/**
+ * System Map Screen - Detailed view of a single star system
+ * Shows planets, stations, other ships, and navigation points
+ */
+
+import { BaseScreen, UIManager, ScreenId } from '../ui/UIManager';
+import { UIPanel, UIButton, UIText, UIButtonOptions, UIPanelOptions } from '../ui/components/UIBasicComponents';
+import { System } from '../models/Galaxy';
+import { Vector2D } from '../../types/index';
+
+export interface SystemMapData {
+  system: System;
+  systemName: string;
+  playerPosition: { x: number; y: number };
+  visibleObjects: SystemObject[];
+}
+
+export interface SystemObject {
+  id: string;
+  name: string;
+  type: 'planet' | 'station' | 'ship' | 'nav-beacon' | 'anomaly';
+  position: { x: number; y: number };
+  radius: number;
+  description?: string;
+  government?: string;
+  economy?: string;
+  population?: string;
+  isDocked?: boolean;
+  distance?: number;
+}
+
+export class SystemMapScreen extends BaseScreen {
+  private data: SystemMapData;
+  private mapPanel: UIPanel;
+  private infoPanel: UIPanel;
+  private controlPanel: UIPanel;
+  private objectButtons: Map<string, UIButton> = new Map();
+  private selectedObject?: SystemObject;
+  private objectInfoDisplay: UIText;
+  private distanceDisplay: UIText;
+  private mapOffset: { x: number; y: number } = { x: 0, y: 0 };
+  private zoomLevel: number = 1.0;
+  private isDragging: boolean = false;
+  private dragStart: { x: number; y: number } = { x: 0, y: 0 };
+  private mapStart: { x: number; y: number } = { x: 0, y: 0 };
+
+  constructor(data: SystemMapData) {
+    const rootComponent = new UIPanel('system-map-root', {
+      width: 800,
+      height: 600,
+      backgroundColor: '#000011',
+      borderWidth: 0,
+      shadow: false,
+      opacity: 1.0
+    });
+
+    super('system-map', 'System Map', rootComponent);
+    this.data = data;
+
+    this.initializeUI();
+  }
+
+  private initializeUI(): void {
+    const root = this.component as UIPanel;
+
+    // Map Panel (main area)
+    this.mapPanel = new UIPanel('map', {
+      width: 600,
+      height: 500,
+      backgroundColor: '#000022',
+      borderColor: '#40e0ff',
+      borderWidth: 2,
+      cornerRadius: 0,
+      shadow: true,
+      opacity: 0.9
+    });
+    this.mapPanel.position = { x: 20, y: 20 };
+
+    // Info Panel (right side)
+    this.infoPanel = new UIPanel('info', {
+      width: 160,
+      height: 500,
+      backgroundColor: 'rgba(26, 32, 44, 0.95)',
+      borderColor: '#40e0ff',
+      borderWidth: 2,
+      cornerRadius: 0,
+      shadow: true,
+      opacity: 0.9
+    });
+    this.infoPanel.position = { x: 640, y: 20 };
+
+    // Control Panel (bottom)
+    this.controlPanel = new UIPanel('controls', {
+      width: 780,
+      height: 60,
+      backgroundColor: 'rgba(26, 32, 44, 0.95)',
+      borderColor: '#40e0ff',
+      borderWidth: 2,
+      cornerRadius: 0,
+      shadow: true,
+      opacity: 0.9
+    });
+    this.controlPanel.position = { x: 10, y: 520 };
+
+    // Initialize panels
+    this.initializeInfoPanel();
+    this.initializeControlPanel();
+    this.initializeMapObjects();
+
+    // Add panels to root
+    root.addChild(this.mapPanel);
+    root.addChild(this.infoPanel);
+    root.addChild(this.controlPanel);
+  }
+
+  private initializeInfoPanel(): void {
+    // System Info
+    const systemTitle = new UIText('system-title', 'SYSTEM', {
+      fontSize: 12,
+      fontFamily: 'Arial, sans-serif',
+      color: '#40e0ff',
+      textAlign: 'center',
+      bold: true
+    });
+    systemTitle.position = { x: 10, y: 10 };
+    systemTitle.size = { x: 140, y: 20 };
+    this.infoPanel.addChild(systemTitle);
+
+    const systemNameDisplay = new UIText('system-name', this.data.systemName, {
+      fontSize: 14,
+      fontFamily: 'Arial, sans-serif',
+      color: '#ffffff',
+      textAlign: 'center',
+      bold: true
+    });
+    systemNameDisplay.position = { x: 10, y: 35 };
+    systemNameDisplay.size = { x: 140, y: 20 };
+    this.infoPanel.addChild(systemNameDisplay);
+
+    // Object Info
+    const objectTitle = new UIText('object-title', 'SELECTED OBJECT', {
+      fontSize: 12,
+      fontFamily: 'Arial, sans-serif',
+      color: '#40e0ff',
+      textAlign: 'center',
+      bold: true
+    });
+    objectTitle.position = { x: 10, y: 70 };
+    objectTitle.size = { x: 140, y: 20 };
+    this.infoPanel.addChild(objectTitle);
+
+    this.objectInfoDisplay = new UIText('object-info', 'None', {
+      fontSize: 12,
+      color: '#ffffff',
+      wordWrap: true,
+      maxWidth: 140
+    });
+    this.objectInfoDisplay.position = { x: 10, y: 95 };
+    this.objectInfoDisplay.size = { x: 140, y: 120 };
+    this.infoPanel.addChild(this.objectInfoDisplay);
+
+    // Distance Info
+    const distanceTitle = new UIText('distance-title', 'DISTANCE', {
+      fontSize: 12,
+      fontFamily: 'Arial, sans-serif',
+      color: '#40e0ff',
+      textAlign: 'center',
+      bold: true
+    });
+    distanceTitle.position = { x: 10, y: 230 };
+    distanceTitle.size = { x: 140, y: 20 };
+    this.infoPanel.addChild(distanceTitle);
+
+    this.distanceDisplay = new UIText('distance-info', '0.0 km', {
+      fontSize: 14,
+      fontFamily: 'Courier New, monospace',
+      color: '#ffffff',
+      textAlign: 'center'
+    });
+    this.distanceDisplay.position = { x: 10, y: 255 };
+    this.distanceDisplay.size = { x: 140, y: 20 };
+    this.infoPanel.addChild(this.distanceDisplay);
+
+    // Quick Actions
+    const actionsTitle = new UIText('actions-title', 'QUICK ACTIONS', {
+      fontSize: 12,
+      fontFamily: 'Arial, sans-serif',
+      color: '#40e0ff',
+      textAlign: 'center',
+      bold: true
+    });
+    actionsTitle.position = { x: 10, y: 290 };
+    actionsTitle.size = { x: 140, y: 20 };
+    this.infoPanel.addChild(actionsTitle);
+
+    this.initializeQuickActions();
+  }
+
+  private initializeQuickActions(): void {
+    // Station button
+    const stationButton = new UIButton('station', 'STATION', {
+      width: 140,
+      height: 25,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 10,
+      borderColor: '#48bb78',
+      borderWidth: 1
+    }, () => this.requestDocking());
+    stationButton.position = { x: 10, y: 320 };
+    this.infoPanel.addChild(stationButton);
+
+    // Galaxy map button
+    const galaxyButton = new UIButton('galaxy', 'GALAXY MAP', {
+      width: 140,
+      height: 25,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 10,
+      borderColor: '#9f7aea',
+      borderWidth: 1
+    }, () => this.openGalaxyMap());
+    galaxyButton.position = { x: 10, y: 350 };
+    this.infoPanel.addChild(galaxyButton);
+
+    // Navigate to center button
+    const centerButton = new UIButton('center', 'CENTER VIEW', {
+      width: 140,
+      height: 25,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 10,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.centerOnPlayer());
+    centerButton.position = { x: 10, y: 380 };
+    this.infoPanel.addChild(centerButton);
+  }
+
+  private initializeControlPanel(): void {
+    // Zoom controls
+    const zoomInButton = new UIButton('zoom-in', '+', {
+      width: 30,
+      height: 30,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 16,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.zoomIn());
+    zoomInButton.position = { x: 20, y: 15 };
+    this.controlPanel.addChild(zoomInButton);
+
+    const zoomOutButton = new UIButton('zoom-out', '-', {
+      width: 30,
+      height: 30,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 16,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.zoomOut());
+    zoomOutButton.position = { x: 60, y: 15 };
+    this.controlPanel.addChild(zoomOutButton);
+
+    const zoomLabel = new UIText('zoom-label', `Zoom: ${(this.zoomLevel * 100).toFixed(0)}%`, {
+      fontSize: 12,
+      color: '#ffffff'
+    });
+    zoomLabel.position = { x: 100, y: 20 };
+    zoomLabel.size = { x: 100, y: 20 };
+    this.controlPanel.addChild(zoomLabel);
+
+    // Docking button
+    const dockButton = new UIButton('dock-btn', 'DOCK AT STATION', {
+      width: 150,
+      height: 35,
+      backgroundColor: '#48bb78',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#38a169',
+      borderWidth: 2,
+      cornerRadius: 5
+    }, () => this.requestDocking());
+    dockButton.position = { x: 250, y: 12 };
+    this.controlPanel.addChild(dockButton);
+
+    // View mode buttons
+    const tacticalButton = new UIButton('tactical', 'TACTICAL', {
+      width: 80,
+      height: 30,
+      backgroundColor: '#9f7aea',
+      textColor: '#ffffff',
+      fontSize: 10,
+      borderColor: '#805ad5',
+      borderWidth: 1
+    }, () => this.setViewMode('tactical'));
+    tacticalButton.position = { x: 420, y: 15 };
+    this.controlPanel.addChild(tacticalButton);
+
+    const navButton = new UIButton('nav', 'NAVIGATION', {
+      width: 80,
+      height: 30,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 10,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.setViewMode('navigation'));
+    navButton.position = { x: 510, y: 15 };
+    this.controlPanel.addChild(navButton);
+
+    // Back button
+    const backButton = new UIButton('back', 'BACK TO COCKPIT', {
+      width: 150,
+      height: 35,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#40e0ff',
+      borderWidth: 1,
+      cornerRadius: 5
+    }, () => this.backToCockpit());
+    backButton.position = { x: 20, y: 35 };
+    this.controlPanel.addChild(backButton);
+
+    // Center button
+    const centerButton = new UIButton('center-btn', 'CENTER', {
+      width: 100,
+      height: 35,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#40e0ff',
+      borderWidth: 1,
+      cornerRadius: 5
+    }, () => this.centerOnPlayer());
+    centerButton.position = { x: 680, y: 35 };
+    this.controlPanel.addChild(centerButton);
+  }
+
+  private initializeMapObjects(): void {
+    // Create visual representation of objects in the system
+    this.data.visibleObjects.forEach(obj => {
+      const color = this.getObjectColor(obj.type);
+      const button = new UIButton(`object-${obj.id}`, '', {
+        width: Math.max(6, obj.radius * this.zoomLevel * 2),
+        height: Math.max(6, obj.radius * this.zoomLevel * 2),
+        backgroundColor: color,
+        textColor: 'transparent',
+        borderColor: this.getObjectBorderColor(obj.type),
+        borderWidth: obj.type === 'station' ? 2 : 1
+      }, () => this.selectObject(obj));
+      
+      button.position = {
+        x: 300 + obj.position.x * this.zoomLevel + this.mapOffset.x - button.size.x / 2,
+        y: 250 + obj.position.y * this.zoomLevel + this.mapOffset.y - button.size.y / 2
+      };
+      
+      this.mapPanel.addChild(button);
+      this.objectButtons.set(obj.id, button);
+    });
+  }
+
+  private getObjectColor(type: string): string {
+    switch (type) {
+      case 'planet':
+        return '#4a5568';
+      case 'station':
+        return '#40e0ff';
+      case 'ship':
+        return '#48bb78';
+      case 'nav-beacon':
+        return '#ecc94b';
+      case 'anomaly':
+        return '#9f7aea';
+      default:
+        return '#666666';
+    }
+  }
+
+  private getObjectBorderColor(type: string): string {
+    switch (type) {
+      case 'station':
+        return '#ffffff';
+      case 'nav-beacon':
+        return '#d69e2e';
+      case 'anomaly':
+        return '#805ad5';
+      default:
+        return '#333333';
+    }
+  }
+
+  onEnter(): void {
+    super.onEnter();
+    this.centerOnPlayer();
+  }
+
+  onExit(): void {
+    super.onExit();
+  }
+
+  onUpdate(deltaTime: number): void {
+    super.onUpdate(deltaTime);
+    // Update any animated elements or positions
+  }
+
+  handleMouseDown(x: number, y: number): boolean {
+    if (!this.isVisible || !this.isEnabled) {
+      return false;
+    }
+
+    const mapBounds = this.mapPanel.getBounds();
+    
+    // Check if click is on the map
+    if (x >= mapBounds.x && x <= mapBounds.x + mapBounds.width &&
+        y >= mapBounds.y && y <= mapBounds.y + mapBounds.height) {
+      
+      this.isDragging = true;
+      this.dragStart = { x, y };
+      this.mapStart = { ...this.mapOffset };
+      return true;
+    }
+
+    return super.handleMouseDown(x, y);
+  }
+
+  handleMouseMove(x: number, y: number): boolean {
+    if (!this.isVisible || !this.isEnabled) {
+      return false;
+    }
+
+    if (this.isDragging) {
+      const dx = x - this.dragStart.x;
+      const dy = y - this.dragStart.y;
+      this.mapOffset = {
+        x: this.mapStart.x + dx,
+        y: this.mapStart.y + dy
+      };
+      this.updateObjectPositions();
+      return true;
+    }
+
+    return super.handleMouseMove(x, y);
+  }
+
+  handleMouseUp(x: number, y: number): boolean {
+    if (!this.isVisible || !this.isEnabled) {
+      return false;
+    }
+
+    this.isDragging = false;
+    return super.handleMouseUp(x, y);
+  }
+
+  handleKeyDown(key: string): boolean {
+    if (!this.isVisible || !this.isEnabled) {
+      return false;
+    }
+
+    switch (key.toLowerCase()) {
+      case 'escape':
+      case 'backspace':
+        this.backToCockpit();
+        return true;
+      case ' ':
+      case 'enter':
+        if (this.selectedObject && this.selectedObject.type === 'station') {
+          this.requestDocking();
+        }
+        return true;
+      case '+':
+      case '=':
+        this.zoomIn();
+        return true;
+      case '-':
+        this.zoomOut();
+        return true;
+      case 'c':
+        this.centerOnPlayer();
+        return true;
+      case 'g':
+        this.openGalaxyMap();
+        return true;
+    }
+
+    return super.handleKeyDown(key);
+  }
+
+  private selectObject(obj: SystemObject): void {
+    this.selectedObject = obj;
+    this.updateObjectInfo();
+    this.updateObjectButtons();
+    
+    // Update distance
+    const distance = this.calculateDistance(obj.position, this.data.playerPosition);
+    this.distanceDisplay.setText(`${distance.toFixed(1)} km`);
+  }
+
+  private updateObjectInfo(): void {
+    if (!this.selectedObject) {
+      this.objectInfoDisplay.setText('None');
+      return;
+    }
+
+    let info = `${this.selectedObject.name}\n`;
+    info += `Type: ${this.selectedObject.type.charAt(0).toUpperCase() + this.selectedObject.type.slice(1)}\n`;
+    
+    if (this.selectedObject.description) {
+      info += `Desc: ${this.selectedObject.description}\n`;
+    }
+    
+    if (this.selectedObject.government) {
+      info += `Gov: ${this.selectedObject.government}\n`;
+    }
+    
+    if (this.selectedObject.economy) {
+      info += `Econ: ${this.selectedObject.economy}\n`;
+    }
+    
+    if (this.selectedObject.population) {
+      info += `Pop: ${this.selectedObject.population}`;
+    }
+
+    this.objectInfoDisplay.setText(info);
+  }
+
+  private updateObjectButtons(): void {
+    this.objectButtons.forEach((button, objectId) => {
+      if (this.selectedObject?.id === objectId) {
+        button.options.borderColor = '#ffffff';
+        button.options.borderWidth = 3;
+      } else {
+        button.options.borderColor = this.getObjectBorderColor(
+          this.data.visibleObjects.find(obj => obj.id === objectId)?.type || ''
+        );
+        button.options.borderWidth = this.data.visibleObjects.find(obj => obj.id === objectId)?.type === 'station' ? 2 : 1;
+      }
+    });
+  }
+
+  private updateObjectPositions(): void {
+    this.objectButtons.forEach((button, objectId) => {
+      const obj = this.data.visibleObjects.find(o => o.id === objectId);
+      if (obj) {
+        button.position = {
+          x: 300 + obj.position.x * this.zoomLevel + this.mapOffset.x - button.size.x / 2,
+          y: 250 + obj.position.y * this.zoomLevel + this.mapOffset.y - button.size.y / 2
+        };
+        
+        // Update button size based on zoom
+        const newSize = Math.max(6, obj.radius * this.zoomLevel * 2);
+        button.size = { x: newSize, y: newSize };
+      }
+    });
+  }
+
+  private calculateDistance(pos1: { x: number; y: number }, pos2: { x: number; y: number }): number {
+    const dx = pos1.x - pos2.x;
+    const dy = pos1.y - pos2.y;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  private zoomIn(): void {
+    this.zoomLevel = Math.min(5.0, this.zoomLevel + 0.2);
+    this.updateObjectPositions();
+    this.updateZoomLabel();
+  }
+
+  private zoomOut(): void {
+    this.zoomLevel = Math.max(0.3, this.zoomLevel - 0.2);
+    this.updateObjectPositions();
+    this.updateZoomLabel();
+  }
+
+  private updateZoomLabel(): void {
+    const zoomLabel = this.controlPanel.findChild('zoom-label') as UIText;
+    if (zoomLabel) {
+      zoomLabel.setText(`Zoom: ${(this.zoomLevel * 100).toFixed(0)}%`);
+    }
+  }
+
+  private setViewMode(mode: 'tactical' | 'navigation'): void {
+    // Update button states
+    const tacticalButton = this.controlPanel.findChild('tactical') as UIButton;
+    const navButton = this.controlPanel.findChild('nav') as UIButton;
+    
+    if (tacticalButton && navButton) {
+      if (mode === 'tactical') {
+        tacticalButton.options.backgroundColor = '#9f7aea';
+        navButton.options.backgroundColor = '#2d3748';
+      } else {
+        tacticalButton.options.backgroundColor = '#2d3748';
+        navButton.options.backgroundColor = '#40e0ff';
+      }
+    }
+
+    // Update object visibility based on mode
+    // This would filter objects based on tactical vs navigation view
+    console.log(`Switched to ${mode} view mode`);
+  }
+
+  private centerOnPlayer(): void {
+    this.mapOffset = {
+      x: -this.data.playerPosition.x * this.zoomLevel,
+      y: -this.data.playerPosition.y * this.zoomLevel
+    };
+    this.updateObjectPositions();
+  }
+
+  private requestDocking(): void {
+    if (!this.selectedObject || this.selectedObject.type !== 'station') {
+      alert('Please select a station first');
+      return;
+    }
+
+    if (confirm(`Request docking clearance at ${this.selectedObject.name}?`)) {
+      // This would integrate with the docking system
+      console.log(`Docking requested at ${this.selectedObject.name}`);
+      this.navigateToScreen('docked');
+    }
+  }
+
+  private openGalaxyMap(): void {
+    this.navigateToScreen('galaxy-map');
+  }
+
+  private backToCockpit(): void {
+    this.navigateToScreen('cockpit');
+  }
+
+  private navigateToScreen(screenId: ScreenId): void {
+    const uiManager = UIManager.getInstance();
+    uiManager.showScreen(screenId);
+  }
+
+  // Public methods for updating data
+  public updatePlayerPosition(position: { x: number; y: number }): void {
+    this.data.playerPosition = position;
+    this.centerOnPlayer();
+  }
+
+  public addSystemObject(obj: SystemObject): void {
+    this.data.visibleObjects.push(obj);
+    
+    // Create button for new object
+    const color = this.getObjectColor(obj.type);
+    const button = new UIButton(`object-${obj.id}`, '', {
+      width: Math.max(6, obj.radius * this.zoomLevel * 2),
+      height: Math.max(6, obj.radius * this.zoomLevel * 2),
+      backgroundColor: color,
+      textColor: 'transparent',
+      borderColor: this.getObjectBorderColor(obj.type),
+      borderWidth: obj.type === 'station' ? 2 : 1
+    }, () => this.selectObject(obj));
+    
+    button.position = {
+      x: 300 + obj.position.x * this.zoomLevel + this.mapOffset.x - button.size.x / 2,
+      y: 250 + obj.position.y * this.zoomLevel + this.mapOffset.y - button.size.y / 2
+    };
+    
+    this.mapPanel.addChild(button);
+    this.objectButtons.set(obj.id, button);
+  }
+}

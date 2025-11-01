@@ -1,0 +1,450 @@
+import { Game } from '@core/engine/Game';
+import { InputManager } from '@core/input/InputManager';
+import { Logger, PerformanceMonitor, DebugOverlay } from '@utils/Logging';
+import { GameSettings } from '@types/index';
+import { ScreenCoordinator } from '@game/screens/ScreenCoordinator';
+import { OptimizationCoordinator } from '@game/systems/OptimizationCoordinator';
+
+/**
+ * Main application entry point
+ */
+class AliteGame {
+  private game: Game;
+  private inputManager: InputManager;
+  private logger: Logger;
+  private performanceMonitor: PerformanceMonitor;
+  private debugOverlay: DebugOverlay;
+  private screenCoordinator: ScreenCoordinator;
+  private optimizationCoordinator: OptimizationCoordinator;
+  private loadingScreen: HTMLElement;
+  private loadingProgress: HTMLElement;
+  private loadingText: HTMLElement;
+  private errorMessage: HTMLElement;
+  private canvas: HTMLCanvasElement;
+
+  constructor() {
+    this.game = Game.getInstance();
+    this.inputManager = InputManager.getInstance();
+    this.logger = Logger.getInstance();
+    this.performanceMonitor = PerformanceMonitor.getInstance();
+    this.debugOverlay = new DebugOverlay();
+    this.screenCoordinator = ScreenCoordinator.getInstance();
+    this.optimizationCoordinator = OptimizationCoordinator.getInstance();
+    
+    this.initializeDOM();
+  }
+
+  private initializeDOM(): void {
+    this.loadingScreen = document.getElementById('loading-screen')!;
+    this.loadingProgress = document.getElementById('loading-progress')!;
+    this.loadingText = document.getElementById('loading-text')!;
+    this.errorMessage = document.getElementById('error-message')!;
+  }
+
+  /**
+   * Initialize and start the game
+   */
+  public async initialize(): Promise<void> {
+    try {
+      this.updateProgress(10, 'Checking browser compatibility...');
+      
+      // Check browser compatibility
+      if (!this.checkBrowserCompatibility()) {
+        throw new Error('Browser not compatible');
+      }
+
+      this.updateProgress(20, 'Initializing game engine...');
+      
+      // Get canvas element
+      this.canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
+      if (!this.canvas) {
+        throw new Error('Game canvas not found');
+      }
+
+      // Initialize game engine
+      await this.game.initialize(this.canvas);
+
+      // Initialize optimization systems
+      this.updateProgress(25, 'Initializing optimization systems...');
+      await this.optimizationCoordinator.initialize();
+
+      // Initialize screen coordinator and UI system
+      this.updateProgress(35, 'Initializing UI system...');
+      this.screenCoordinator.initialize(this.canvas);
+
+      // Initialize input manager
+      this.inputManager.initialize(this.game);
+
+      this.updateProgress(40, 'Setting up event handlers...');
+      
+      // Add game event listeners
+      this.setupGameEventHandlers();
+
+      // Set up debug overlay
+      this.setupDebugOverlay();
+
+      this.updateProgress(60, 'Loading assets...');
+      
+      // Load initial assets
+      await this.loadInitialAssets();
+
+      this.updateProgress(80, 'Initializing game state...');
+      
+      // Initialize game settings
+      await this.initializeGameSettings();
+
+      this.updateProgress(100, 'Ready to play!');
+      
+      // Hide loading screen
+      await this.delay(500);
+      this.loadingScreen.classList.add('hidden');
+
+      this.logger.info('Alite game initialized successfully');
+
+      // Start the custom game loop that handles both core game and UI
+      this.startGameLoop();
+
+    } catch (error) {
+      this.logger.error('Failed to initialize game', error);
+      this.showError('Failed to initialize game. Please refresh and try again.');
+    }
+  }
+
+  /**
+   * Check browser compatibility
+   */
+  private checkBrowserCompatibility(): boolean {
+    const checks = [
+      { feature: 'Canvas 2D', test: () => document.createElement('canvas').getContext('2d') },
+      { feature: 'Web Audio', test: () => window.AudioContext || (window as any).webkitAudioContext },
+      { feature: 'Local Storage', test: () => window.localStorage },
+      { feature: 'Typed Arrays', test: () => window.Int8Array }
+    ];
+
+    for (const check of checks) {
+      if (!check.test()) {
+        this.logger.error(`Browser compatibility check failed: ${check.feature}`);
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Update loading progress
+   */
+  private updateProgress(progress: number, text: string): void {
+    this.loadingProgress.style.width = `${progress}%`;
+    this.loadingText.textContent = text;
+  }
+
+  /**
+   * Setup game event handlers
+   */
+  private setupGameEventHandlers(): void {
+    this.game.on('stateChanged', (event) => {
+      this.logger.debug(`Game state changed: ${event.data.newState}`);
+    });
+
+    this.game.on('resized', (event) => {
+      this.logger.debug(`Game resized: ${event.data.width}x${event.data.height}`);
+    });
+
+    // Input event handlers
+    this.inputManager.addEventListener('keyPressed', (event) => {
+      // Handle F1 for debug overlay
+      if (event.key === 'F1') {
+        this.debugOverlay.toggle();
+        return;
+      }
+      
+      // Pass key events to screen coordinator for UI handling
+      this.screenCoordinator.handleKeyDown(event.key);
+    });
+
+    this.inputManager.addEventListener('mouseDown', (event) => {
+      this.screenCoordinator.handleMouseDown(event.x, event.y);
+    });
+
+    this.inputManager.addEventListener('mouseUp', (event) => {
+      this.screenCoordinator.handleMouseUp(event.x, event.y);
+    });
+
+    this.inputManager.addEventListener('mouseMove', (event) => {
+      this.screenCoordinator.handleMouseMove(event.x, event.y);
+    });
+  }
+
+  /**
+   * Setup debug overlay
+   */
+  private setupDebugOverlay(): void {
+    const gameContainer = document.getElementById('game-container');
+    if (gameContainer) {
+      this.debugOverlay.addTo(gameContainer);
+    }
+  }
+
+  /**
+   * Load initial assets
+   */
+  private async loadInitialAssets(): Promise<void> {
+    // Create placeholder asset loading system
+    const assets = [
+      { id: 'texture_starfield', url: '/assets/textures/starfield.png' },
+      { id: 'texture_ui_elements', url: '/assets/textures/ui_elements.png' },
+      { id: 'sound_background', url: '/assets/sounds/background.mp3' },
+      { id: 'sound_laser', url: '/assets/sounds/laser.mp3' },
+      { id: 'data_ships', url: '/assets/data/ships.json' }
+    ];
+
+    // Placeholder loading - would implement actual asset loading
+    for (const asset of assets) {
+      try {
+        this.logger.debug(`Loading asset: ${asset.id}`);
+        await this.delay(100); // Simulate loading time
+      } catch (error) {
+        this.logger.warn(`Failed to load asset: ${asset.id}`, error);
+        // Continue with other assets
+      }
+    }
+  }
+
+  /**
+   * Initialize game settings
+   */
+  private async initializeGameSettings(): Promise<void> {
+    // Create default game settings
+    const settings: GameSettings = {
+      graphics: {
+        fullscreen: false,
+        vsync: true,
+        antialias: true,
+        textureQuality: 'MEDIUM',
+        resolution: { width: window.innerWidth, height: window.innerHeight }
+      },
+      audio: {
+        masterVolume: 0.8,
+        musicVolume: 0.6,
+        sfxVolume: 0.8,
+        spatialAudio: true
+      },
+      controls: {
+        mouseSensitivity: 1.0,
+        invertY: false,
+        enableJoystick: this.isMobileDevice()
+      },
+      game: {
+        difficulty: 'NORMAL',
+        showFPS: false,
+        autoSave: true
+      }
+    };
+
+    // Enable virtual joystick on mobile devices
+    if (this.isMobileDevice()) {
+      const canvas = this.game.getCanvas();
+      this.inputManager.enableVirtualJoystick(canvas);
+    }
+
+    this.logger.info('Game settings initialized');
+  }
+
+  /**
+   * Check if running on mobile device
+   */
+  private isMobileDevice(): boolean {
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+           window.innerWidth <= 768;
+  }
+
+  /**
+   * Show error message
+   */
+  private showError(message: string): void {
+    this.loadingScreen.classList.add('hidden');
+    this.errorMessage.style.display = 'block';
+    this.errorMessage.innerHTML = `
+      <h2>Initialization Error</h2>
+      <p>${message}</p>
+      <button onclick="location.reload()">Reload Page</button>
+    `;
+  }
+
+  /**
+   * Utility delay function
+   */
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Get performance metrics
+   */
+  public getPerformanceMetrics(): any {
+    return {
+      ...this.performanceMonitor.getMetrics(),
+      debugOverlay: this.debugOverlay.visible
+    };
+  }
+
+  /**
+   * Start the main game loop
+   */
+  private startGameLoop(): void {
+    let lastTime = performance.now();
+    let fps = 0;
+    let frameCount = 0;
+    let lastFpsUpdate = lastTime;
+
+    const gameLoop = (currentTime: number) => {
+      const deltaTime = currentTime - lastTime;
+      lastTime = currentTime;
+
+      // Start performance monitoring
+      const frameStartTime = this.optimizationCoordinator.startFrame();
+
+      // Update game performance metrics
+      frameCount++;
+      if (currentTime - lastFpsUpdate >= 1000) {
+        fps = Math.round((frameCount * 1000) / (currentTime - lastFpsUpdate));
+        frameCount = 0;
+        lastFpsUpdate = currentTime;
+      }
+
+      // Update core game engine
+      this.game.update(deltaTime);
+
+      // Update screen coordinator and UI system
+      this.screenCoordinator.update(deltaTime);
+
+      // Update optimization systems
+      // LOD system is managed internally by optimization coordinator
+
+      // Render the game
+      const ctx = this.canvas.getContext('2d');
+      if (ctx) {
+        // Clear canvas
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        // Render through screen coordinator (handles all screens and UI)
+        this.screenCoordinator.render(ctx);
+      }
+
+      // End performance monitoring
+      if (frameStartTime !== null) {
+        this.optimizationCoordinator.endFrame(frameStartTime);
+      }
+
+      // Continue the loop
+      requestAnimationFrame(gameLoop);
+    };
+
+    // Start the game loop
+    requestAnimationFrame(gameLoop);
+    this.logger.info('Game loop started');
+  }
+
+  /**
+   * Handle window resize
+   */
+  private handleResize(): void {
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    this.game.resize(width, height);
+    
+    // Resize canvas for UI system
+    if (this.canvas) {
+      this.canvas.width = width;
+      this.canvas.height = height;
+    }
+  }
+
+  /**
+   * Cleanup resources
+   */
+  public destroy(): void {
+    // Destroy screen coordinator
+    this.screenCoordinator.destroy();
+    
+    // Stop core game
+    this.game.stop();
+    
+    // Remove debug overlay
+    this.debugOverlay.remove();
+    
+    this.logger.info('Game destroyed');
+  }
+}
+
+/**
+ * Performance monitoring utility
+ */
+class PerformanceTracker {
+  private frameCount: number = 0;
+  private lastFpsUpdate: number = 0;
+  private fps: number = 0;
+
+  public update(): void {
+    this.frameCount++;
+    const now = Date.now();
+    
+    if (now - this.lastFpsUpdate >= 1000) {
+      this.fps = Math.round((this.frameCount * 1000) / (now - this.lastFpsUpdate));
+      this.frameCount = 0;
+      this.lastFpsUpdate = now;
+    }
+  }
+
+  public getFPS(): number {
+    return this.fps;
+  }
+}
+
+// Global error handling
+window.addEventListener('error', (event) => {
+  Logger.getInstance().error('Global error', event.error);
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+  Logger.getInstance().error('Unhandled promise rejection', event.reason);
+});
+
+// Game initialization
+let gameInstance: AliteGame;
+
+async function startAliteGame(): Promise<void> {
+  if (gameInstance) {
+    return; // Already initialized
+  }
+
+  gameInstance = new AliteGame();
+  await gameInstance.initialize();
+}
+
+// Start the game when DOM is ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', startAliteGame);
+} else {
+  startAliteGame();
+}
+
+// Add window resize handler
+window.addEventListener('resize', () => {
+  if (gameInstance) {
+    gameInstance.handleResize();
+  }
+});
+
+// Export for debugging
+(window as any).AliteGame = {
+  getInstance: () => gameInstance,
+  start: startAliteGame,
+  Game,
+  InputManager,
+  Logger,
+  PerformanceMonitor,
+  ScreenCoordinator
+};

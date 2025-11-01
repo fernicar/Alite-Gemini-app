@@ -1,0 +1,987 @@
+/**
+ * AI Behavior Systems - Specific behavioral patterns for different NPC types
+ * Implements trader, police, pirate, and mission giver behaviors
+ */
+
+import { ShipType } from '../models/Ship.js';
+import { ShipAIStateMachine, AIShip, AIStateType } from './ShipAIStateMachine.js';
+
+export interface NPCBehavior {
+  type: NPCType;
+  priority: number;
+  personality: NPCPersonality;
+  decisionMaking: DecisionMaker;
+  interactionStyle: InteractionStyle;
+  missionProfile: MissionProfile;
+}
+
+export enum NPCType {
+  TRADER = 'TRADER',
+  POLICE = 'POLICE',
+  PIRATE = 'PIRATE',
+  MISSION_GIVER = 'MISSION_GIVER',
+  PATROL = 'PATROL',
+  EXPLORER = 'EXPLORER',
+  PASSENGER = 'PASSENGER'
+}
+
+export interface NPCPersonality {
+  greed: number; // 0-1 (traders high, police low)
+  aggression: number; // 0-1 (pirates high, traders low)
+  authority: number; // 0-1 (police high, pirates low)
+  curiosity: number; // 0-1 (explorers high)
+  loyalty: number; // 0-1 (police high to law, pirates to code)
+  independence: number; // 0-1 (explorers high)
+}
+
+export interface DecisionMaker {
+  tradeRoutes: TradeRoute[];
+  patrolPatterns: PatrolPattern[];
+  aggressionTriggers: AggressionTrigger[];
+  cooperationFactors: CooperationFactor[];
+  missionTypes: MissionTypePreference[];
+}
+
+export interface TradeRoute {
+  origin: string;
+  destination: string;
+  frequency: number; // How often this route is used
+  profitMargin: number;
+  riskLevel: number;
+  cargoType: string;
+}
+
+export interface PatrolPattern {
+  area: string;
+  route: Vector3D[];
+  frequency: number;
+  duration: number;
+  priority: number;
+}
+
+export interface AggressionTrigger {
+  condition: string;
+  threshold: number;
+  response: 'ignore' | 'warning' | 'engage' | 'call_backup';
+  intensity: number;
+}
+
+export interface CooperationFactor {
+  relationship: 'player' | 'faction' | 'alliance';
+  requirement: number; // Reputation level required
+  cooperation: number; // Level of cooperation (0-1)
+}
+
+export interface MissionTypePreference {
+  type: string;
+  priority: number; // 0-1
+  riskTolerance: number; // 0-1
+  profitRequirement: number;
+}
+
+export interface InteractionStyle {
+  initialStance: 'friendly' | 'neutral' | 'hostile' | 'cautious';
+  communicationStyle: 'formal' | 'casual' | 'cryptic' | 'direct';
+  negotiationStyle: 'aggressive' | 'fair' | 'generous' | 'suspicious';
+  trustBuilding: TrustBuildingStrategy;
+}
+
+export interface TrustBuildingStrategy {
+  requiredActions: string[];
+  reputationThresholds: Map<string, number>;
+  timeRequired: number;
+  riskFactors: string[];
+}
+
+export interface MissionProfile {
+  availableMissions: AvailableMission[];
+  questLines: QuestLine[];
+  specialConditions: SpecialCondition[];
+  rewards: MissionReward[];
+}
+
+export interface AvailableMission {
+  id: string;
+  type: string;
+  difficulty: 'easy' | 'medium' | 'hard' | 'extreme';
+  location: string;
+  requirements: MissionRequirement[];
+  rewards: MissionReward[];
+  timeLimit: number;
+  description: string;
+  objectives: MissionObjective[];
+}
+
+export interface MissionRequirement {
+  type: 'ship_type' | 'cargo_capacity' | 'weapon_equipped' | 'reputation' | 'legal_status';
+  value: any;
+  comparison: '==' | '!=' | '>' | '<' | '>=' | '<=';
+}
+
+export interface MissionObjective {
+  id: string;
+  description: string;
+  type: 'delivery' | 'assassination' | 'escort' | 'exploration' | 'smuggling';
+  target?: string;
+  location?: string;
+  quantity?: number;
+  completed: boolean;
+}
+
+export interface MissionReward {
+  type: 'credits' | 'reputation' | 'ship_upgrade' | 'information' | 'faction_standing';
+  amount: number;
+  description: string;
+}
+
+export interface QuestLine {
+  id: string;
+  name: string;
+  missions: string[]; // Mission IDs in sequence
+  prerequisites: string[];
+  rewards: MissionReward[];
+  storyline: StorylineEntry[];
+}
+
+export interface StorylineEntry {
+  stage: number;
+  title: string;
+  description: string;
+  dialogue: DialogueEntry[];
+  choices?: DialogueChoice[];
+}
+
+export interface DialogueEntry {
+  speaker: string;
+  text: string;
+  emotion: 'neutral' | 'happy' | 'angry' | 'sad' | 'excited';
+  duration: number;
+}
+
+export interface DialogueChoice {
+  text: string;
+  consequence: string;
+  reputationEffect: number;
+  nextStage: number;
+}
+
+export interface SpecialCondition {
+  trigger: string;
+  condition: any;
+  effect: string;
+  description: string;
+}
+
+/**
+ * Advanced NPC Behavior System for Elite-style character interactions
+ */
+export class AIBehaviorSystem {
+  private npcBehaviors: Map<string, NPCBehavior>;
+  private aiStateMachine: ShipAIStateMachine;
+  private tradeNetwork: Map<string, NPCBehavior>;
+  private lawEnforcement: Map<string, NPCBehavior>;
+  private criminalOrganizations: Map<string, NPCBehavior>;
+
+  constructor(aiStateMachine: ShipAIStateMachine) {
+    this.npcBehaviors = new Map();
+    this.aiStateMachine = aiStateMachine;
+    this.tradeNetwork = new Map();
+    this.lawEnforcement = new Map();
+    this.criminalOrganizations = new Map();
+    
+    this.initializeBehaviorDefinitions();
+  }
+
+  /**
+   * Initialize NPC with specific behavior
+   */
+  initializeNPC(npcId: string, type: NPCType, shipType: ShipType): string {
+    const behavior = this.createBehaviorForType(type);
+    const npcShip = this.aiStateMachine.getAIShip(npcId);
+    
+    if (npcShip) {
+      // Store behavior
+      this.npcBehaviors.set(npcId, behavior);
+      
+      // Set initial state based on behavior
+      this.initializeBehaviorState(npcShip, behavior);
+    }
+    
+    return npcId;
+  }
+
+  /**
+   * Update NPC behavior (called every frame)
+   */
+  updateNPC(npcId: string, deltaTime: number): void {
+    const behavior = this.npcBehaviors.get(npcId);
+    const npcShip = this.aiStateMachine.getAIShip(npcId);
+    
+    if (!behavior || !npcShip) return;
+
+    // Update behavior-specific logic
+    switch (behavior.type) {
+      case NPCType.TRADER:
+        this.updateTraderBehavior(npcShip, behavior, deltaTime);
+        break;
+      case NPCType.POLICE:
+        this.updatePoliceBehavior(npcShip, behavior, deltaTime);
+        break;
+      case NPCType.PIRATE:
+        this.updatePirateBehavior(npcShip, behavior, deltaTime);
+        break;
+      case NPCType.MISSION_GIVER:
+        this.updateMissionGiverBehavior(npcShip, behavior, deltaTime);
+        break;
+      case NPCType.PATROL:
+        this.updatePatrolBehavior(npcShip, behavior, deltaTime);
+        break;
+    }
+  }
+
+  /**
+   * Process interaction with player
+   */
+  processInteraction(npcId: string, playerAction: string, context: any): InteractionResult {
+    const behavior = this.npcBehaviors.get(npcId);
+    if (!behavior) return { response: 'neutral', reputationChange: 0, availableActions: [] };
+
+    const npcShip = this.aiStateMachine.getAIShip(npcId);
+    if (!npcShip) return { response: 'neutral', reputationChange: 0, availableActions: [] };
+
+    // Calculate response based on behavior and relationship
+    const relationship = npcShip.memory.relationships.get('player');
+    const reputation = relationship ? relationship.reputation : 0;
+
+    const response = this.calculateResponse(behavior, playerAction, reputation, context);
+    
+    // Update relationship
+    this.updateRelationship(npcShip, 'player', response.reputationChange, playerAction);
+    
+    return response;
+  }
+
+  /**
+   * Check if NPC has mission for player
+   */
+  hasMissionForPlayer(npcId: string, playerReputation: number): MissionOffer | null {
+    const behavior = this.npcBehaviors.get(npcId);
+    if (!behavior || behavior.type !== NPCType.MISSION_GIVER) return null;
+
+    const missionOffer = this.generateMissionOffer(behavior, playerReputation);
+    return missionOffer;
+  }
+
+  /**
+   * Generate trading offer
+   */
+  generateTradeOffer(npcId: string, playerCargo: Map<string, number>): TradeOffer | null {
+    const behavior = this.npcBehaviors.get(npcId);
+    if (!behavior || behavior.type !== NPCType.TRADER) return null;
+
+    return this.generateTraderOffer(behavior);
+  }
+
+  /**
+   * Update trader behavior
+   */
+  private updateTraderBehavior(ship: AIShip, behavior: NPCBehavior, deltaTime: number): void {
+    // Check for profitable trading opportunities
+    const currentLocation = ship.position;
+    const nearestStation = this.findNearestStation(currentLocation);
+    
+    if (nearestStation && ship.cargo.size === 0) {
+      // Seek cargo
+      this.seekCargoOpportunity(ship, behavior);
+    } else if (ship.cargo.size > 0) {
+      // Find profitable destination
+      const profitableRoute = this.findProfitableRoute(ship, behavior);
+      if (profitableRoute) {
+        this.navigateToDestination(ship, profitableRoute.destination);
+      }
+    }
+    
+    // Check for threats
+    const nearbyThreats = this.detectNearbyThreats(ship);
+    if (nearbyThreats.length > 0 && ship.personality.caution > 0.6) {
+      // Cautious traders avoid threats
+      this.executeEvasionManeuver(ship, nearbyThreats[0]);
+    }
+  }
+
+  /**
+   * Update police behavior
+   */
+  private updatePoliceBehavior(ship: AIShip, behavior: NPCBehavior, deltaTime: number): void {
+    // Patrol assigned area
+    this.executePatrolPattern(ship, behavior);
+    
+    // Monitor for illegal activity
+    const illegalActivity = this.detectIllegalActivity(ship);
+    if (illegalActivity) {
+      this.respondToIllegalActivity(ship, illegalActivity);
+    }
+    
+    // Check for pirate threats
+    const pirates = this.detectPirateActivity(ship);
+    if (pirates.length > 0 && ship.personality.authority > 0.7) {
+      // High authority police respond to pirates
+      this.engagePirates(ship, pirates[0]);
+    }
+  }
+
+  /**
+   * Update pirate behavior
+   */
+  private updatePirateBehavior(ship: AIShip, behavior: NPCBehavior, deltaTime: number): void {
+    // Hunt for targets
+    const potentialTargets = this.findPotentialTargets(ship);
+    if (potentialTargets.length > 0 && ship.personality.aggression > 0.6) {
+      this.identifyTarget(ship, potentialTargets[0]);
+    }
+    
+    // Check for police response
+    const policeResponse = this.detectPoliceResponse(ship);
+    if (policeResponse && ship.personality.caution > 0.4) {
+      // Pirates avoid overwhelming police response
+      this.executeEscapeManeuver(ship);
+    }
+    
+    // Manage heat level (wanted level)
+    const heatLevel = this.calculateWantedLevel(ship);
+    if (heatLevel > 0.8) {
+      this.seekSafeHarbor(ship);
+    }
+  }
+
+  /**
+   * Update mission giver behavior
+   */
+  private updateMissionGiverBehavior(ship: AIShip, behavior: NPCBehavior, deltaTime: number): void {
+    // Check if player is in range for mission briefing
+    const playerDistance = this.getPlayerDistance(ship.position);
+    if (playerDistance < 100 && !this.isPlayerInConversation) {
+      this.attemptMissionOffer(ship, behavior);
+    }
+    
+    // Monitor mission progress
+    this.monitorMissionProgress(ship, behavior);
+  }
+
+  /**
+   * Update patrol behavior
+   */
+  private updatePatrolBehavior(ship: AIShip, behavior: NPCBehavior, deltaTime: number): void {
+    this.executePatrolPattern(ship, behavior);
+    
+    // Respond to anomalies
+    const anomalies = this.detectAnomalies(ship);
+    if (anomalies.length > 0) {
+      this.investigateAnomaly(ship, anomalies[0]);
+    }
+  }
+
+  /**
+   * Create behavior for NPC type
+   */
+  private createBehaviorForType(type: NPCType): NPCBehavior {
+    switch (type) {
+      case NPCType.TRADER:
+        return {
+          type,
+          priority: 3,
+          personality: {
+            greed: 0.8,
+            aggression: 0.2,
+            authority: 0.1,
+            curiosity: 0.4,
+            loyalty: 0.6,
+            independence: 0.5
+          },
+          decisionMaking: this.createTraderDecisionMaker(),
+          interactionStyle: {
+            initialStance: 'neutral',
+            communicationStyle: 'casual',
+            negotiationStyle: 'fair',
+            trustBuilding: {
+              requiredActions: ['trade_fairly', 'protect_from_pirates'],
+              reputationThresholds: new Map([['trading', 50]]),
+              timeRequired: 300,
+              riskFactors: ['illegal_cargo', 'low_credits']
+            }
+          },
+          missionProfile: this.createTraderMissionProfile()
+        };
+
+      case NPCType.POLICE:
+        return {
+          type,
+          priority: 8,
+          personality: {
+            greed: 0.1,
+            aggression: 0.6,
+            authority: 0.9,
+            curiosity: 0.5,
+            loyalty: 0.9,
+            independence: 0.3
+          },
+          decisionMaking: this.createPoliceDecisionMaker(),
+          interactionStyle: {
+            initialStance: 'cautious',
+            communicationStyle: 'formal',
+            negotiationStyle: 'suspicious',
+            trustBuilding: {
+              requiredActions: ['follow_law', 'assist_police'],
+              reputationThresholds: new Map([['legal_standing', 70]]),
+              timeRequired: 600,
+              riskFactors: ['illegal_activities', 'wanted_status']
+            }
+          },
+          missionProfile: this.createPoliceMissionProfile()
+        };
+
+      case NPCType.PIRATE:
+        return {
+          type,
+          priority: 9,
+          personality: {
+            greed: 0.9,
+            aggression: 0.8,
+            authority: 0.0,
+            curiosity: 0.3,
+            loyalty: 0.7, // Pirate code loyalty
+            independence: 0.8
+          },
+          decisionMaking: this.createPirateDecisionMaker(),
+          interactionStyle: {
+            initialStance: 'hostile',
+            communicationStyle: 'direct',
+            negotiationStyle: 'aggressive',
+            trustBuilding: {
+              requiredActions: ['prove_worth', 'follow_pirate_code'],
+              reputationThresholds: new Map([['criminal_standing', 30]]),
+              timeRequired: 900,
+              riskFactors: ['law_enforcement', 'betrayal']
+            }
+          },
+          missionProfile: this.createPirateMissionProfile()
+        };
+
+      case NPCType.MISSION_GIVER:
+        return {
+          type,
+          priority: 6,
+          personality: {
+            greed: 0.4,
+            aggression: 0.3,
+            authority: 0.7,
+            curiosity: 0.8,
+            loyalty: 0.8,
+            independence: 0.4
+          },
+          decisionMaking: this.createMissionGiverDecisionMaker(),
+          interactionStyle: {
+            initialStance: 'friendly',
+            communicationStyle: 'formal',
+            negotiationStyle: 'fair',
+            trustBuilding: {
+              requiredActions: ['complete_missions', 'show_reliability'],
+              reputationThresholds: new Map([['mission_reputation', 60]]),
+              timeRequired: 1200,
+              riskFactors: ['mission_failure', 'double_crossing']
+            }
+          },
+          missionProfile: this.createMissionGiverMissionProfile()
+        };
+
+      default:
+        return this.createDefaultBehavior();
+    }
+  }
+
+  /**
+   * Initialize behavior-specific state
+   */
+  private initializeBehaviorState(ship: AIShip, behavior: NPCBehavior): void {
+    // Set initial AI state based on behavior
+    switch (behavior.type) {
+      case NPCType.TRADER:
+        this.aiStateMachine.transitionToState?.(ship, AIStateType.TRADE);
+        break;
+      case NPCType.POLICE:
+      case NPCType.PATROL:
+        this.aiStateMachine.transitionToState?.(ship, AIStateType.PATROL);
+        break;
+      case NPCType.PIRATE:
+        this.aiStateMachine.transitionToState?.(ship, AIStateType.INVESTIGATE);
+        break;
+    }
+  }
+
+  /**
+   * Calculate response to player interaction
+   */
+  private calculateResponse(behavior: NPCBehavior, action: string, reputation: number, context: any): InteractionResult {
+    const baseResponse = this.getBaseResponseForAction(behavior, action);
+    const reputationModifier = this.getReputationModifier(behavior, reputation);
+    
+    const finalResponse = {
+      response: baseResponse.response,
+      reputationChange: baseResponse.reputationChange * reputationModifier,
+      availableActions: baseResponse.availableActions,
+      dialogue: this.generateDialogue(behavior, action, reputation)
+    };
+
+    return finalResponse;
+  }
+
+  /**
+   * Generate mission offer for player
+   */
+  private generateMissionOffer(behavior: NPCBehavior, playerReputation: number): MissionOffer | null {
+    if (behavior.missionProfile.availableMissions.length === 0) return null;
+
+    // Select mission based on player reputation and behavior preferences
+    const suitableMissions = behavior.missionProfile.availableMissions.filter(mission => {
+      return this.checkMissionRequirements(mission, playerReputation);
+    });
+
+    if (suitableMissions.length === 0) return null;
+
+    // Select best mission based on priority and difficulty
+    const selectedMission = this.selectBestMission(suitableMissions, behavior, playerReputation);
+    
+    return {
+      mission: selectedMission,
+      offerText: this.generateMissionOfferText(behavior, selectedMission),
+      requirements: selectedMission.requirements,
+      rewards: selectedMission.rewards,
+      timeLimit: selectedMission.timeLimit,
+      acceptanceCondition: this.getMissionAcceptanceCondition(behavior, selectedMission)
+    };
+  }
+
+  /**
+   * Generate trader offer
+   */
+  private generateTraderOffer(behavior: NPCBehavior): TradeOffer {
+    const routes = behavior.decisionMaking.tradeRoutes;
+    const profitableRoute = routes.find(route => route.profitMargin > 0.3);
+    
+    return {
+      route: profitableRoute || routes[0],
+      offer: {
+        cargo: this.selectCargoForRoute(profitableRoute || routes[0]),
+        price: this.calculateTradePrice(profitableRoute || routes[0]),
+        commission: this.calculateCommission(behavior),
+        riskLevel: profitableRoute?.riskLevel || 0.5
+      },
+      conditions: this.getTradeConditions(behavior),
+      alternativeOptions: this.getAlternativeTradeOptions(behavior)
+    };
+  }
+
+  /**
+   * Helper methods for behavior implementation
+   */
+  private findNearestStation(position: any): any {
+    // Placeholder for station finding logic
+    return null;
+  }
+
+  private findProfitableRoute(ship: AIShip, behavior: NPCBehavior): TradeRoute | null {
+    const routes = behavior.decisionMaking.tradeRoutes;
+    return routes.reduce((best, route) => 
+      route.profitMargin > (best?.profitMargin || 0) ? route : best, null as any
+    );
+  }
+
+  private navigateToDestination(ship: AIShip, destination: any): void {
+    // Integrate with navigation system
+    // This would set ship target and navigate to destination
+  }
+
+  private detectNearbyThreats(ship: AIShip): any[] {
+    // Placeholder for threat detection
+    return [];
+  }
+
+  private executeEvasionManeuver(ship: AIShip, threat: any): void {
+    // Integrate with AI state machine to execute evasion
+  }
+
+  private executePatrolPattern(ship: AIShip, behavior: NPCBehavior): void {
+    const patterns = behavior.decisionMaking.patrolPatterns;
+    if (patterns.length > 0) {
+      // Execute current patrol pattern
+    }
+  }
+
+  private detectIllegalActivity(ship: AIShip): any {
+    // Placeholder for illegal activity detection
+    return null;
+  }
+
+  private respondToIllegalActivity(ship: AIShip, activity: any): void {
+    // Integrate with combat system to respond to crime
+  }
+
+  private findPotentialTargets(ship: AIShip): any[] {
+    // Placeholder for target identification
+    return [];
+  }
+
+  private identifyTarget(ship: AIShip, target: any): void {
+    // Set target for pirate attack
+  }
+
+  private executeEscapeManeuver(ship: AIShip): void {
+    // Integrate with navigation for escape
+  }
+
+  private seekSafeHarbor(ship: AIShip): void {
+    // Find hideout or safe station
+  }
+
+  private getPlayerDistance(position: any): number {
+    // Calculate distance to player ship
+    return 1000; // Placeholder
+  }
+
+  private attemptMissionOffer(ship: AIShip, behavior: NPCBehavior): void {
+    // Check if mission should be offered to player
+  }
+
+  private monitorMissionProgress(ship: AIShip, behavior: NPCBehavior): void {
+    // Monitor player mission progress
+  }
+
+  private detectAnomalies(ship: AIShip): any[] {
+    // Placeholder for anomaly detection
+    return [];
+  }
+
+  private investigateAnomaly(ship: AIShip, anomaly: any): void {
+    // Investigate detected anomaly
+  }
+
+  private detectPirateActivity(ship: AIShip): any[] {
+    // Placeholder for pirate detection
+    return [];
+  }
+
+  private engagePirates(ship: AIShip, pirate: any): void {
+    // Engage detected pirate
+  }
+
+  private detectPoliceResponse(ship: AIShip): any {
+    // Placeholder for police response detection
+    return null;
+  }
+
+  private calculateWantedLevel(ship: AIShip): number {
+    // Calculate wanted level based on recent crimes
+    return 0.1; // Placeholder
+  }
+
+  private seekCargoOpportunity(ship: AIShip, behavior: NPCBehavior): void {
+    // Find cargo procurement opportunity
+  }
+
+  private updateRelationship(ship: AIShip, targetId: string, change: number, action: string): void {
+    // Update relationship in ship memory
+  }
+
+  private getBaseResponseForAction(behavior: NPCBehavior, action: string): any {
+    // Base response logic
+    return { response: 'neutral', reputationChange: 0, availableActions: [] };
+  }
+
+  private getReputationModifier(behavior: NPCBehavior, reputation: number): number {
+    return reputation / 100; // Simple modifier
+  }
+
+  private generateDialogue(behavior: NPCBehavior, action: string, reputation: number): string {
+    // Generate appropriate dialogue based on behavior and context
+    return "Hello there, commander.";
+  }
+
+  private checkMissionRequirements(mission: any, reputation: number): boolean {
+    // Check if player meets mission requirements
+    return true;
+  }
+
+  private selectBestMission(missions: any[], behavior: NPCBehavior, reputation: number): any {
+    return missions[0]; // Simple selection
+  }
+
+  private generateMissionOfferText(behavior: NPCBehavior, mission: any): string {
+    return `I have a ${mission.difficulty} mission for you...`;
+  }
+
+  private getMissionAcceptanceCondition(behavior: NPCBehavior, mission: any): string {
+    return 'Mission accepted';
+  }
+
+  private selectCargoForRoute(route: any): any {
+    // Select appropriate cargo for trade route
+    return { type: 'commodity', quantity: 10 };
+  }
+
+  private calculateTradePrice(route: any): number {
+    return 1000; // Base price
+  }
+
+  private calculateCommission(behavior: NPCBehavior): number {
+    return 0.05; // 5% commission
+  }
+
+  private getTradeConditions(behavior: NPCBehavior): string[] {
+    return ['Payment in advance', 'Insurance required'];
+  }
+
+  private getAlternativeTradeOptions(behavior: NPCBehavior): any[] {
+    return [];
+  }
+
+  private isPlayerInConversation: boolean = false;
+
+  // Decision maker creation methods
+  private createTraderDecisionMaker(): DecisionMaker {
+    return {
+      tradeRoutes: [
+        { origin: 'system_a', destination: 'system_b', frequency: 0.8, profitMargin: 0.4, riskLevel: 0.3, cargoType: 'food' },
+        { origin: 'system_b', destination: 'system_c', frequency: 0.6, profitMargin: 0.6, riskLevel: 0.5, cargoType: 'luxury' }
+      ],
+      patrolPatterns: [],
+      aggressionTriggers: [{ condition: 'threat_level', threshold: 0.8, response: 'ignore', intensity: 0.2 }],
+      cooperationFactors: [{ relationship: 'player', requirement: 50, cooperation: 0.8 }],
+      missionTypes: [{ type: 'delivery', priority: 0.7, riskTolerance: 0.3, profitRequirement: 1000 }]
+    };
+  }
+
+  private createPoliceDecisionMaker(): DecisionMaker {
+    return {
+      tradeRoutes: [],
+      patrolPatterns: [
+        { area: 'system_a', route: [], frequency: 1.0, duration: 1800, priority: 1.0 }
+      ],
+      aggressionTriggers: [
+        { condition: 'illegal_activity', threshold: 0.5, response: 'engage', intensity: 0.9 },
+        { condition: 'wanted_level', threshold: 0.3, response: 'warning', intensity: 0.6 }
+      ],
+      cooperationFactors: [{ relationship: 'player', requirement: 70, cooperation: 0.9 }],
+      missionTypes: [{ type: 'law_enforcement', priority: 0.9, riskTolerance: 0.8, profitRequirement: 500 }]
+    };
+  }
+
+  private createPirateDecisionMaker(): DecisionMaker {
+    return {
+      tradeRoutes: [],
+      patrolPatterns: [],
+      aggressionTriggers: [
+        { condition: 'potential_target', threshold: 0.4, response: 'engage', intensity: 0.8 },
+        { condition: 'police_response', threshold: 0.7, response: 'flee', intensity: 0.9 }
+      ],
+      cooperationFactors: [{ relationship: 'player', requirement: 30, cooperation: 0.6 }],
+      missionTypes: [{ type: 'raid', priority: 0.8, riskTolerance: 0.9, profitRequirement: 2000 }]
+    };
+  }
+
+  private createMissionGiverDecisionMaker(): DecisionMaker {
+    return {
+      tradeRoutes: [],
+      patrolPatterns: [],
+      aggressionTriggers: [{ condition: 'threat_level', threshold: 0.9, response: 'call_backup', intensity: 0.7 }],
+      cooperationFactors: [{ relationship: 'player', requirement: 60, cooperation: 0.8 }],
+      missionTypes: [
+        { type: 'delivery', priority: 0.8, riskTolerance: 0.4, profitRequirement: 1500 },
+        { type: 'escort', priority: 0.7, riskTolerance: 0.6, profitRequirement: 2000 },
+        { type: 'exploration', priority: 0.6, riskTolerance: 0.7, profitRequirement: 2500 }
+      ]
+    };
+  }
+
+  private createTraderMissionProfile(): MissionProfile {
+    return {
+      availableMissions: [
+        {
+          id: 'trade_001',
+          type: 'delivery',
+          difficulty: 'easy',
+          location: 'system_b',
+          requirements: [{ type: 'cargo_capacity', value: 10, comparison: '>=' }],
+          rewards: [{ type: 'credits', amount: 1000, description: 'Payment for delivery' }],
+          timeLimit: 3600,
+          description: 'Deliver supplies to outpost',
+          objectives: [
+            { id: 'obj_1', description: 'Collect cargo from station', type: 'delivery', completed: false },
+            { id: 'obj_2', description: 'Deliver to destination', type: 'delivery', completed: false }
+          ]
+        }
+      ],
+      questLines: [],
+      specialConditions: [],
+      rewards: []
+    };
+  }
+
+  private createPoliceMissionProfile(): MissionProfile {
+    return {
+      availableMissions: [
+        {
+          id: 'police_001',
+          type: 'law_enforcement',
+          difficulty: 'medium',
+          location: 'system_a',
+          requirements: [{ type: 'legal_status', value: 'clean', comparison: '==' }],
+          rewards: [{ type: 'reputation', amount: 50, description: 'Legal standing' }],
+          timeLimit: 1800,
+          description: 'Apprehend criminal',
+          objectives: [
+            { id: 'obj_1', description: 'Locate suspect', type: 'assassination', completed: false },
+            { id: 'obj_2', description: 'Bring to justice', type: 'delivery', completed: false }
+          ]
+        }
+      ],
+      questLines: [],
+      specialConditions: [],
+      rewards: []
+    };
+  }
+
+  private createPirateMissionProfile(): MissionProfile {
+    return {
+      availableMissions: [
+        {
+          id: 'pirate_001',
+          type: 'raid',
+          difficulty: 'hard',
+          location: 'trade_route',
+          requirements: [{ type: 'weapon_equipped', value: 'military', comparison: '==' }],
+          rewards: [{ type: 'credits', amount: 5000, description: 'Share of bounty' }],
+          timeLimit: 7200,
+          description: 'Ambush convoy',
+          objectives: [
+            { id: 'obj_1', description: 'Intercept target convoy', type: 'escort', completed: false },
+            { id: 'obj_2', description: 'Secure cargo', type: 'delivery', completed: false }
+          ]
+        }
+      ],
+      questLines: [],
+      specialConditions: [],
+      rewards: []
+    };
+  }
+
+  private createMissionGiverMissionProfile(): MissionProfile {
+    return {
+      availableMissions: [
+        {
+          id: 'mission_001',
+          type: 'exploration',
+          difficulty: 'medium',
+          location: 'uncharted_sector',
+          requirements: [
+            { type: 'ship_type', value: 'exploration', comparison: '>=' },
+            { type: 'reputation', value: 50, comparison: '>=' }
+          ],
+          rewards: [
+            { type: 'credits', amount: 3000, description: 'Exploration fee' },
+            { type: 'information', amount: 1, description: 'Star map data' }
+          ],
+          timeLimit: 14400,
+          description: 'Explore uncharted system',
+          objectives: [
+            { id: 'obj_1', description: 'Travel to system', type: 'exploration', completed: false },
+            { id: 'obj_2', description: 'Scan for anomalies', type: 'exploration', completed: false }
+          ]
+        }
+      ],
+      questLines: [],
+      specialConditions: [],
+      rewards: []
+    };
+  }
+
+  private createDefaultBehavior(): NPCBehavior {
+    return {
+      type: NPCType.EXPLORER,
+      priority: 1,
+      personality: {
+        greed: 0.3,
+        aggression: 0.4,
+        authority: 0.5,
+        curiosity: 0.8,
+        loyalty: 0.6,
+        independence: 0.9
+      },
+      decisionMaking: {
+        tradeRoutes: [],
+        patrolPatterns: [],
+        aggressionTriggers: [],
+        cooperationFactors: [],
+        missionTypes: []
+      },
+      interactionStyle: {
+        initialStance: 'neutral',
+        communicationStyle: 'casual',
+        negotiationStyle: 'fair',
+        trustBuilding: {
+          requiredActions: ['respect_boundaries'],
+          reputationThresholds: new Map(),
+          timeRequired: 300,
+          riskFactors: []
+        }
+      },
+      missionProfile: {
+        availableMissions: [],
+        questLines: [],
+        specialConditions: [],
+        rewards: []
+      }
+    };
+  }
+
+  private initializeBehaviorDefinitions(): void {
+    // Initialize behavior type mappings for performance
+    this.tradeNetwork.set('federation', this.createBehaviorForType(NPCType.TRADER));
+    this.lawEnforcement.set('federation', this.createBehaviorForType(NPCType.POLICE));
+    this.criminalOrganizations.set('anarchy', this.createBehaviorForType(NPCType.PIRATE));
+  }
+}
+
+// Type definitions for return values
+export interface InteractionResult {
+  response: string;
+  reputationChange: number;
+  availableActions: string[];
+  dialogue?: string;
+}
+
+export interface MissionOffer {
+  mission: AvailableMission;
+  offerText: string;
+  requirements: MissionRequirement[];
+  rewards: MissionReward[];
+  timeLimit: number;
+  acceptanceCondition: string;
+}
+
+export interface TradeOffer {
+  route: TradeRoute;
+  offer: {
+    cargo: any;
+    price: number;
+    commission: number;
+    riskLevel: number;
+  };
+  conditions: string[];
+  alternativeOptions: any[];
+}
+
+export interface Vector3D {
+  x: number;
+  y: number;
+  z: number;
+}

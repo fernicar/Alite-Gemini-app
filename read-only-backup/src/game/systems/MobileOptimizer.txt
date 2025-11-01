@@ -1,0 +1,526 @@
+/**
+ * Mobile Optimizer - Comprehensive mobile optimization system
+ * Handles touch controls, responsive design, battery optimization, and device-specific adaptations
+ */
+
+export interface DeviceInfo {
+  isMobile: boolean;
+  isTablet: boolean;
+  isDesktop: boolean;
+  isIOS: boolean;
+  isAndroid: boolean;
+  isSafari: boolean;
+  isChrome: boolean;
+  screenWidth: number;
+  screenHeight: number;
+  pixelRatio: number;
+  touchSupport: boolean;
+  vibrateSupport: boolean;
+  orientation: 'portrait' | 'landscape';
+  hasNotch: boolean;
+  deviceMemory?: number;
+  hardwareConcurrency?: number;
+}
+
+export interface MobileSettings {
+  enableTouchGestures: boolean;
+  enableHapticFeedback: boolean;
+  enableVibration: boolean;
+  optimizeForBattery: boolean;
+  enableLowPowerMode: boolean;
+  touchSensitivity: number;
+  gestureThreshold: number;
+  autoRotate: boolean;
+  enableSafeArea: boolean;
+}
+
+export interface TouchGesture {
+  type: 'tap' | 'doubleTap' | 'longPress' | 'pinch' | 'swipe';
+  startPosition: { x: number; y: number };
+  currentPosition: { x: number; y: number };
+  startTime: number;
+  distance: number;
+  velocity: number;
+  fingerCount: number;
+}
+
+export class MobileOptimizer {
+  private static instance: MobileOptimizer;
+  
+  private deviceInfo: DeviceInfo;
+  private settings: MobileSettings;
+  private touchGestures: Map<number, TouchGesture> = new Map();
+  private touchStartTime: number = 0;
+  private lastTouchTime: number = 0;
+  private vibrationPattern: number[] = [];
+  private batteryOptimizationEnabled: boolean = false;
+  private lowPowerMode: boolean = false;
+
+  private constructor() {
+    this.deviceInfo = this.detectDevice();
+    this.settings = this.getDefaultSettings();
+    this.initializeOptimizations();
+  }
+
+  public static getInstance(): MobileOptimizer {
+    if (!MobileOptimizer.instance) {
+      MobileOptimizer.instance = new MobileOptimizer();
+    }
+    return MobileOptimizer.instance;
+  }
+
+  private detectDevice(): DeviceInfo {
+    const userAgent = navigator.userAgent.toLowerCase();
+    const screen = window.screen;
+    
+    const isMobile = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent);
+    const isTablet = /ipad|android(?!.*mobile)|tablet/i.test(userAgent);
+    const isDesktop = !isMobile && !isTablet;
+    const isIOS = /iphone|ipad|ipod/i.test(userAgent);
+    const isAndroid = /android/i.test(userAgent);
+    const isSafari = /safari/i.test(userAgent) && !isChrome(userAgent);
+    const isChrome = /chrome|crios/i.test(userAgent) && !isSafari(userAgent);
+    
+    const touchSupport = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    const vibrateSupport = 'vibrate' in navigator;
+    
+    // Detect notched devices
+    const hasNotch = this.detectNotch();
+    
+    return {
+      isMobile,
+      isTablet,
+      isDesktop,
+      isIOS,
+      isAndroid,
+      isSafari,
+      isChrome,
+      screenWidth: screen.width,
+      screenHeight: screen.height,
+      pixelRatio: window.devicePixelRatio || 1,
+      touchSupport,
+      vibrateSupport,
+      orientation: this.getOrientation(),
+      hasNotch,
+      deviceMemory: (navigator as any).deviceMemory,
+      hardwareConcurrency: navigator.hardwareConcurrency
+    };
+  }
+
+  private isChrome(userAgent: string): boolean {
+    return /chrome|crios/i.test(userAgent);
+  }
+
+  private detectNotch(): boolean {
+    // Simple notch detection based on screen dimensions and common device models
+    const { screenWidth, screenHeight, isIOS } = this.deviceInfo;
+    
+    if (isIOS) {
+      // iPhone X and newer have notches
+      return (screenWidth === 375 && screenHeight === 812) || // iPhone X, XS
+             (screenWidth === 414 && screenHeight === 896) || // iPhone XS Max
+             (screenWidth === 390 && screenHeight === 844) || // iPhone 12, 13
+             (screenWidth === 428 && screenHeight === 926);   // iPhone 12, 13 Pro Max
+    }
+    
+    return false;
+  }
+
+  private getOrientation(): 'portrait' | 'landscape' {
+    return window.innerHeight > window.innerWidth ? 'portrait' : 'landscape';
+  }
+
+  private getDefaultSettings(): MobileSettings {
+    return {
+      enableTouchGestures: this.deviceInfo.isMobile || this.deviceInfo.isTablet,
+      enableHapticFeedback: this.deviceInfo.isIOS,
+      enableVibration: this.deviceInfo.vibrateSupport,
+      optimizeForBattery: this.deviceInfo.isMobile,
+      enableLowPowerMode: false,
+      touchSensitivity: 1.0,
+      gestureThreshold: 10,
+      autoRotate: true,
+      enableSafeArea: this.deviceInfo.hasNotch
+    };
+  }
+
+  private initializeOptimizations(): void {
+    this.setupOrientationHandling();
+    this.setupPerformanceOptimization();
+    this.setupBatteryOptimization();
+    this.setupSafeArea();
+  }
+
+  private setupOrientationHandling(): void {
+    if (!this.settings.autoRotate) return;
+
+    window.addEventListener('orientationchange', () => {
+      setTimeout(() => {
+        this.deviceInfo.orientation = this.getOrientation();
+        this.adjustLayoutForOrientation();
+      }, 100);
+    });
+
+    window.addEventListener('resize', () => {
+      this.deviceInfo.screenWidth = window.screen.width;
+      this.deviceInfo.screenHeight = window.screen.height;
+      this.deviceInfo.pixelRatio = window.devicePixelRatio || 1;
+      this.adjustLayoutForOrientation();
+    });
+  }
+
+  private adjustLayoutForOrientation(): void {
+    // This would integrate with the game's UI system
+    console.log(`Orientation changed to: ${this.deviceInfo.orientation}`);
+    
+    if (this.deviceInfo.orientation === 'portrait') {
+      this.enablePortraitLayout();
+    } else {
+      this.enableLandscapeLayout();
+    }
+  }
+
+  private enablePortraitLayout(): void {
+    // Optimize UI for portrait mode
+    console.log('Enabling portrait layout optimizations');
+  }
+
+  private enableLandscapeLayout(): void {
+    // Optimize UI for landscape mode
+    console.log('Enabling landscape layout optimizations');
+  }
+
+  private setupPerformanceOptimization(): void {
+    if (!this.deviceInfo.isMobile) return;
+
+    // Reduce animation frame rate on lower-end devices
+    if (this.deviceInfo.deviceMemory && this.deviceInfo.deviceMemory < 4) {
+      // Low memory device - reduce performance
+      this.enableLowPerformanceMode();
+    }
+
+    // Disable heavy effects on mobile
+    this.optimizeGraphicsForMobile();
+  }
+
+  private enableLowPerformanceMode(): void {
+    console.log('Enabling low performance mode for mobile device');
+    
+    // Reduce particle effects
+    // Simplify lighting
+    // Reduce update frequency
+    // Lower texture quality
+  }
+
+  private optimizeGraphicsForMobile(): void {
+    // Disable shadows on mobile for better performance
+    this.reduceShadowQuality();
+    // Use lower quality textures
+    this.reduceTextureQuality();
+    // Reduce post-processing effects
+    this.reducePostProcessing();
+  }
+
+  private reduceShadowQuality(): void {
+    console.log('Reducing shadow quality for mobile performance');
+  }
+
+  private reduceTextureQuality(): void {
+    console.log('Reducing texture quality for mobile performance');
+  }
+
+  private reducePostProcessing(): void {
+    console.log('Reducing post-processing effects for mobile performance');
+  }
+
+  private setupBatteryOptimization(): void {
+    if (!this.settings.optimizeForBattery) return;
+
+    // Detect low battery
+    if ('getBattery' in navigator) {
+      (navigator as any).getBattery().then((battery: any) => {
+        battery.addEventListener('levelchange', () => {
+          if (battery.level < 0.2 && !this.lowPowerMode) {
+            this.enableLowPowerMode();
+          }
+        });
+      });
+    }
+
+    // Reduce performance when device is not charging
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        this.enableBackgroundOptimization();
+      } else {
+        this.disableBackgroundOptimization();
+      }
+    });
+  }
+
+  private enableLowPowerMode(): void {
+    this.lowPowerMode = true;
+    this.settings.enableLowPowerMode = true;
+    
+    console.log('Low power mode enabled');
+    
+    // Reduce frame rate
+    // Disable animations
+    // Reduce particle effects
+    // Lower audio quality
+  }
+
+  private enableBackgroundOptimization(): void {
+    console.log('Enabling background optimization');
+    // Pause non-essential updates
+    // Reduce update frequency
+  }
+
+  private disableBackgroundOptimization(): void {
+    console.log('Disabling background optimization');
+    // Resume normal updates
+  }
+
+  private setupSafeArea(): void {
+    if (!this.settings.enableSafeArea) return;
+
+    // Add CSS for safe areas on devices with notches
+    this.applySafeAreaCSS();
+  }
+
+  private applySafeAreaCSS(): void {
+    const style = document.createElement('style');
+    style.textContent = `
+      .safe-area-top {
+        padding-top: env(safe-area-inset-top);
+      }
+      .safe-area-bottom {
+        padding-bottom: env(safe-area-inset-bottom);
+      }
+      .safe-area-left {
+        padding-left: env(safe-area-inset-left);
+      }
+      .safe-area-right {
+        padding-right: env(safe-area-inset-right);
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  public handleTouchStart(event: TouchEvent): void {
+    if (!this.settings.enableTouchGestures) return;
+
+    this.touchStartTime = Date.now();
+    
+    for (let i = 0; i < event.changedTouches.length; i++) {
+      const touch = event.changedTouches[i];
+      const gesture: TouchGesture = {
+        type: 'tap',
+        startPosition: { x: touch.clientX, y: touch.clientY },
+        currentPosition: { x: touch.clientX, y: touch.clientY },
+        startTime: this.touchStartTime,
+        distance: 0,
+        velocity: 0,
+        fingerCount: event.touches.length
+      };
+      
+      this.touchGestures.set(touch.identifier, gesture);
+    }
+
+    this.lastTouchTime = this.touchStartTime;
+  }
+
+  public handleTouchMove(event: TouchEvent): void {
+    if (!this.settings.enableTouchGestures) return;
+
+    for (let i = 0; i < event.changedTouches.length; i++) {
+      const touch = event.changedTouches[i];
+      const gesture = this.touchGestures.get(touch.identifier);
+      
+      if (gesture) {
+        gesture.currentPosition = { x: touch.clientX, y: touch.clientY };
+        
+        // Update distance
+        const dx = gesture.currentPosition.x - gesture.startPosition.x;
+        const dy = gesture.currentPosition.y - gesture.startPosition.y;
+        gesture.distance = Math.sqrt(dx * dx + dy * dy);
+        
+        // Calculate velocity
+        const time = Date.now() - gesture.startTime;
+        gesture.velocity = gesture.distance / time;
+        
+        // Detect gesture type
+        this.updateGestureType(gesture, time);
+      }
+    }
+  }
+
+  public handleTouchEnd(event: TouchEvent): void {
+    if (!this.settings.enableTouchGestures) return;
+
+    for (let i = 0; i < event.changedTouches.length; i++) {
+      const touch = event.changedTouches[i];
+      const gesture = this.touchGestures.get(touch.identifier);
+      
+      if (gesture) {
+        this.processGesture(gesture);
+        this.touchGestures.delete(touch.identifier);
+      }
+    }
+  }
+
+  private updateGestureType(gesture: TouchGesture, time: number): void {
+    if (gesture.distance > 50) {
+      if (gesture.fingerCount === 2) {
+        gesture.type = 'pinch';
+      } else {
+        gesture.type = 'swipe';
+      }
+    } else if (time > 500) {
+      gesture.type = 'longPress';
+    }
+  }
+
+  private processGesture(gesture: TouchGesture): void {
+    console.log(`Gesture detected: ${gesture.type} at (${gesture.currentPosition.x}, ${gesture.currentPosition.y})`);
+    
+    // Provide haptic feedback if enabled
+    if (this.settings.enableHapticFeedback && this.deviceInfo.vibrateSupport) {
+      this.provideHapticFeedback(gesture.type);
+    }
+    
+    // Process gesture based on type
+    switch (gesture.type) {
+      case 'tap':
+        this.handleTap(gesture.currentPosition);
+        break;
+      case 'doubleTap':
+        this.handleDoubleTap(gesture.currentPosition);
+        break;
+      case 'longPress':
+        this.handleLongPress(gesture.currentPosition);
+        break;
+      case 'swipe':
+        this.handleSwipe(gesture);
+        break;
+      case 'pinch':
+        this.handlePinch(gesture);
+        break;
+    }
+  }
+
+  private handleTap(position: { x: number; y: number }): void {
+    console.log(`Tap at: ${position.x}, ${position.y}`);
+  }
+
+  private handleDoubleTap(position: { x: number; y: number }): void {
+    console.log(`Double tap at: ${position.x}, ${position.y}`);
+  }
+
+  private handleLongPress(position: { x: number; y: number }): void {
+    console.log(`Long press at: ${position.x}, ${position.y}`);
+  }
+
+  private handleSwipe(gesture: TouchGesture): void {
+    const dx = gesture.currentPosition.x - gesture.startPosition.x;
+    const dy = gesture.currentPosition.y - gesture.startPosition.y;
+    
+    if (Math.abs(dx) > Math.abs(dy)) {
+      console.log(dx > 0 ? 'Swipe right' : 'Swipe left');
+    } else {
+      console.log(dy > 0 ? 'Swipe down' : 'Swipe up');
+    }
+  }
+
+  private handlePinch(gesture: TouchGesture): void {
+    console.log(`Pinch detected with ${gesture.fingerCount} fingers`);
+  }
+
+  private provideHapticFeedback(gestureType: string): void {
+    if (!this.settings.enableHapticFeedback) return;
+
+    let pattern: number[] = [];
+    
+    switch (gestureType) {
+      case 'tap':
+        pattern = [10];
+        break;
+      case 'doubleTap':
+        pattern = [10, 50, 10];
+        break;
+      case 'longPress':
+        pattern = [20];
+        break;
+      default:
+        pattern = [5];
+    }
+
+    if (this.deviceInfo.vibrateSupport) {
+      navigator.vibrate(pattern);
+    }
+  }
+
+  public vibrate(pattern: number[]): void {
+    if (this.settings.enableVibration && this.deviceInfo.vibrateSupport) {
+      navigator.vibrate(pattern);
+    }
+  }
+
+  public getDeviceInfo(): DeviceInfo {
+    return { ...this.deviceInfo };
+  }
+
+  public getSettings(): MobileSettings {
+    return { ...this.settings };
+  }
+
+  public updateSettings(updates: Partial<MobileSettings>): void {
+    this.settings = { ...this.settings, ...updates };
+    
+    if (updates.enableSafeArea !== undefined) {
+      this.setupSafeArea();
+    }
+    
+    if (updates.autoRotate !== undefined) {
+      this.setupOrientationHandling();
+    }
+  }
+
+  public isMobileOptimized(): boolean {
+    return this.deviceInfo.isMobile || this.deviceInfo.isTablet;
+  }
+
+  public getOptimalCanvasSize(): { width: number; height: number } {
+    const { screenWidth, screenHeight, pixelRatio } = this.deviceInfo;
+    
+    // Limit pixel ratio for performance
+    const maxPixelRatio = this.isMobileOptimized() ? 1.5 : 2;
+    const effectivePixelRatio = Math.min(pixelRatio, maxPixelRatio);
+    
+    return {
+      width: screenWidth * effectivePixelRatio,
+      height: screenHeight * effectivePixelRatio
+    };
+  }
+
+  public getPerformanceProfile(): string {
+    if (this.lowPowerMode) return 'low_power';
+    if (!this.isMobileOptimized()) return 'desktop';
+    if (this.deviceInfo.deviceMemory && this.deviceInfo.deviceMemory < 4) return 'mobile_low';
+    if (this.deviceInfo.deviceMemory && this.deviceInfo.deviceMemory < 8) return 'mobile_medium';
+    return 'mobile_high';
+  }
+
+  public getResponsiveBreakpoints(): { [key: string]: number } {
+    return {
+      xs: 480,
+      sm: 768,
+      md: 1024,
+      lg: 1280,
+      xl: 1920
+    };
+  }
+
+  public clear(): void {
+    this.touchGestures.clear();
+  }
+}

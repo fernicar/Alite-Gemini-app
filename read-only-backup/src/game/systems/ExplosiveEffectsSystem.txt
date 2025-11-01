@@ -1,0 +1,637 @@
+/**
+ * Explosive Effects System - Visual and physical effects for combat
+ * Handles explosions, debris, particle effects, and environmental damage
+ */
+
+import { Vector3D } from '../../types/index.js';
+import { WeaponType } from '../models/Ship.js';
+
+export interface ExplosionEffect {
+  id: string;
+  position: Vector3D;
+  type: ExplosionType;
+  size: number;
+  intensity: number;
+  duration: number;
+  particles: ParticleEffect[];
+  damageRadius: number;
+  damage: number;
+  createdAt: number;
+  active: boolean;
+}
+
+export enum ExplosionType {
+  LASER_HIT = 'LASER_HIT',
+  MISSILE_EXPLOSION = 'MISSILE_EXPLOSION',
+  SHIP_DESTRUCTION = 'SHIP_DESTRUCTION',
+  STATION_DAMAGE = 'STATION_DAMAGE',
+  ASTEROID_IMPACT = 'ASTEROID_IMPACT'
+}
+
+export interface ParticleEffect {
+  id: string;
+  position: Vector3D;
+  velocity: Vector3D;
+  color: string;
+  size: number;
+  life: number;
+  maxLife: number;
+  type: ParticleType;
+  emissive: boolean;
+}
+
+export enum ParticleType {
+  SPARK = 'SPARK',
+  SMOKE = 'SMOKE',
+  DEBRIS = 'DEBRIS',
+  ENERGY = 'ENERGY',
+  FIRE = 'FIRE',
+  SHOCKWAVE = 'SHOCKWAVE'
+}
+
+export interface DebrisPiece {
+  id: string;
+  position: Vector3D;
+  velocity: Vector3D;
+  size: number;
+  mass: number;
+  type: DebrisType;
+  damage: number;
+  lifetime: number;
+  rotation: Vector3D;
+  angularVelocity: Vector3D;
+}
+
+export enum DebrisType {
+  METAL_FRAGMENT = 'METAL_FRAGMENT',
+  ARMOR_PLATE = 'ARMOR_PLATE',
+  WEAPON_COMPONENT = 'WEAPON_COMPONENT',
+  ENGINE_COMPONENT = 'ENGINE_COMPONENT',
+  FUEL_DEBRIS = 'FUEL_DEBRIS'
+}
+
+export interface Shockwave {
+  id: string;
+  position: Vector3D;
+  radius: number;
+  maxRadius: number;
+  speed: number;
+  strength: number;
+  energy: number;
+  active: boolean;
+}
+
+export interface EnvironmentalDamage {
+  position: Vector3D;
+  radius: number;
+  damage: number;
+  type: 'structural' | 'shield' | 'electronic';
+  duration: number;
+}
+
+/**
+ * Advanced Explosive Effects System for Elite-style visual and physical effects
+ */
+export class ExplosiveEffectsSystem {
+  private explosions: Map<string, ExplosionEffect>;
+  private particles: Map<string, ParticleEffect>;
+  private debris: Map<string, DebrisPiece>;
+  private shockwaves: Map<string, Shockwave>;
+  private environmentalDamage: EnvironmentalDamage[];
+  private effectCounter: number = 0;
+  private activeEffects: Set<string>;
+  private physics: any; // Reference to physics system for debris simulation
+
+  constructor(physicsSystem: any) {
+    this.explosions = new Map();
+    this.particles = new Map();
+    this.debris = new Map();
+    this.shockwaves = new Map();
+    this.environmentalDamage = [];
+    this.activeEffects = new Set();
+    this.physics = physicsSystem;
+  }
+
+  /**
+   * Create explosion effect
+   */
+  createExplosion(position: Vector3D, type: ExplosionType, size: number = 1, damage: number = 0, damageRadius: number = 0): string {
+    const explosionId = `explosion_${++this.effectCounter}`;
+    
+    const explosion: ExplosionEffect = {
+      id: explosionId,
+      position: { ...position },
+      type,
+      size,
+      intensity: this.calculateExplosionIntensity(type, size),
+      duration: this.calculateExplosionDuration(type, size),
+      particles: this.generateExplosionParticles(position, type, size),
+      damageRadius: damageRadius || this.calculateDamageRadius(type, size),
+      damage,
+      createdAt: Date.now() / 1000,
+      active: true
+    };
+
+    this.explosions.set(explosionId, explosion);
+    this.activeEffects.add(explosionId);
+
+    // Create shockwave for significant explosions
+    if (this.shouldCreateShockwave(type, size)) {
+      this.createShockwave(position, size * 2, explosion.intensity * 100);
+    }
+
+    // Create debris for ship destructions
+    if (type === ExplosionType.SHIP_DESTRUCTION) {
+      this.createDestructionDebris(position, size);
+    }
+
+    return explosionId;
+  }
+
+  /**
+   * Create debris from ship destruction
+   */
+  private createDestructionDebris(position: Vector3D, shipSize: number): void {
+    const debrisCount = Math.floor(shipSize * 2);
+    
+    for (let i = 0; i < debrisCount; i++) {
+      const debrisType = this.getRandomDebrisType();
+      const debrisSize = Math.random() * 2 + 0.5;
+      const debrisMass = debrisSize * 5;
+      
+      // Random position around ship
+      const randomPos = {
+        x: position.x + (Math.random() - 0.5) * shipSize * 2,
+        y: position.y + (Math.random() - 0.5) * shipSize * 2,
+        z: position.z + (Math.random() - 0.5) * shipSize * 2
+      };
+      
+      // Random outward velocity
+      const angle = Math.random() * Math.PI * 2;
+      const speed = Math.random() * 50 + 20;
+      const velocity = {
+        x: Math.cos(angle) * speed,
+        y: (Math.random() - 0.5) * speed,
+        z: Math.sin(angle) * speed
+      };
+
+      const debrisId = this.createDebrisPiece(
+        randomPos,
+        velocity,
+        debrisSize,
+        debrisMass,
+        debrisType
+      );
+
+      // Add initial velocity to physics system if available
+      if (this.physics && this.physics.applyVelocity) {
+        this.physics.applyVelocity(debrisId, velocity);
+      }
+    }
+  }
+
+  /**
+   * Create individual debris piece
+   */
+  private createDebrisPiece(position: Vector3D, velocity: Vector3D, size: number, mass: number, type: DebrisType): string {
+    const debrisId = `debris_${++this.effectCounter}`;
+    
+    const debris: DebrisPiece = {
+      id: debrisId,
+      position: { ...position },
+      velocity: { ...velocity },
+      size,
+      mass,
+      type,
+      damage: size * 10,
+      lifetime: 300 + Math.random() * 180, // 5-8 minutes
+      rotation: { x: Math.random() * 360, y: Math.random() * 360, z: Math.random() * 360 },
+      angularVelocity: {
+        x: (Math.random() - 0.5) * 180,
+        y: (Math.random() - 0.5) * 180,
+        z: (Math.random() - 0.5) * 180
+      }
+    };
+
+    this.debris.set(debrisId, debris);
+    return debrisId;
+  }
+
+  /**
+   * Create shockwave effect
+   */
+  private createShockwave(position: Vector3D, radius: number, strength: number): void {
+    const shockwaveId = `shockwave_${++this.effectCounter}`;
+    
+    const shockwave: Shockwave = {
+      id: shockwaveId,
+      position: { ...position },
+      radius: 0,
+      maxRadius: radius,
+      speed: radius / 2, // Expand to max radius in 2 seconds
+      strength,
+      energy: strength,
+      active: true
+    };
+
+    this.shockwaves.set(shockwaveId, shockwave);
+    this.activeEffects.add(shockwaveId);
+  }
+
+  /**
+   * Create environmental damage area
+   */
+  createEnvironmentalDamage(position: Vector3D, radius: number, damage: number, type: 'structural' | 'shield' | 'electronic', duration: number = 5): void {
+    const damageEffect: EnvironmentalDamage = {
+      position: { ...position },
+      radius,
+      damage,
+      type,
+      duration
+    };
+    
+    this.environmentalDamage.push(damageEffect);
+  }
+
+  /**
+   * Update all effects (called every frame)
+   */
+  update(deltaTime: number): void {
+    // Update explosions
+    this.updateExplosions(deltaTime);
+    
+    // Update particles
+    this.updateParticles(deltaTime);
+    
+    // Update debris
+    this.updateDebris(deltaTime);
+    
+    // Update shockwaves
+    this.updateShockwaves(deltaTime);
+    
+    // Update environmental damage
+    this.updateEnvironmentalDamage(deltaTime);
+    
+    // Cleanup expired effects
+    this.cleanupExpiredEffects();
+  }
+
+  /**
+   * Update explosion effects
+   */
+  private updateExplosions(deltaTime: number): void {
+    this.explosions.forEach((explosion, id) => {
+      // Update particle lifetimes
+      explosion.particles.forEach(particle => {
+        particle.life -= deltaTime;
+        
+        if (particle.life <= 0) {
+          // Particle died, will be removed during cleanup
+        }
+      });
+      
+      // Check if explosion is complete
+      const age = (Date.now() / 1000) - explosion.createdAt;
+      if (age >= explosion.duration) {
+        explosion.active = false;
+        this.activeEffects.delete(id);
+      }
+    });
+  }
+
+  /**
+   * Update particle effects
+   */
+  private updateParticles(deltaTime: number): void {
+    this.particles.forEach((particle, id) => {
+      // Update position
+      particle.position.x += particle.velocity.x * deltaTime;
+      particle.position.y += particle.velocity.y * deltaTime;
+      particle.position.z += particle.velocity.z * deltaTime;
+      
+      // Apply drag to velocity
+      particle.velocity.x *= Math.pow(0.95, deltaTime);
+      particle.velocity.y *= Math.pow(0.95, deltaTime);
+      particle.velocity.z *= Math.pow(0.95, deltaTime);
+      
+      // Update life
+      particle.life -= deltaTime;
+      
+      // Shrink particle over time
+      if (particle.size > 0.1) {
+        particle.size *= Math.pow(0.98, deltaTime);
+      }
+    });
+  }
+
+  /**
+   * Update debris physics
+   */
+  private updateDebris(deltaTime: number): void {
+    this.debris.forEach((debris, id) => {
+      // Update position
+      debris.position.x += debris.velocity.x * deltaTime;
+      debris.position.y += debris.velocity.y * deltaTime;
+      debris.position.z += debris.velocity.z * deltaTime;
+      
+      // Apply space drag (very low)
+      debris.velocity.x *= Math.pow(0.999, deltaTime);
+      debris.velocity.y *= Math.pow(0.999, deltaTime);
+      debris.velocity.z *= Math.pow(0.999, deltaTime);
+      
+      // Update rotation
+      debris.rotation.x += debris.angularVelocity.x * deltaTime;
+      debris.rotation.y += debris.angularVelocity.y * deltaTime;
+      debris.rotation.z += debris.angularVelocity.z * deltaTime;
+      
+      // Reduce angular velocity
+      debris.angularVelocity.x *= Math.pow(0.99, deltaTime);
+      debris.angularVelocity.y *= Math.pow(0.99, deltaTime);
+      debris.angularVelocity.z *= Math.pow(0.99, deltaTime);
+      
+      // Update lifetime
+      debris.lifetime -= deltaTime;
+    });
+  }
+
+  /**
+   * Update shockwave effects
+   */
+  private updateShockwaves(deltaTime: number): void {
+    this.shockwaves.forEach((shockwave, id) => {
+      shockwave.radius += shockwave.speed * deltaTime;
+      shockwave.energy *= Math.pow(0.8, deltaTime); // Dissipate energy
+      
+      // Apply damage to entities within radius
+      this.applyShockwaveDamage(shockwave);
+      
+      if (shockwave.radius >= shockwave.maxRadius || shockwave.energy < 1) {
+        shockwave.active = false;
+        this.activeEffects.delete(id);
+      }
+    });
+  }
+
+  /**
+   * Apply shockwave damage to entities
+   */
+  private applyShockwaveDamage(shockwave: Shockwave): void {
+    // This would integrate with actual entity damage system
+    // For now, just a placeholder that shows the concept
+    
+    const entitiesInRange = this.getEntitiesInRange(shockwave.position, shockwave.radius);
+    entitiesInRange.forEach(entity => {
+      const distance = this.calculateDistance(shockwave.position, entity.position);
+      const damage = shockwave.energy * (1 - distance / shockwave.radius);
+      if (damage > 0) {
+        // Apply damage through damage system
+        // damageSystem.applyDamage(entity.id, damage, WeaponType.MISSILES);
+      }
+    });
+  }
+
+  /**
+   * Update environmental damage
+   */
+  private updateEnvironmentalDamage(deltaTime: number): void {
+    this.environmentalDamage = this.environmentalDamage.filter(damage => {
+      damage.duration -= deltaTime;
+      return damage.duration > 0;
+    });
+  }
+
+  /**
+   * Generate explosion particles
+   */
+  private generateExplosionParticles(position: Vector3D, type: ExplosionType, size: number): ParticleEffect[] {
+    const particles: ParticleEffect[] = [];
+    const particleCount = Math.floor(size * 5);
+    
+    for (let i = 0; i < particleCount; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const elevation = (Math.random() - 0.5) * Math.PI;
+      const speed = Math.random() * size * 10 + 5;
+      
+      const velocity = {
+        x: Math.cos(angle) * Math.cos(elevation) * speed,
+        y: Math.sin(elevation) * speed,
+        z: Math.sin(angle) * Math.cos(elevation) * speed
+      };
+      
+      const particle: ParticleEffect = {
+        id: `particle_${++this.effectCounter}`,
+        position: { 
+          x: position.x + (Math.random() - 0.5) * size,
+          y: position.y + (Math.random() - 0.5) * size,
+          z: position.z + (Math.random() - 0.5) * size
+        },
+        velocity,
+        color: this.getParticleColor(type),
+        size: Math.random() * size * 0.5 + size * 0.1,
+        life: this.getParticleLifetime(type),
+        maxLife: this.getParticleLifetime(type),
+        type: this.getParticleType(type),
+        emissive: type !== ExplosionType.SMOKE
+      };
+      
+      particles.push(particle);
+      this.particles.set(particle.id, particle);
+    }
+    
+    return particles;
+  }
+
+  /**
+   * Get particle color for explosion type
+   */
+  private getParticleColor(type: ExplosionType): string {
+    switch (type) {
+      case ExplosionType.LASER_HIT:
+        return '#FF6600'; // Orange
+      case ExplosionType.MISSILE_EXPLOSION:
+        return '#FF0000'; // Red
+      case ExplosionType.SHIP_DESTRUCTION:
+        return '#FFFF00'; // Yellow
+      case ExplosionType.STATION_DAMAGE:
+        return '#FF4444'; // Bright red
+      case ExplosionType.ASTEROID_IMPACT:
+        return '#888888'; // Gray
+      default:
+        return '#FFFFFF'; // White
+    }
+  }
+
+  /**
+   * Get particle type for explosion
+   */
+  private getParticleType(explosionType: ExplosionType): ParticleType {
+    switch (explosionType) {
+      case ExplosionType.LASER_HIT:
+        return ParticleType.SPARK;
+      case ExplosionType.MISSILE_EXPLOSION:
+      case ExplosionType.SHIP_DESTRUCTION:
+        return ParticleType.FIRE;
+      case ExplosionType.STATION_DAMAGE:
+        return ParticleType.SMOKE;
+      case ExplosionType.ASTEROID_IMPACT:
+        return ParticleType.DEBRIS;
+      default:
+        return ParticleType.ENERGY;
+    }
+  }
+
+  /**
+   * Calculate explosion intensity
+   */
+  private calculateExplosionIntensity(type: ExplosionType, size: number): number {
+    const baseIntensity = {
+      [ExplosionType.LASER_HIT]: 0.3,
+      [ExplosionType.MISSILE_EXPLOSION]: 0.8,
+      [ExplosionType.SHIP_DESTRUCTION]: 1.0,
+      [ExplosionType.STATION_DAMAGE]: 0.9,
+      [ExplosionType.ASTEROID_IMPACT]: 0.6
+    };
+    
+    return (baseIntensity[type] || 0.5) * size;
+  }
+
+  /**
+   * Calculate explosion duration
+   */
+  private calculateExplosionDuration(type: ExplosionType, size: number): number {
+    const baseDuration = {
+      [ExplosionType.LASER_HIT]: 0.5,
+      [ExplosionType.MISSILE_EXPLOSION]: 2.0,
+      [ExplosionType.SHIP_DESTRUCTION]: 4.0,
+      [ExplosionType.STATION_DAMAGE]: 3.0,
+      [ExplosionType.ASTEROID_IMPACT]: 1.5
+    };
+    
+    return (baseDuration[type] || 1.0) * size;
+  }
+
+  /**
+   * Calculate damage radius for explosion
+   */
+  private calculateDamageRadius(type: ExplosionType, size: number): number {
+    const baseRadius = {
+      [ExplosionType.LASER_HIT]: 0,
+      [ExplosionType.MISSILE_EXPLOSION]: size * 50,
+      [ExplosionType.SHIP_DESTRUCTION]: size * 100,
+      [ExplosionType.STATION_DAMAGE]: size * 80,
+      [ExplosionType.ASTEROID_IMPACT]: size * 30
+    };
+    
+    return baseRadius[type] || 0;
+  }
+
+  /**
+   * Determine if shockwave should be created
+   */
+  private shouldCreateShockwave(type: ExplosionType, size: number): boolean {
+    return type === ExplosionType.MISSILE_EXPLOSION || 
+           type === ExplosionType.SHIP_DESTRUCTION || 
+           size > 5;
+  }
+
+  /**
+   * Get random debris type
+   */
+  private getRandomDebrisType(): DebrisType {
+    const types = Object.values(DebrisType);
+    return types[Math.floor(Math.random() * types.length)];
+  }
+
+  /**
+   * Get particle lifetime
+   */
+  private getParticleLifetime(type: ExplosionType): number {
+    switch (type) {
+      case ExplosionType.LASER_HIT:
+        return 0.2 + Math.random() * 0.3;
+      case ExplosionType.MISSILE_EXPLOSION:
+        return 1.0 + Math.random() * 1.0;
+      case ExplosionType.SHIP_DESTRUCTION:
+        return 2.0 + Math.random() * 2.0;
+      case ExplosionType.STATION_DAMAGE:
+        return 1.5 + Math.random() * 1.5;
+      case ExplosionType.ASTEROID_IMPACT:
+        return 0.5 + Math.random() * 1.0;
+      default:
+        return 1.0;
+    }
+  }
+
+  /**
+   * Cleanup expired effects
+   */
+  private cleanupExpiredEffects(): void {
+    // Remove expired particles
+    const expiredParticles: string[] = [];
+    this.particles.forEach((particle, id) => {
+      if (particle.life <= 0) {
+        expiredParticles.push(id);
+      }
+    });
+    expiredParticles.forEach(id => this.particles.delete(id));
+
+    // Remove expired debris
+    const expiredDebris: string[] = [];
+    this.debris.forEach((debris, id) => {
+      if (debris.lifetime <= 0) {
+        expiredDebris.push(id);
+      }
+    });
+    expiredDebris.forEach(id => this.debris.delete(id));
+  }
+
+  /**
+   * Get entities in range (placeholder for spatial queries)
+   */
+  private getEntitiesInRange(center: Vector3D, radius: number): Array<{ id: string; position: Vector3D }> {
+    // This would be implemented with spatial indexing for performance
+    // For now, return empty array
+    return [];
+  }
+
+  /**
+   * Calculate distance between two 3D points
+   */
+  private calculateDistance(pos1: Vector3D, pos2: Vector3D): number {
+    const dx = pos2.x - pos1.x;
+    const dy = pos2.y - pos1.y;
+    const dz = pos2.z - pos1.z;
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  /**
+   * Get system status
+   */
+  getSystemStatus(): {
+    activeExplosions: number;
+    activeParticles: number;
+    activeDebris: number;
+    activeShockwaves: number;
+    environmentalDamageAreas: number;
+  } {
+    return {
+      activeExplosions: Array.from(this.explosions.values()).filter(e => e.active).length,
+      activeParticles: Array.from(this.particles.values()).filter(p => p.life > 0).length,
+      activeDebris: Array.from(this.debris.values()).filter(d => d.lifetime > 0).length,
+      activeShockwaves: Array.from(this.shockwaves.values()).filter(s => s.active).length,
+      environmentalDamageAreas: this.environmentalDamage.length
+    };
+  }
+
+  /**
+   * Clear all effects (used for system reset)
+   */
+  clearAllEffects(): void {
+    this.explosions.clear();
+    this.particles.clear();
+    this.debris.clear();
+    this.shockwaves.clear();
+    this.environmentalDamage = [];
+    this.activeEffects.clear();
+  }
+}

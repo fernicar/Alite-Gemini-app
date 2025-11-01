@@ -1,0 +1,690 @@
+/**
+ * Basic UI Components - Foundation UI elements used throughout the game
+ * Includes buttons, text, panels, and common UI patterns
+ */
+
+import { BaseUIComponent, Vector2D } from '../UIManager';
+import { Logger } from '../../../core/utils/Logging';
+
+export interface UIButtonOptions {
+  text: string;
+  width?: number;
+  height?: number;
+  backgroundColor?: string;
+  textColor?: string;
+  fontSize?: number;
+  fontFamily?: string;
+  borderColor?: string;
+  borderWidth?: number;
+  cornerRadius?: number;
+  padding?: number;
+  disabled?: boolean;
+  icon?: string;
+  tooltip?: string;
+}
+
+export interface UITextOptions {
+  text: string;
+  fontSize?: number;
+  fontFamily?: string;
+  color?: string;
+  textAlign?: 'left' | 'center' | 'right';
+  textBaseline?: 'top' | 'middle' | 'bottom';
+  bold?: boolean;
+  italic?: boolean;
+  maxWidth?: number;
+  wordWrap?: boolean;
+}
+
+export interface UIPanelOptions {
+  width: number;
+  height: number;
+  backgroundColor?: string;
+  borderColor?: string;
+  borderWidth?: number;
+  cornerRadius?: number;
+  padding?: number;
+  shadow?: boolean;
+  opacity?: number;
+}
+
+export interface UIProgressBarOptions {
+  width: number;
+  height: number;
+  value: number;
+  maxValue: number;
+  backgroundColor?: string;
+  fillColor?: string;
+  borderColor?: string;
+  borderWidth?: number;
+  showText?: boolean;
+  textColor?: string;
+}
+
+export interface UIInputFieldOptions {
+  width: number;
+  height: number;
+  placeholder?: string;
+  maxLength?: number;
+  type?: 'text' | 'password' | 'number';
+  backgroundColor?: string;
+  borderColor?: string;
+  borderWidth?: number;
+  textColor?: string;
+  placeholderColor?: string;
+  fontSize?: number;
+}
+
+// Button Component
+export class UIButton extends BaseUIComponent {
+  private text: string;
+  private options: Required<UIButtonOptions>;
+  private isPressed: boolean = false;
+  private isHovered: boolean = false;
+  private onClick?: () => void;
+  private onHover?: () => void;
+  private onLeave?: () => void;
+
+  constructor(id: string, text: string, options: UIButtonOptions = {}, onClick?: () => void) {
+    super(id);
+    this.text = text;
+    this.options = {
+      text,
+      width: options.width || 200,
+      height: options.height || 50,
+      backgroundColor: options.backgroundColor || '#2d3748',
+      textColor: options.textColor || '#ffffff',
+      fontSize: options.fontSize || 16,
+      fontFamily: options.fontFamily || 'Arial, sans-serif',
+      borderColor: options.borderColor || '#4a5568',
+      borderWidth: options.borderWidth || 2,
+      cornerRadius: options.cornerRadius || 8,
+      padding: options.padding || 12,
+      disabled: options.disabled || false,
+      icon: options.icon || '',
+      tooltip: options.tooltip || ''
+    };
+    this.onClick = onClick;
+  }
+
+  onInit(): void {
+    // Button initialization
+  }
+
+  onDestroy(): void {
+    // Button cleanup
+  }
+
+  onUpdate(deltaTime: number): void {
+    // Update button state if needed
+  }
+
+  onRender(ctx: CanvasRenderingContext2D, position: Vector2D, size: Vector2D): void {
+    const absPos = this.getAbsolutePosition();
+    const bounds = this.getBounds();
+
+    // Determine button colors based on state
+    let bgColor = this.options.backgroundColor;
+    let textColor = this.options.textColor;
+
+    if (this.options.disabled) {
+      bgColor = '#666666';
+      textColor = '#999999';
+    } else if (this.isPressed) {
+      bgColor = this.adjustColor(this.options.backgroundColor, -20);
+    } else if (this.isHovered) {
+      bgColor = this.adjustColor(this.options.backgroundColor, 10);
+    }
+
+    // Draw button background
+    ctx.fillStyle = bgColor;
+    this.roundedRect(ctx, bounds.x, bounds.y, bounds.width, bounds.height, this.options.cornerRadius);
+    ctx.fill();
+
+    // Draw button border
+    if (this.options.borderWidth > 0) {
+      ctx.strokeStyle = this.options.borderColor;
+      ctx.lineWidth = this.options.borderWidth;
+      this.roundedRect(ctx, bounds.x, bounds.y, bounds.width, bounds.height, this.options.cornerRadius);
+      ctx.stroke();
+    }
+
+    // Draw text
+    ctx.fillStyle = textColor;
+    ctx.font = `${this.options.italic ? 'italic ' : ''}${this.options.bold ? 'bold ' : ''}${this.options.fontSize}px ${this.options.fontFamily}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    const textX = bounds.x + bounds.width / 2;
+    const textY = bounds.y + bounds.height / 2;
+
+    if (this.options.icon) {
+      // Draw icon and text
+      const iconY = textY;
+      const textX = bounds.x + bounds.width / 2 + 15;
+      
+      // Draw icon (placeholder)
+      ctx.fillText(this.options.icon, textX - 15, iconY);
+      
+      // Draw text
+      ctx.fillText(this.text, textX, textY);
+    } else {
+      // Draw text only
+      ctx.fillText(this.text, textX, textY);
+    }
+
+    // Draw children
+    this.children.forEach(child => {
+      child.onRender(ctx, { x: bounds.x, y: bounds.y }, { x: bounds.width, y: bounds.height });
+    });
+  }
+
+  handleMouseDown(x: number, y: number): boolean {
+    if (!this.isVisible || !this.isEnabled || this.options.disabled) {
+      return false;
+    }
+
+    if (this.contains(x, y)) {
+      this.isPressed = true;
+      return true;
+    }
+
+    return super.handleMouseDown(x, y);
+  }
+
+  handleMouseUp(x: number, y: number): boolean {
+    if (!this.isVisible || !this.isEnabled || this.options.disabled) {
+      return false;
+    }
+
+    const wasPressed = this.isPressed;
+    this.isPressed = false;
+
+    if (wasPressed && this.contains(x, y) && this.onClick) {
+      this.onClick();
+      return true;
+    }
+
+    return super.handleMouseUp(x, y);
+  }
+
+  handleMouseMove(x: number, y: number): boolean {
+    if (!this.isVisible || !this.isEnabled) {
+      return false;
+    }
+
+    const wasHovered = this.isHovered;
+    this.isHovered = this.contains(x, y);
+
+    if (this.isHovered && !wasHovered && this.onHover) {
+      this.onHover();
+    } else if (!this.isHovered && wasHovered && this.onLeave) {
+      this.onLeave();
+    }
+
+    return super.handleMouseMove(x, y);
+  }
+
+  private roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number): void {
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + width - radius, y);
+    ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+    ctx.lineTo(x + width, y + height - radius);
+    ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+    ctx.lineTo(x + radius, y + height);
+    ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.closePath();
+  }
+
+  private adjustColor(color: string, amount: number): string {
+    // Simple color adjustment for hover/pressed states
+    const hex = color.replace('#', '');
+    const r = Math.max(0, Math.min(255, parseInt(hex.substr(0, 2), 16) + amount));
+    const g = Math.max(0, Math.min(255, parseInt(hex.substr(2, 2), 16) + amount));
+    const b = Math.max(0, Math.min(255, parseInt(hex.substr(4, 2), 16) + amount));
+    return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+  }
+
+  public setOnClick(callback: () => void): void {
+    this.onClick = callback;
+  }
+
+  public setText(text: string): void {
+    this.text = text;
+    this.options.text = text;
+  }
+
+  public setDisabled(disabled: boolean): void {
+    this.options.disabled = disabled;
+    if (disabled) {
+      this.isEnabled = false;
+    }
+  }
+}
+
+// Text Component
+export class UIText extends BaseUIComponent {
+  private options: Required<UITextOptions>;
+
+  constructor(id: string, text: string, options: UITextOptions = {}) {
+    super(id);
+    this.options = {
+      text,
+      fontSize: options.fontSize || 16,
+      fontFamily: options.fontFamily || 'Arial, sans-serif',
+      color: options.color || '#ffffff',
+      textAlign: options.textAlign || 'left',
+      textBaseline: options.textBaseline || 'top',
+      bold: options.bold || false,
+      italic: options.italic || false,
+      maxWidth: options.maxWidth || 0,
+      wordWrap: options.wordWrap || false
+    };
+  }
+
+  onInit(): void {
+    // Text initialization
+  }
+
+  onDestroy(): void {
+    // Text cleanup
+  }
+
+  onUpdate(deltaTime: number): void {
+    // Text update logic
+  }
+
+  onRender(ctx: CanvasRenderingContext2D, position: Vector2D, size: Vector2D): void {
+    const bounds = this.getBounds();
+
+    ctx.fillStyle = this.options.color;
+    ctx.font = `${this.options.italic ? 'italic ' : ''}${this.options.bold ? 'bold ' : ''}${this.options.fontSize}px ${this.options.fontFamily}`;
+    ctx.textAlign = this.options.textAlign;
+    ctx.textBaseline = this.options.textBaseline;
+
+    let textX = bounds.x;
+    let textY = bounds.y;
+
+    // Adjust text position based on alignment
+    switch (this.options.textAlign) {
+      case 'center':
+        textX = bounds.x + bounds.width / 2;
+        break;
+      case 'right':
+        textX = bounds.x + bounds.width;
+        break;
+    }
+
+    switch (this.options.textBaseline) {
+      case 'middle':
+        textY = bounds.y + bounds.height / 2;
+        break;
+      case 'bottom':
+        textY = bounds.y + bounds.height;
+        break;
+    }
+
+    // Draw text with word wrapping if needed
+    if (this.options.wordWrap && this.options.maxWidth > 0) {
+      this.drawWrappedText(ctx, this.options.text, textX, textY, this.options.maxWidth, this.options.fontSize);
+    } else {
+      ctx.fillText(this.options.text, textX, textY);
+    }
+
+    // Draw children
+    this.children.forEach(child => {
+      child.onRender(ctx, { x: bounds.x, y: bounds.y }, { x: bounds.width, y: bounds.height });
+    });
+  }
+
+  private drawWrappedText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, maxWidth: number, lineHeight: number): void {
+    const words = text.split(' ');
+    const lines: string[] = [];
+    let currentLine = '';
+
+    for (const word of words) {
+      const testLine = currentLine + (currentLine ? ' ' : '') + word;
+      const metrics = ctx.measureText(testLine);
+      
+      if (metrics.width > maxWidth && currentLine) {
+        lines.push(currentLine);
+        currentLine = word;
+      } else {
+        currentLine = testLine;
+      }
+    }
+    
+    if (currentLine) {
+      lines.push(currentLine);
+    }
+
+    let offsetY = y;
+    for (const line of lines) {
+      ctx.fillText(line, x, offsetY);
+      offsetY += lineHeight;
+    }
+  }
+
+  public setText(text: string): void {
+    this.options.text = text;
+  }
+
+  public getText(): string {
+    return this.options.text;
+  }
+}
+
+// Panel Component
+export class UIPanel extends BaseUIComponent {
+  private options: Required<UIPanelOptions>;
+
+  constructor(id: string, options: UIPanelOptions) {
+    super(id);
+    this.options = {
+      width: options.width,
+      height: options.height,
+      backgroundColor: options.backgroundColor || '#1a202c',
+      borderColor: options.borderColor || '#4a5568',
+      borderWidth: options.borderWidth || 1,
+      cornerRadius: options.cornerRadius || 0,
+      padding: options.padding || 10,
+      shadow: options.shadow || false,
+      opacity: options.opacity || 1.0
+    };
+    this.size = { x: options.width, y: options.height };
+  }
+
+  onInit(): void {
+    // Panel initialization
+  }
+
+  onDestroy(): void {
+    // Panel cleanup
+  }
+
+  onUpdate(deltaTime: number): void {
+    // Panel update logic
+  }
+
+  onRender(ctx: CanvasRenderingContext2D, position: Vector2D, size: Vector2D): void {
+    const bounds = this.getBounds();
+
+    // Draw shadow if enabled
+    if (this.options.shadow) {
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+      ctx.shadowBlur = 10;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 4;
+    }
+
+    // Set opacity
+    ctx.save();
+    ctx.globalAlpha = this.options.opacity;
+
+    // Draw panel background
+    ctx.fillStyle = this.options.backgroundColor;
+    
+    if (this.options.cornerRadius > 0) {
+      this.roundedRect(ctx, bounds.x, bounds.y, bounds.width, bounds.height, this.options.cornerRadius);
+      ctx.fill();
+    } else {
+      ctx.fillRect(bounds.x, bounds.y, bounds.width, bounds.height);
+    }
+
+    // Draw panel border
+    if (this.options.borderWidth > 0) {
+      ctx.strokeStyle = this.options.borderColor;
+      ctx.lineWidth = this.options.borderWidth;
+      
+      if (this.options.cornerRadius > 0) {
+        this.roundedRect(ctx, bounds.x, bounds.y, bounds.width, bounds.height, this.options.cornerRadius);
+        ctx.stroke();
+      } else {
+        ctx.strokeRect(bounds.x, bounds.y, bounds.width, bounds.height);
+      }
+    }
+
+    ctx.restore();
+
+    // Reset shadow
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+
+    // Draw children with padding
+    const padding = this.options.padding;
+    this.children.forEach(child => {
+      child.onRender(ctx, { x: bounds.x + padding, y: bounds.y + padding }, { 
+        x: bounds.width - padding * 2, 
+        y: bounds.height - padding * 2 
+      });
+    });
+  }
+
+  private roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number): void {
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + width - radius, y);
+    ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+    ctx.lineTo(x + width, y + height - radius);
+    ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+    ctx.lineTo(x + radius, y + height);
+    ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.closePath();
+  }
+}
+
+// Progress Bar Component
+export class UIProgressBar extends BaseUIComponent {
+  private options: Required<UIProgressBarOptions>;
+  private currentValue: number;
+
+  constructor(id: string, options: UIProgressBarOptions) {
+    super(id);
+    this.options = {
+      width: options.width,
+      height: options.height,
+      value: options.value,
+      maxValue: options.maxValue,
+      backgroundColor: options.backgroundColor || '#2d3748',
+      fillColor: options.fillColor || '#48bb78',
+      borderColor: options.borderColor || '#4a5568',
+      borderWidth: options.borderWidth || 1,
+      showText: options.showText || false,
+      textColor: options.textColor || '#ffffff'
+    };
+    this.currentValue = options.value;
+    this.size = { x: options.width, y: options.height };
+  }
+
+  onInit(): void {
+    // Progress bar initialization
+  }
+
+  onDestroy(): void {
+    // Progress bar cleanup
+  }
+
+  onUpdate(deltaTime: number): void {
+    // Progress bar update logic
+  }
+
+  onRender(ctx: CanvasRenderingContext2D, position: Vector2D, size: Vector2D): void {
+    const bounds = this.getBounds();
+    const progress = Math.min(1, Math.max(0, this.currentValue / this.options.maxValue));
+    const fillWidth = bounds.width * progress;
+
+    // Draw background
+    ctx.fillStyle = this.options.backgroundColor;
+    ctx.fillRect(bounds.x, bounds.y, bounds.width, bounds.height);
+
+    // Draw progress fill
+    ctx.fillStyle = this.options.fillColor;
+    ctx.fillRect(bounds.x, bounds.y, fillWidth, bounds.height);
+
+    // Draw border
+    if (this.options.borderWidth > 0) {
+      ctx.strokeStyle = this.options.borderColor;
+      ctx.lineWidth = this.options.borderWidth;
+      ctx.strokeRect(bounds.x, bounds.y, bounds.width, bounds.height);
+    }
+
+    // Draw text if enabled
+    if (this.options.showText) {
+      ctx.fillStyle = this.options.textColor;
+      ctx.font = `bold ${Math.max(10, this.options.height - 4)}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      
+      const percentage = Math.round(progress * 100);
+      ctx.fillText(`${percentage}%`, bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    }
+
+    // Draw children
+    this.children.forEach(child => {
+      child.onRender(ctx, { x: bounds.x, y: bounds.y }, { x: bounds.width, y: bounds.height });
+    });
+  }
+
+  public setValue(value: number): void {
+    this.currentValue = Math.max(0, Math.min(this.options.maxValue, value));
+  }
+
+  public getValue(): number {
+    return this.currentValue;
+  }
+
+  public getProgress(): number {
+    return Math.min(1, Math.max(0, this.currentValue / this.options.maxValue));
+  }
+}
+
+// Input Field Component
+export class UIInputField extends BaseUIComponent {
+  private options: Required<UIInputFieldOptions>;
+  private value: string = '';
+  private isFocused: boolean = false;
+  private maxLength: number;
+
+  constructor(id: string, options: UIInputFieldOptions) {
+    super(id);
+    this.options = {
+      width: options.width,
+      height: options.height,
+      placeholder: options.placeholder || '',
+      maxLength: options.maxLength || 255,
+      type: options.type || 'text',
+      backgroundColor: options.backgroundColor || '#ffffff',
+      borderColor: options.borderColor || '#4a5568',
+      borderWidth: options.borderWidth || 1,
+      textColor: options.textColor || '#000000',
+      placeholderColor: options.placeholderColor || '#999999',
+      fontSize: options.fontSize || 14
+    };
+    this.maxLength = options.maxLength || 255;
+    this.size = { x: options.width, y: options.height };
+  }
+
+  onInit(): void {
+    // Input field initialization
+  }
+
+  onDestroy(): void {
+    // Input field cleanup
+  }
+
+  onUpdate(deltaTime: number): void {
+    // Input field update logic
+  }
+
+  onRender(ctx: CanvasRenderingContext2D, position: Vector2D, size: Vector2D): void {
+    const bounds = this.getBounds();
+
+    // Draw background
+    ctx.fillStyle = this.options.backgroundColor;
+    ctx.fillRect(bounds.x, bounds.y, bounds.width, bounds.height);
+
+    // Draw border
+    ctx.strokeStyle = this.isFocused ? '#4299e1' : this.options.borderColor;
+    ctx.lineWidth = this.options.borderWidth;
+    ctx.strokeRect(bounds.x, bounds.y, bounds.width, bounds.height);
+
+    // Draw text or placeholder
+    ctx.font = `${this.options.fontSize}px Arial`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+
+    const padding = 8;
+    let displayText = this.value;
+    
+    if (!displayText && !this.isFocused) {
+      displayText = this.options.placeholder;
+      ctx.fillStyle = this.options.placeholderColor;
+    } else {
+      ctx.fillStyle = this.options.textColor;
+    }
+
+    // Clamp text to fit
+    while (ctx.measureText(displayText).width > bounds.width - padding * 2 && displayText.length > 0) {
+      displayText = displayText.slice(0, -1);
+    }
+
+    ctx.fillText(displayText, bounds.x + padding, bounds.y + bounds.height / 2);
+
+    // Draw children
+    this.children.forEach(child => {
+      child.onRender(ctx, { x: bounds.x, y: bounds.y }, { x: bounds.width, y: bounds.height });
+    });
+  }
+
+  handleMouseDown(x: number, y: number): boolean {
+    if (!this.isVisible || !this.isEnabled) {
+      return false;
+    }
+
+    if (this.contains(x, y)) {
+      this.isFocused = true;
+      return true;
+    } else {
+      this.isFocused = false;
+    }
+
+    return super.handleMouseDown(x, y);
+  }
+
+  handleKeyDown(key: string): boolean {
+    if (!this.isVisible || !this.isEnabled || !this.isFocused) {
+      return false;
+    }
+
+    if (key === 'Backspace') {
+      this.value = this.value.slice(0, -1);
+      return true;
+    }
+
+    if (key.length === 1 && this.value.length < this.maxLength) {
+      this.value += key;
+      return true;
+    }
+
+    return super.handleKeyDown(key);
+  }
+
+  public setValue(value: string): void {
+    this.value = value.slice(0, this.maxLength);
+  }
+
+  public getValue(): string {
+    return this.value;
+  }
+
+  public clear(): void {
+    this.value = '';
+  }
+}

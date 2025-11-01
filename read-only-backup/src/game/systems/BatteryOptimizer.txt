@@ -1,0 +1,488 @@
+/**
+ * Battery Optimizer - Power efficiency and battery life optimization system
+ * Monitors battery status and adjusts performance to optimize power consumption
+ */
+
+export interface BatteryInfo {
+  level: number; // 0-1
+  charging: boolean;
+  chargingTime: number; // seconds until full (0 if unknown)
+  dischargingTime: number; // seconds until empty (0 if unknown)
+  supported: boolean;
+}
+
+export interface PowerSettings {
+  enableBatteryOptimization: boolean;
+  enableAdaptivePerformance: boolean;
+  lowBatteryThreshold: number; // 0-1
+  criticalBatteryThreshold: number; // 0-1
+  enableBackgroundOptimization: boolean;
+  enableAdaptiveFrameRate: boolean;
+  targetFPSOnBattery: number;
+  enablePowerSavingMode: boolean;
+  optimizeForLongSessions: boolean;
+}
+
+export interface PowerProfile {
+  name: string;
+  maxFPS: number;
+  particleDensity: number;
+  textureQuality: number;
+  shadowQuality: number;
+  audioQuality: number;
+  networkOptimization: boolean;
+  backgroundUpdateFrequency: number;
+}
+
+export enum BatteryLevel {
+  FULL = 'full',
+  HIGH = 'high',
+  MEDIUM = 'medium',
+  LOW = 'low',
+  CRITICAL = 'critical'
+}
+
+export class BatteryOptimizer {
+  private static instance: BatteryOptimizer;
+  
+  private batteryInfo: BatteryInfo;
+  private settings: PowerSettings;
+  private currentProfile: PowerProfile;
+  private batteryLevel: BatteryLevel;
+  private batteryListener: ((info: BatteryInfo) => void) | null = null;
+  private performanceListener: ((profile: PowerProfile) => void) | null = null;
+  
+  // Power profiles for different battery levels
+  private powerProfiles: Map<BatteryLevel, PowerProfile> = new Map();
+  
+  // Monitoring
+  private lastBatteryCheck: number = 0;
+  private batteryCheckInterval: number = 30000; // 30 seconds
+  private performanceAdjustments: number = 0;
+  private sessionStartTime: number = Date.now();
+
+  private constructor() {
+    this.batteryInfo = this.getBatteryInfo();
+    this.settings = this.getDefaultSettings();
+    this.currentProfile = this.getProfileForCurrentBattery();
+    this.batteryLevel = this.getBatteryLevel(this.batteryInfo.level);
+    
+    this.initializePowerProfiles();
+    this.initializeMonitoring();
+  }
+
+  public static getInstance(): BatteryOptimizer {
+    if (!BatteryOptimizer.instance) {
+      BatteryOptimizer.instance = new BatteryOptimizer();
+    }
+    return BatteryOptimizer.instance;
+  }
+
+  private getBatteryInfo(): BatteryInfo {
+    if ('getBattery' in navigator) {
+      return {
+        level: 0,
+        charging: false,
+        chargingTime: 0,
+        dischargingTime: 0,
+        supported: true
+      };
+    }
+    
+    return {
+      level: 1,
+      charging: false,
+      chargingTime: 0,
+      dischargingTime: 0,
+      supported: false
+    };
+  }
+
+  private getDefaultSettings(): PowerSettings {
+    return {
+      enableBatteryOptimization: true,
+      enableAdaptivePerformance: true,
+      lowBatteryThreshold: 0.3, // 30%
+      criticalBatteryThreshold: 0.1, // 10%
+      enableBackgroundOptimization: true,
+      enableAdaptiveFrameRate: true,
+      targetFPSOnBattery: 30,
+      enablePowerSavingMode: false,
+      optimizeForLongSessions: true
+    };
+  }
+
+  private initializePowerProfiles(): void {
+    // High performance profile (when charging or full battery)
+    this.powerProfiles.set(BatteryLevel.FULL, {
+      name: 'Full Performance',
+      maxFPS: 60,
+      particleDensity: 1.0,
+      textureQuality: 1.0,
+      shadowQuality: 1.0,
+      audioQuality: 1.0,
+      networkOptimization: false,
+      backgroundUpdateFrequency: 60
+    });
+
+    // High battery profile
+    this.powerProfiles.set(BatteryLevel.HIGH, {
+      name: 'High Performance',
+      maxFPS: 60,
+      particleDensity: 0.8,
+      textureQuality: 0.9,
+      shadowQuality: 0.8,
+      audioQuality: 0.9,
+      networkOptimization: false,
+      backgroundUpdateFrequency: 30
+    });
+
+    // Medium battery profile
+    this.powerProfiles.set(BatteryLevel.MEDIUM, {
+      name: 'Balanced Performance',
+      maxFPS: 45,
+      particleDensity: 0.6,
+      textureQuality: 0.7,
+      shadowQuality: 0.5,
+      audioQuality: 0.7,
+      networkOptimization: true,
+      backgroundUpdateFrequency: 20
+    });
+
+    // Low battery profile
+    this.powerProfiles.set(BatteryLevel.LOW, {
+      name: 'Battery Saving',
+      maxFPS: 30,
+      particleDensity: 0.4,
+      textureQuality: 0.5,
+      shadowQuality: 0.3,
+      audioQuality: 0.5,
+      networkOptimization: true,
+      backgroundUpdateFrequency: 15
+    });
+
+    // Critical battery profile
+    this.powerProfiles.set(BatteryLevel.CRITICAL, {
+      name: 'Power Saving',
+      maxFPS: 20,
+      particleDensity: 0.2,
+      textureQuality: 0.3,
+      shadowQuality: 0.1,
+      audioQuality: 0.3,
+      networkOptimization: true,
+      backgroundUpdateFrequency: 10
+    });
+  }
+
+  private initializeMonitoring(): void {
+    if (!this.settings.enableBatteryOptimization) return;
+
+    // Set up battery monitoring if supported
+    if ('getBattery' in navigator) {
+      this.setupBatteryMonitoring();
+    }
+
+    // Set up performance monitoring
+    this.setupPerformanceMonitoring();
+  }
+
+  private async setupBatteryMonitoring(): Promise<void> {
+    try {
+      const battery = await (navigator as any).getBattery();
+      
+      // Initial battery info
+      this.updateBatteryInfo(battery);
+      
+      // Listen for battery changes
+      battery.addEventListener('levelchange', () => {
+        this.updateBatteryInfo(battery);
+      });
+      
+      battery.addEventListener('chargingchange', () => {
+        this.updateBatteryInfo(battery);
+      });
+      
+      battery.addEventListener('chargingtimechange', () => {
+        this.updateBatteryInfo(battery);
+      });
+      
+      battery.addEventListener('dischargingtimechange', () => {
+        this.updateBatteryInfo(battery);
+      });
+
+      console.log('Battery monitoring initialized');
+    } catch (error) {
+      console.warn('Battery monitoring not available:', error);
+    }
+  }
+
+  private updateBatteryInfo(battery: any): void {
+    this.batteryInfo = {
+      level: battery.level,
+      charging: battery.charging,
+      chargingTime: battery.chargingTime,
+      dischargingTime: battery.dischargingTime,
+      supported: true
+    };
+
+    const newBatteryLevel = this.getBatteryLevel(this.batteryInfo.level);
+    
+    if (newBatteryLevel !== this.batteryLevel) {
+      this.batteryLevel = newBatteryLevel;
+      this.onBatteryLevelChange(newBatteryLevel);
+    }
+
+    if (this.batteryListener) {
+      this.batteryListener(this.batteryInfo);
+    }
+  }
+
+  private getBatteryLevel(level: number): BatteryLevel {
+    if (level >= 0.8) return BatteryLevel.FULL;
+    if (level >= 0.5) return BatteryLevel.HIGH;
+    if (level >= 0.3) return BatteryLevel.MEDIUM;
+    if (level >= this.settings.criticalBatteryThreshold) return BatteryLevel.LOW;
+    return BatteryLevel.CRITICAL;
+  }
+
+  private onBatteryLevelChange(newLevel: BatteryLevel): void {
+    console.log(`Battery level changed to: ${newLevel}`);
+    
+    const newProfile = this.powerProfiles.get(newLevel);
+    if (newProfile) {
+      this.setPowerProfile(newProfile);
+    }
+
+    // Check for low battery warnings
+    if (newLevel === BatteryLevel.LOW) {
+      this.showLowBatteryWarning();
+    } else if (newLevel === BatteryLevel.CRITICAL) {
+      this.showCriticalBatteryWarning();
+    }
+  }
+
+  private setPowerProfile(profile: PowerProfile): void {
+    const oldProfile = this.currentProfile;
+    this.currentProfile = profile;
+    
+    console.log(`Power profile changed: ${oldProfile.name} → ${profile.name}`);
+    
+    this.applyPerformanceAdjustments();
+    
+    if (this.performanceListener) {
+      this.performanceListener(profile);
+    }
+  }
+
+  private setupPerformanceMonitoring(): void {
+    // Monitor session duration for long session optimization
+    setInterval(() => {
+      if (this.settings.optimizeForLongSessions) {
+        this.checkSessionDuration();
+      }
+    }, 300000); // Every 5 minutes
+  }
+
+  private checkSessionDuration(): void {
+    const sessionDuration = Date.now() - this.sessionStartTime;
+    const maxSessionDuration = 2 * 60 * 60 * 1000; // 2 hours
+    
+    if (sessionDuration > maxSessionDuration) {
+      console.log('Long session detected, applying additional power optimizations');
+      this.applyLongSessionOptimization();
+    }
+  }
+
+  private applyLongSessionOptimization(): void {
+    // Reduce performance slightly for long sessions
+    if (this.currentProfile.name !== 'Power Saving') {
+      const optimizedProfile: PowerProfile = {
+        ...this.currentProfile,
+        maxFPS: Math.max(15, this.currentProfile.maxFPS - 5),
+        particleDensity: Math.max(0.1, this.currentProfile.particleDensity - 0.1),
+        name: `${this.currentProfile.name} (Extended)`
+      };
+      
+      this.setPowerProfile(optimizedProfile);
+    }
+  }
+
+  private applyPerformanceAdjustments(): void {
+    // This would integrate with other game systems to apply the power profile
+    console.log('Applying performance adjustments:', this.currentProfile);
+    
+    // Adjust rendering settings
+    this.adjustRenderingSettings();
+    
+    // Adjust audio settings
+    this.adjustAudioSettings();
+    
+    // Adjust network settings
+    this.adjustNetworkSettings();
+    
+    // Adjust update frequencies
+    this.adjustUpdateFrequencies();
+    
+    this.performanceAdjustments++;
+  }
+
+  private adjustRenderingSettings(): void {
+    // This would integrate with the game's rendering system
+    console.log(`Adjusting rendering: FPS=${this.currentProfile.maxFPS}, Quality=${this.currentProfile.textureQuality}`);
+  }
+
+  private adjustAudioSettings(): void {
+    console.log(`Adjusting audio: Quality=${this.currentProfile.audioQuality}`);
+  }
+
+  private adjustNetworkSettings(): void {
+    console.log(`Adjusting network: Optimization=${this.currentProfile.networkOptimization}`);
+  }
+
+  private adjustUpdateFrequencies(): void {
+    console.log(`Adjusting updates: Frequency=${this.currentProfile.backgroundUpdateFrequency}Hz`);
+  }
+
+  private showLowBatteryWarning(): void {
+    if (this.settings.enablePowerSavingMode) {
+      console.warn('Low battery detected - consider enabling power saving mode');
+    }
+  }
+
+  private showCriticalBatteryWarning(): void {
+    console.error('Critical battery level - enabling power saving mode');
+    this.enablePowerSavingMode();
+  }
+
+  public enablePowerSavingMode(): void {
+    this.settings.enablePowerSavingMode = true;
+    this.setPowerProfile(this.powerProfiles.get(BatteryLevel.CRITICAL)!);
+  }
+
+  public disablePowerSavingMode(): void {
+    this.settings.enablePowerSavingMode = false;
+    const level = this.getBatteryLevel(this.batteryInfo.level);
+    this.setPowerProfile(this.powerProfiles.get(level)!);
+  }
+
+  public setBatteryListener(listener: (info: BatteryInfo) => void): void {
+    this.batteryListener = listener;
+  }
+
+  public setPerformanceListener(listener: (profile: PowerProfile) => void): void {
+    this.performanceListener = listener;
+  }
+
+  public getBatteryInfo(): BatteryInfo {
+    return { ...this.batteryInfo };
+  }
+
+  public getCurrentProfile(): PowerProfile {
+    return { ...this.currentProfile };
+  }
+
+  public getBatteryLevel(): BatteryLevel {
+    return this.batteryLevel;
+  }
+
+  public getEstimatedBatteryLife(): number {
+    if (!this.batteryInfo.supported || !this.batteryInfo.dischargingTime) {
+      return -1; // Unknown
+    }
+    
+    return this.batteryInfo.dischargingTime;
+  }
+
+  public getEstimatedChargingTime(): number {
+    if (!this.batteryInfo.supported || !this.batteryInfo.chargingTime) {
+      return -1; // Unknown
+    }
+    
+    return this.batteryInfo.chargingTime;
+  }
+
+  public getPowerConsumptionEstimate(): number {
+    // Estimate power consumption based on current profile
+    let consumption = 1.0; // Base consumption
+    
+    // Adjust based on profile
+    consumption *= (this.currentProfile.maxFPS / 60) * 0.3;
+    consumption *= this.currentProfile.particleDensity * 0.2;
+    consumption *= this.currentProfile.textureQuality * 0.2;
+    consumption *= this.currentProfile.shadowQuality * 0.2;
+    consumption *= this.currentProfile.audioQuality * 0.1;
+    
+    return Math.max(0.1, Math.min(2.0, consumption));
+  }
+
+  public getSettings(): PowerSettings {
+    return { ...this.settings };
+  }
+
+  public updateSettings(updates: Partial<PowerSettings>): void {
+    this.settings = { ...this.settings, ...updates };
+    
+    // Re-apply optimizations if necessary
+    if (updates.enableBatteryOptimization !== undefined) {
+      if (updates.enableBatteryOptimization) {
+        this.initializeMonitoring();
+      }
+    }
+  }
+
+  public forceProfile(profileName: string): boolean {
+    const profile = Array.from(this.powerProfiles.values()).find(p => p.name === profileName);
+    if (profile) {
+      this.setPowerProfile(profile);
+      return true;
+    }
+    return false;
+  }
+
+  public getOptimizationSuggestions(): string[] {
+    const suggestions: string[] = [];
+    
+    if (this.batteryInfo.level < this.settings.lowBatteryThreshold && !this.batteryInfo.charging) {
+      suggestions.push('Consider reducing graphics quality to extend battery life');
+    }
+    
+    if (this.currentProfile.maxFPS > 45 && !this.batteryInfo.charging) {
+      suggestions.push('Reducing frame rate could significantly improve battery life');
+    }
+    
+    if (this.performanceAdjustments > 5) {
+      suggestions.push('Multiple performance adjustments detected - consider enabling power saving mode');
+    }
+    
+    const sessionDuration = Date.now() - this.sessionStartTime;
+    if (sessionDuration > 60 * 60 * 1000) { // 1 hour
+      suggestions.push('Long session detected - game may benefit from power optimizations');
+    }
+    
+    return suggestions;
+  }
+
+  public getBatteryHealthScore(): number {
+    if (!this.batteryInfo.supported) return 100; // Unknown health
+    
+    // Simple health calculation based on battery level and charging state
+    let health = 100;
+    
+    if (!this.batteryInfo.charging) {
+      health -= (1 - this.batteryInfo.level) * 20;
+    }
+    
+    return Math.max(0, Math.min(100, health));
+  }
+
+  public resetSession(): void {
+    this.sessionStartTime = Date.now();
+    this.performanceAdjustments = 0;
+  }
+
+  public dispose(): void {
+    // Clean up event listeners
+    this.batteryListener = null;
+    this.performanceListener = null;
+  }
+}

@@ -1,0 +1,963 @@
+/**
+ * Docking System - Handles station docking mechanics and procedures
+ * Implements safe docking protocols, approach guidance, and port authority interactions
+ */
+
+import { Vector3D } from '../../types/index.js';
+import { Ship } from '../models/Ship.js';
+
+/**
+ * Docking port types and characteristics
+ */
+export enum PortType {
+  STATION = 'STATION',
+  PLANET = 'PLANET',
+  OUTPOST = 'OUTPOST',
+  PLANETARY_BASE = 'PLANETARY_BASE',
+  MEGA_SHIP = 'MEGA_SHIP'
+}
+
+/**
+ * Docking clearance levels
+ */
+export enum ClearanceLevel {
+  BANNED = 'BANNED', // Not allowed to dock
+  RESTRICTED = 'RESTRICTED', // Requires authorization
+  STANDARD = 'STANDARD', // Basic docking permissions
+  PRIORITY = 'PRIORITY', // Fast-track docking
+  EMERGENCY = 'EMERGENCY' // Emergency landing only
+}
+
+/**
+ * Docking approach states
+ */
+export enum DockingState {
+  NOT_DOCKED = 'NOT_DOCKED',
+  REQUESTING_CLEARANCE = 'REQUESTING_CLEARANCE',
+  APPROACHING = 'APPROACHING',
+  FINAL_APPROACH = 'FINAL_APPROACH',
+  DOCKED = 'DOCKED',
+  DEPARTING = 'DEPARTING',
+  EMERGENCY = 'EMERGENCY',
+  DENIED = 'DENIED'
+}
+
+/**
+ * Docking port information
+ */
+export interface DockingPort {
+  id: string;
+  name: string;
+  portType: PortType;
+  position: Vector3D;
+  radius: number; // Landing area radius
+  clearanceLevel: ClearanceLevel;
+  landingFees: number; // Cost to dock
+  services: string[]; // Available services
+  maxShipSize: 'Small' | 'Medium' | 'Large' | 'All';
+  securityLevel: number; // 0-1, security presence
+  operationalStatus: 'OPERATIONAL' | 'LIMITED' | 'MAINTENANCE' | 'CLOSED';
+  dockingRequests: number; // Current queue length
+  landingPadAvailable: boolean;
+  refuelingAvailable: boolean;
+  repairServices: boolean;
+  commodityTrading: boolean;
+  government: string;
+  description: string;
+}
+
+/**
+ * Docking attempt result
+ */
+export interface DockingResult {
+  success: boolean;
+  clearance: ClearanceLevel;
+  dockingTime: number; // Time taken to complete docking
+  fees: number;
+  newPosition: Vector3D;
+  message: string;
+  nextAvailable: number; // Timestamp when next docking is available
+}
+
+/**
+ * Docking approach parameters
+ */
+export interface DockingApproach {
+  portId: string;
+  shipId: string;
+  approachVector: Vector3D;
+  approachSpeed: number;
+  distance: number;
+  estimatedTime: number;
+  difficulty: 'EASY' | 'MODERATE' | 'DIFFICULT' | 'EXTREME';
+  requirements: string[];
+  hazards: string[];
+  guidance: string[];
+}
+
+/**
+ * Docking event for logging
+ */
+export interface DockingEvent {
+  portId: string;
+  shipId: string;
+  timestamp: number;
+  type: 'REQUEST' | 'CLEARANCE_GRANTED' | 'CLEARANCE_DENIED' | 'APPROACH_START' | 'DOCKED' | 'DEPARTED' | 'EMERGENCY';
+  clearanceLevel: ClearanceLevel;
+  approachTime: number;
+  fees: number;
+  details: string;
+  success: boolean;
+}
+
+/**
+ * Advanced Docking System
+ * Implements comprehensive docking procedures, port management, and safety protocols
+ */
+export class DockingSystem {
+  private ports: Map<string, DockingPort> = new Map();
+  private shipDockingStates: Map<string, DockingState> = new Map();
+  private dockingRequests: Map<string, { shipId: string; portId: string; timestamp: number }> = new Map();
+  private dockingEvents: DockingEvent[] = new Map();
+  private maxEvents: number = 1000;
+  private approachVectors: Map<string, DockingApproach> = new Map();
+  private lastUpdate: number = 0;
+
+  constructor() {
+    this.initializeDefaultPorts();
+  }
+
+  /**
+   * Initialize docking ports for a system
+   */
+  initializeSystemDocking(systemId: number, systemData: any): void {
+    // Create main station if system has docking
+    if (systemData.hasDocking) {
+      this.createStation(systemId, 'Main Station', {
+        position: this.generateStationPosition(),
+        portType: PortType.STATION,
+        clearanceLevel: ClearanceLevel.STANDARD,
+        government: systemData.government
+      });
+    }
+
+    // Create additional ports based on system characteristics
+    if (systemData.techLevel > 8) {
+      this.createOutpost(systemId, 'Orbital Outpost', {
+        position: this.generateStationPosition(),
+        portType: PortType.OUTPOST,
+        clearanceLevel: ClearanceLevel.RESTRICTED
+      });
+    }
+
+    // Planetary docking facilities
+    if (systemData.population > 1000000) {
+      this.createPlanetaryBase(systemId, 'Planetary Port', {
+        position: this.generateStationPosition(),
+        portType: PortType.PLANETARY_BASE,
+        clearanceLevel: ClearanceLevel.STANDARD
+      });
+    }
+  }
+
+  /**
+   * Create a station docking port
+   */
+  private createStation(systemId: number, name: string, options: { position: Vector3D; portType?: PortType; clearanceLevel?: ClearanceLevel; government?: string }): string {
+    const portId = `station_${systemId}_${name.replace(/\s+/g, '_').toLowerCase()}`;
+    
+    const port: DockingPort = {
+      id: portId,
+      name,
+      portType: options.portType || PortType.STATION,
+      position: options.position,
+      radius: 500,
+      clearanceLevel: options.clearanceLevel || ClearanceLevel.STANDARD,
+      landingFees: this.calculateLandingFees(options.clearanceLevel || ClearanceLevel.STANDARD),
+      services: ['Refueling', 'Repairs', 'Commodity Trading', 'Ship Upgrades', 'Mission Board', 'Galactic News'],
+      maxShipSize: 'All',
+      securityLevel: 0.7,
+      operationalStatus: 'OPERATIONAL',
+      dockingRequests: 0,
+      landingPadAvailable: true,
+      refuelingAvailable: true,
+      repairServices: true,
+      commodityTrading: true,
+      government: options.government || 'Independent',
+      description: `Major ${options.portType || PortType.STATION.toLowerCase()} serving the local system`
+    };
+
+    this.ports.set(portId, port);
+    return portId;
+  }
+
+  /**
+   * Create an outpost docking port
+   */
+  private createOutpost(systemId: number, name: string, options: { position: Vector3D; clearanceLevel: ClearanceLevel }): string {
+    const portId = `outpost_${systemId}_${name.replace(/\s+/g, '_').toLowerCase()}`;
+    
+    const port: DockingPort = {
+      id: portId,
+      name,
+      portType: PortType.OUTPOST,
+      position: options.position,
+      radius: 200,
+      clearanceLevel: options.clearanceLevel,
+      landingFees: 50,
+      services: ['Basic Repairs', 'Commodity Trading', 'Emergency Supplies'],
+      maxShipSize: 'Medium',
+      securityLevel: 0.3,
+      operationalStatus: 'OPERATIONAL',
+      dockingRequests: 0,
+      landingPadAvailable: true,
+      refuelingAvailable: Math.random() > 0.5,
+      repairServices: true,
+      commodityTrading: true,
+      government: 'Independent',
+      description: 'Small orbital outpost with limited facilities'
+    };
+
+    this.ports.set(portId, port);
+    return portId;
+  }
+
+  /**
+   * Create a planetary base docking port
+   */
+  private createPlanetaryBase(systemId: number, name: string, options: { position: Vector3D; clearanceLevel?: ClearanceLevel }): string {
+    const portId = `base_${systemId}_${name.replace(/\s+/g, '_').toLowerCase()}`;
+    
+    const port: DockingPort = {
+      id: portId,
+      name,
+      portType: PortType.PLANETARY_BASE,
+      position: options.position,
+      radius: 300,
+      clearanceLevel: options.clearanceLevel || ClearanceLevel.STANDARD,
+      landingFees: 100,
+      services: ['Refueling', 'Repairs', 'Local Trade', 'Passenger Services'],
+      maxShipSize: 'Large',
+      securityLevel: 0.5,
+      operationalStatus: 'OPERATIONAL',
+      dockingRequests: 0,
+      landingPadAvailable: true,
+      refuelingAvailable: true,
+      repairServices: true,
+      commodityTrading: true,
+      government: 'Planetary Authority',
+      description: 'Planetary surface landing facility'
+    };
+
+    this.ports.set(portId, port);
+    return portId;
+  }
+
+  /**
+   * Request docking clearance
+   */
+  requestDockingClearance(ship: Ship, portId: string): { 
+    success: boolean; 
+    clearanceLevel: ClearanceLevel; 
+    estimatedTime: number; 
+    fees: number; 
+    message: string;
+    requirements?: string[];
+  } {
+    const shipId = ship.getId();
+    const port = this.ports.get(portId);
+    
+    if (!port) {
+      return {
+        success: false,
+        clearanceLevel: ClearanceLevel.BANNED,
+        estimatedTime: 0,
+        fees: 0,
+        message: 'Port not found'
+      };
+    }
+
+    // Check if port is operational
+    if (port.operationalStatus !== 'OPERATIONAL') {
+      return {
+        success: false,
+        clearanceLevel: ClearanceLevel.BANNED,
+        estimatedTime: 0,
+        fees: 0,
+        message: `Port is ${port.operationalStatus.toLowerCase()}`
+      };
+    }
+
+    // Check ship compatibility
+    const compatibility = this.checkShipCompatibility(ship, port);
+    if (!compatibility.compatible) {
+      return {
+        success: false,
+        clearanceLevel: ClearanceLevel.BANNED,
+        estimatedTime: 0,
+        fees: port.landingFees,
+        message: compatibility.reason,
+        requirements: compatibility.requirements
+      };
+    }
+
+    // Check legal status and clearance
+    const clearance = this.assessClearanceLevel(ship, port);
+    const estimatedTime = this.calculateEstimatedDockingTime(ship, port);
+    
+    // Grant clearance and add to queue
+    const requestId = `${shipId}_${portId}_${Date.now()}`;
+    this.dockingRequests.set(requestId, {
+      shipId,
+      portId,
+      timestamp: Date.now()
+    });
+
+    port.dockingRequests++;
+
+    // Log docking request
+    this.logDockingEvent({
+      portId,
+      shipId,
+      timestamp: Date.now(),
+      type: 'REQUEST',
+      clearanceLevel: clearance,
+      approachTime: estimatedTime,
+      fees: port.landingFees,
+      details: `Docking request submitted to ${port.name}`,
+      success: true
+    });
+
+    return {
+      success: clearance !== ClearanceLevel.BANNED,
+      clearanceLevel: clearance,
+      estimatedTime,
+      fees: port.landingFees,
+      message: this.generateClearanceMessage(clearance, port),
+      requirements: this.getClearanceRequirements(clearance)
+    };
+  }
+
+  /**
+   * Begin docking approach
+   */
+  beginDockingApproach(ship: Ship, portId: string): { 
+    success: boolean; 
+    approach?: DockingApproach; 
+    message: string;
+  } {
+    const shipId = ship.getId();
+    const port = this.ports.get(portId);
+    
+    if (!port) {
+      return { success: false, message: 'Port not found' };
+    }
+
+    // Check if already docked
+    if (this.shipDockingStates.get(shipId) === DockingState.DOCKED) {
+      return { success: false, message: 'Ship is already docked' };
+    }
+
+    // Check clearance
+    const clearance = this.assessClearanceLevel(ship, port);
+    if (clearance === ClearanceLevel.BANNED) {
+      return { success: false, message: 'Docking clearance denied' };
+    }
+
+    // Create approach vector
+    const approach = this.createApproachVector(ship, port);
+    this.approachVectors.set(shipId, approach);
+    
+    this.shipDockingStates.set(shipId, DockingState.APPROACHING);
+
+    // Log approach start
+    this.logDockingEvent({
+      portId,
+      shipId,
+      timestamp: Date.now(),
+      type: 'APPROACH_START',
+      clearanceLevel: clearance,
+      approachTime: approach.estimatedTime,
+      fees: port.landingFees,
+      details: `Approach initiated to ${port.name}`,
+      success: true
+    });
+
+    return {
+      success: true,
+      approach,
+      message: `Approach initiated to ${port.name}. Follow guidance system.`
+    };
+  }
+
+  /**
+   * Execute docking procedure
+   */
+  executeDocking(ship: Ship, portId: string): DockingResult {
+    const shipId = ship.getId();
+    const port = this.ports.get(portId);
+    
+    if (!port) {
+      return {
+        success: false,
+        clearance: ClearanceLevel.BANNED,
+        dockingTime: 0,
+        fees: 0,
+        newPosition: ship.getState().position,
+        message: 'Port not found',
+        nextAvailable: 0
+      };
+    }
+
+    const startTime = Date.now();
+    const state = ship.getState();
+    const clearance = this.assessClearanceLevel(ship, port);
+    
+    // Validate docking
+    if (clearance === ClearanceLevel.BANNED) {
+      this.shipDockingStates.set(shipId, DockingState.DENIED);
+      return {
+        success: false,
+        clearance,
+        dockingTime: 0,
+        fees: 0,
+        newPosition: state.position,
+        message: 'Docking clearance denied',
+        nextAvailable: Date.now() + 300000 // 5 minutes
+      };
+    }
+
+    // Check ship positioning and approach
+    const distance = this.calculateDistance(state.position, port.position);
+    const approachSpeed = this.calculateCurrentSpeed(state.velocity);
+    
+    if (distance > port.radius || approachSpeed > 50) {
+      this.shipDockingStates.set(shipId, DockingState.APPROACHING);
+      return {
+        success: false,
+        clearance,
+        dockingTime: 0,
+        fees: 0,
+        newPosition: state.position,
+        message: 'Incorrect approach parameters',
+        nextAvailable: Date.now() + 60000 // 1 minute
+      };
+    }
+
+    // Calculate docking fees
+    const fees = this.calculateFinalDockingFees(ship, port);
+    const dockingTime = this.calculateDockingTime(clearance);
+    
+    // Complete docking
+    const newPosition = this.calculateDockedPosition(port);
+    this.completeDocking(ship, port, fees);
+    
+    this.shipDockingStates.set(shipId, DockingState.DOCKED);
+
+    // Log successful docking
+    this.logDockingEvent({
+      portId,
+      shipId,
+      timestamp: Date.now(),
+      type: 'DOCKED',
+      clearanceLevel: clearance,
+      approachTime: dockingTime,
+      fees: fees,
+      details: `Successfully docked at ${port.name}`,
+      success: true
+    });
+
+    return {
+      success: true,
+      clearance,
+      dockingTime,
+      fees,
+      newPosition,
+      message: `Docking complete at ${port.name}. Welcome!`,
+      nextAvailable: Date.now() + 30000 // Next docking in 30 seconds
+    };
+  }
+
+  /**
+   * Undock from station
+   */
+  undock(ship: Ship, portId: string): { 
+    success: boolean; 
+    newPosition: Vector3D; 
+    message: string;
+  } {
+    const shipId = ship.getId();
+    const port = this.ports.get(portId);
+    
+    if (!port) {
+      return {
+        success: false,
+        newPosition: ship.getState().position,
+        message: 'Port not found'
+      };
+    }
+
+    // Check if actually docked
+    if (this.shipDockingStates.get(shipId) !== DockingState.DOCKED) {
+      return {
+        success: false,
+        newPosition: ship.getState().position,
+        message: 'Ship is not currently docked'
+      };
+    }
+
+    // Set undocking position
+    const undockPosition = this.calculateUndockPosition(port);
+    ship.getState().position = undockPosition;
+    ship.getState().velocity = { x: 0, y: 0, z: 0 };
+    
+    this.shipDockingStates.set(shipId, DockingState.DEPARTING);
+
+    // Log departure
+    this.logDockingEvent({
+      portId,
+      shipId,
+      timestamp: Date.now(),
+      type: 'DEPARTED',
+      clearanceLevel: ClearanceLevel.STANDARD,
+      approachTime: 0,
+      fees: 0,
+      details: `Departed from ${port.name}`,
+      success: true
+    });
+
+    // Set back to flight state after delay
+    setTimeout(() => {
+      this.shipDockingStates.set(shipId, DockingState.NOT_DOCKED);
+    }, 5000); // 5 second departure sequence
+
+    return {
+      success: true,
+      newPosition: undockPosition,
+      message: `Undocking from ${port.name}. Safe travels!`
+    };
+  }
+
+  /**
+   * Get current docking state for a ship
+   */
+  getDockingState(shipId: string): DockingState {
+    return this.shipDockingStates.get(shipId) || DockingState.NOT_DOCKED;
+  }
+
+  /**
+   * Get available ports in system
+   */
+  getAvailablePorts(ship: Ship): DockingPort[] {
+    return Array.from(this.ports.values()).filter(port => {
+      // Filter by operational status
+      if (port.operationalStatus !== 'OPERATIONAL') return false;
+      
+      // Filter by ship size compatibility
+      const shipSize = this.getShipSize(ship);
+      if (port.maxShipSize !== 'All' && port.maxShipSize !== shipSize) return false;
+      
+      // Filter by security and legal status
+      const clearance = this.assessClearanceLevel(ship, port);
+      return clearance !== ClearanceLevel.BANNED;
+    });
+  }
+
+  /**
+   * Get port information by ID
+   */
+  getPort(portId: string): DockingPort | null {
+    return this.ports.get(portId) || null;
+  }
+
+  /**
+   * Get recent docking events
+   */
+  getDockingEvents(limit: number = 50): DockingEvent[] {
+    const allEvents: DockingEvent[] = [];
+    for (const events of this.dockingEvents.values()) {
+      allEvents.push(...events);
+    }
+    return allEvents.slice(-limit).reverse(); // Most recent first
+  }
+
+  /**
+   * Update docking system (for ongoing processes)
+   */
+  update(deltaTime: number): void {
+    this.lastUpdate = Date.now();
+    
+    // Process any time-based docking logic here
+    // For example: clearing expired requests, updating port status, etc.
+  }
+
+  /**
+   * Check ship compatibility with port
+   */
+  private checkShipCompatibility(ship: Ship, port: DockingPort): { compatible: boolean; reason?: string; requirements?: string[] } {
+    const shipSize = this.getShipSize(ship);
+    
+    // Check size compatibility
+    if (port.maxShipSize !== 'All' && port.maxShipSize !== shipSize) {
+      return {
+        compatible: false,
+        reason: `Ship size (${shipSize}) not compatible with port (${port.maxShipSize})`,
+        requirements: [`Ship must be ${port.maxShipSize} size or smaller`]
+      };
+    }
+
+    // Check ship condition
+    if (ship.getCondition() < 20) {
+      return {
+        compatible: false,
+        reason: 'Ship condition too poor for docking',
+        requirements: ['Ship condition must be at least 20%']
+      };
+    }
+
+    return { compatible: true };
+  }
+
+  /**
+   * Assess clearance level for ship
+   */
+  private assessClearanceLevel(ship: Ship, port: DockingPort): ClearanceLevel {
+    // Check if explicitly banned
+    if (port.clearanceLevel === ClearanceLevel.BANNED) {
+      return ClearanceLevel.BANNED;
+    }
+
+    // Check ship legal status (simplified)
+    // In reality, this would check commander legal status, wanted level, etc.
+    const legalStatus = 100; // Assume clean record
+    
+    if (legalStatus < 50) {
+      return ClearanceLevel.RESTRICTED;
+    }
+
+    if (legalStatus < 25) {
+      return ClearanceLevel.BANNED;
+    }
+
+    return port.clearanceLevel;
+  }
+
+  /**
+   * Calculate estimated docking time
+   */
+  private calculateEstimatedDockingTime(ship: Ship, port: DockingPort): number {
+    const baseTime = 60; // Base 60 seconds
+    const shipSize = this.getShipSize(ship);
+    const sizeMultiplier = shipSize === 'Large' ? 2 : shipSize === 'Medium' ? 1.5 : 1;
+    const clearanceMultiplier = port.clearanceLevel === ClearanceLevel.EMERGENCY ? 0.5 : 1;
+    
+    return baseTime * sizeMultiplier * clearanceMultiplier;
+  }
+
+  /**
+   * Create approach vector for docking
+   */
+  private createApproachVector(ship: Ship, port: DockingPort): DockingApproach {
+    const shipPosition = ship.getState().position;
+    const distance = this.calculateDistance(shipPosition, port.position);
+    
+    const approach: DockingApproach = {
+      portId: port.id,
+      shipId: ship.getId(),
+      approachVector: this.calculateApproachVector(shipPosition, port.position),
+      approachSpeed: Math.max(10, Math.min(50, distance / 20)), // Scale speed with distance
+      distance: distance,
+      estimatedTime: this.calculateEstimatedDockingTime(ship, port),
+      difficulty: this.calculateDockingDifficulty(distance),
+      requirements: this.getDockingRequirements(port),
+      hazards: this.getDockingHazards(port, distance),
+      guidance: this.getDockingGuidance(port)
+    };
+
+    return approach;
+  }
+
+  /**
+   * Calculate landing fees
+   */
+  private calculateLandingFees(clearanceLevel: ClearanceLevel): number {
+    const baseFees = {
+      [ClearanceLevel.BANNED]: 0,
+      [ClearanceLevel.RESTRICTED]: 500,
+      [ClearanceLevel.STANDARD]: 100,
+      [ClearanceLevel.PRIORITY]: 50,
+      [ClearanceLevel.EMERGENCY]: 0
+    };
+    
+    return baseFees[clearanceLevel] || 100;
+  }
+
+  /**
+   * Get clearance requirements
+   */
+  private getClearanceRequirements(clearance: ClearanceLevel): string[] {
+    const requirements = {
+      [ClearanceLevel.BANNED]: ['Contact port authority for appeal'],
+      [ClearanceLevel.RESTRICTED]: ['Valid authorization code required'],
+      [ClearanceLevel.STANDARD]: ['Maintain clear communication'],
+      [ClearanceLevel.PRIORITY]: ['Priority clearance verified'],
+      [ClearanceLevel.EMERGENCY]: ['Emergency protocols active']
+    };
+    
+    return requirements[clearance] || [];
+  }
+
+  /**
+   * Generate clearance message
+   */
+  private generateClearanceMessage(clearance: ClearanceLevel, port: DockingPort): string {
+    const messages = {
+      [ClearanceLevel.BANNED]: `Docking clearance DENIED at ${port.name}`,
+      [ClearanceLevel.RESTRICTED]: `Docking clearance RESTRICTED at ${port.name}`,
+      [ClearanceLevel.STANDARD]: `Docking clearance GRANTED at ${port.name}`,
+      [ClearanceLevel.PRIORITY]: `Priority docking clearance GRANTED at ${port.name}`,
+      [ClearanceLevel.EMERGENCY]: `Emergency docking clearance GRANTED at ${port.name}`
+    };
+    
+    return messages[clearance] || `Docking requested at ${port.name}`;
+  }
+
+  /**
+   * Complete docking process
+   */
+  private completeDocking(ship: Ship, port: DockingPort, fees: number): void {
+    const state = ship.getState();
+    
+    // Move ship to docked position
+    state.position = this.calculateDockedPosition(port);
+    state.velocity = { x: 0, y: 0, z: 0 };
+    
+    // Apply landing fees
+    // In real implementation, this would deduct credits from commander
+  }
+
+  /**
+   * Get ship size classification
+   */
+  private getShipSize(ship: Ship): 'Small' | 'Medium' | 'Large' {
+    return ship.getSpecs().class;
+  }
+
+  /**
+   * Calculate distance between positions
+   */
+  private calculateDistance(pos1: Vector3D, pos2: Vector3D): number {
+    const dx = pos1.x - pos2.x;
+    const dy = pos1.y - pos2.y;
+    const dz = pos1.z - pos2.z;
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  /**
+   * Calculate current speed
+   */
+  private calculateCurrentSpeed(velocity: Vector3D): number {
+    return Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y + velocity.z * velocity.z);
+  }
+
+  /**
+   * Calculate final docking fees
+   */
+  private calculateFinalDockingFees(ship: Ship, port: DockingPort): number {
+    let fees = port.landingFees;
+    
+    // Add size-based fees
+    const shipSize = this.getShipSize(ship);
+    const sizeMultiplier = shipSize === 'Large' ? 2 : shipSize === 'Medium' ? 1.5 : 1;
+    fees *= sizeMultiplier;
+    
+    // Add fuel surcharge if refueling
+    if (port.refuelingAvailable) {
+      fees += 25;
+    }
+    
+    return Math.floor(fees);
+  }
+
+  /**
+   * Calculate docking time
+   */
+  private calculateDockingTime(clearance: ClearanceLevel): number {
+    return clearance === ClearanceLevel.EMERGENCY ? 1000 : 5000; // 1 second vs 5 seconds
+  }
+
+  /**
+   * Calculate docked position
+   */
+  private calculateDockedPosition(port: DockingPort): Vector3D {
+    return {
+      x: port.position.x + Math.random() * 20 - 10, // Random within 10 units
+      y: port.position.y + Math.random() * 20 - 10,
+      z: port.position.z + Math.random() * 5 - 2.5
+    };
+  }
+
+  /**
+   * Calculate undock position
+   */
+  private calculateUndockPosition(port: DockingPort): Vector3D {
+    return {
+      x: port.position.x + 200 + Math.random() * 100,
+      y: port.position.y + Math.random() * 100 - 50,
+      z: port.position.z + Math.random() * 50 - 25
+    };
+  }
+
+  /**
+   * Calculate approach vector
+   */
+  private calculateApproachVector(shipPos: Vector3D, portPos: Vector3D): Vector3D {
+    return {
+      x: portPos.x - shipPos.x,
+      y: portPos.y - shipPos.y,
+      z: portPos.z - shipPos.z
+    };
+  }
+
+  /**
+   * Calculate docking difficulty
+   */
+  private calculateDockingDifficulty(distance: number): 'EASY' | 'MODERATE' | 'DIFFICULT' | 'EXTREME' {
+    if (distance < 1000) return 'EASY';
+    if (distance < 5000) return 'MODERATE';
+    if (distance < 15000) return 'DIFFICULT';
+    return 'EXTREME';
+  }
+
+  /**
+   * Get docking requirements
+   */
+  private getDockingRequirements(port: DockingPort): string[] {
+    const requirements = ['Maintain communication contact', 'Follow guidance system'];
+    
+    if (port.clearanceLevel === ClearanceLevel.RESTRICTED) {
+      requirements.push('Provide authorization code');
+    }
+    
+    if (port.securityLevel > 0.7) {
+      requirements.push('Submit to security scan');
+    }
+    
+    return requirements;
+  }
+
+  /**
+   * Get docking hazards
+   */
+  private getDockingHazards(port: DockingPort, distance: number): string[] {
+    const hazards = [];
+    
+    if (port.securityLevel > 0.8) {
+      hazards.push('High security presence');
+    }
+    
+    if (distance < 500) {
+      hazards.push('Heavy traffic zone');
+    }
+    
+    if (port.operationalStatus === 'LIMITED') {
+      hazards.push('Port operating at reduced capacity');
+    }
+    
+    return hazards;
+  }
+
+  /**
+   * Get docking guidance
+   */
+  private getDockingGuidance(port: DockingPort): string[] {
+    return [
+      'Reduce speed to docking velocity',
+      'Align with approach vector',
+      'Maintain communication with port control',
+      'Prepare for final approach'
+    ];
+  }
+
+  /**
+   * Generate station position
+   */
+  private generateStationPosition(): Vector3D {
+    const distance = 5000 + Math.random() * 5000; // 5,000-10,000 units from center
+    const angle = Math.random() * Math.PI * 2;
+    
+    return {
+      x: Math.cos(angle) * distance,
+      y: Math.sin(angle) * distance,
+      z: (Math.random() - 0.5) * 1000
+    };
+  }
+
+  /**
+   * Log docking event
+   */
+  private logDockingEvent(event: DockingEvent): void {
+    const portEvents = this.dockingEvents.get(event.portId) || [];
+    portEvents.push(event);
+    
+    // Maintain event log size
+    if (portEvents.length > this.maxEvents) {
+      portEvents.splice(0, portEvents.length - this.maxEvents);
+    }
+    
+    this.dockingEvents.set(event.portId, portEvents);
+  }
+
+  /**
+   * Initialize default ports (placeholder)
+   */
+  private initializeDefaultPorts(): void {
+    // This would initialize with actual port data
+    // For now, it's a placeholder for the method structure
+  }
+
+  /**
+   * Get docking system statistics
+   */
+  getStatistics(): object {
+    const portTypes = new Map<string, number>();
+    const operationalPorts = Array.from(this.ports.values()).filter(port => port.operationalStatus === 'OPERATIONAL').length;
+    
+    for (const port of this.ports.values()) {
+      const count = portTypes.get(port.portType) || 0;
+      portTypes.set(port.portType, count + 1);
+    }
+    
+    const stateCounts = new Map<string, number>();
+    for (const state of this.shipDockingStates.values()) {
+      const count = stateCounts.get(state) || 0;
+      stateCounts.set(state, count + 1);
+    }
+    
+    return {
+      totalPorts: this.ports.size,
+      operationalPorts,
+      portTypes: Object.fromEntries(portTypes),
+      activeDockingStates: Object.fromEntries(stateCounts),
+      pendingRequests: this.dockingRequests.size,
+      activeApproaches: this.approachVectors.size,
+      recentEvents: this.getDockingEvents().length
+    };
+  }
+
+  /**
+   * Clean up data for removed ships
+   */
+  removeShip(shipId: string): void {
+    this.shipDockingStates.delete(shipId);
+    this.approachVectors.delete(shipId);
+    
+    // Clean up docking events for this ship
+    for (const [portId, events] of this.dockingEvents.entries()) {
+      const filteredEvents = events.filter(event => event.shipId !== shipId);
+      if (filteredEvents.length !== events.length) {
+        this.dockingEvents.set(portId, filteredEvents);
+      }
+    }
+  }
+}

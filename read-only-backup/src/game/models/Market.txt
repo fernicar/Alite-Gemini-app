@@ -1,0 +1,1116 @@
+/**
+ * Market and Commodity systems - 17 goods trading system with dynamic pricing
+ * Implements the market algorithms identified from the Java source.
+ */
+
+import { EconomyType, GovernmentType, TechLevel } from './Galaxy.js';
+import { SeededRandom } from './Galaxy.js';
+
+// The 17 trade goods from Elite universe
+export enum TradeGood {
+  // Food and consumer goods
+  FOOD_CARTRIDGES = 'Food Cartridges',
+  LIQUOR = 'Liquor',
+  LUXURIES = 'Luxuries',
+  GRAIN = 'Grain',
+  VEGETABLES = 'Vegetables',
+  MEAT = 'Meat',
+  
+  // Industrial goods
+  METALS = 'Metals',
+  MACHINERY = 'Machinery',
+  CHEMICALS = 'Chemicals',
+  COMPUTERS = 'Computers',
+  SOFTWARE = 'Software',
+  ROBOTS = 'Robots',
+  
+  // Raw materials and mining
+  MINERALS = 'Minerals',
+  PRECIOUS_STONES = 'Precious Stones',
+  FUEL = 'Fuel',
+  
+  // Military and special goods
+  WEAPONS = 'Weapons',
+  MILITARY_EQUIPMENT = 'Military Equipment',
+  ARMOR = 'Armor'
+}
+
+// Commodity categories for market analysis
+export enum CommodityCategory {
+  CONSUMER = 'Consumer',
+  INDUSTRIAL = 'Industrial',
+  RAW_MATERIALS = 'Raw Materials',
+  MILITARY = 'Military'
+}
+
+// Price fluctuation types
+export enum PriceBehavior {
+  STABLE = 'Stable',        // Minimal fluctuation
+  VOLATILE = 'Volatile',    // High fluctuation
+  SEASONAL = 'Seasonal',    // Seasonal patterns
+  TRENDING = 'Trending',    // Long-term trends
+  RANDOM = 'Random'         // Random walk
+}
+
+// Market conditions that affect pricing
+export interface MarketConditions {
+  demand: Map<TradeGood, number>;        // 0-2.0 multiplier
+  supply: Map<TradeGood, number>;        // 0-2.0 multiplier
+  specialEvents: MarketEvent[];
+  priceInfluence: Map<TradeGood, number>; // Systemic influences
+}
+
+export interface MarketEvent {
+  type: 'SURPLUS' | 'SHORTAGE' | 'FESTIVAL' | 'WARTIME' | 'ECONOMIC_BOOM' | 'RECESSION';
+  good?: TradeGood;
+  magnitude: number; // Effect multiplier
+  duration: number; // Duration in game days
+  remainingDuration: number;
+  description: string;
+}
+
+// Individual commodity market data
+export interface CommodityMarket {
+  good: TradeGood;
+  basePrice: number;
+  currentPrice: number;
+  quantity: number; // Available quantity
+  averageQuantity: number; // Historical average
+  lastPrice: number;
+  priceHistory: number[]; // Recent prices for trend analysis
+  fluctuationRange: number; // ± percentage from base price
+  behavior: PriceBehavior;
+  category: CommodityCategory;
+  
+  // Market dynamics
+  priceElasticity: number; // How much demand changes with price
+  supplyResponsiveness: number; // How fast supply adjusts to price changes
+  marketShare: number; // This market's share of galaxy-wide trade
+  
+  // Economic factors
+  baseDemand: number; // Base demand level
+  baseSupply: number; // Base supply level
+  productionCost: number;
+  
+  // Quality and rarity
+  rarity: 'COMMON' | 'UNCOMMON' | 'RARE' | 'VERY_RARE';
+  productionDifficulty: number; // How hard to produce
+  
+  // Market maker data
+  manufacturer?: string; // Primary manufacturer
+  distributor?: string; // Primary distributor
+  galacticVolume: number; // Total galaxy trade volume
+}
+
+// Individual market instance for a star system
+export interface SystemMarketInstance {
+  systemId: number;
+  marketConditions: MarketConditions;
+  commodities: Map<TradeGood, CommodityMarket>;
+  lastUpdate: number;
+  updateFrequency: number; // How often prices update (in game hours)
+  
+  // Market activity tracking
+  totalVolume: number;
+  totalTrades: number;
+  revenueGenerated: number;
+  
+  // Economic indicators
+  averagePriceLevel: number;
+  priceStability: number; // 0-1, how stable prices are
+  tradeHealth: number; // 0-1, overall market health
+  
+  // External factors
+  galacticInfluence: Map<TradeGood, number>; // Galaxy-wide price influences
+  tradeRouteInfluence: Map<TradeGood, number>; // Nearby system influences
+}
+
+// Global market data for price correlation across systems
+export interface GalacticMarket {
+  goods: Map<TradeGood, GlobalCommodityData>;
+  priceIndices: Map<string, number>; // Economic indices
+  tradeFlows: TradeRouteFlow[];
+  marketEvents: GlobalMarketEvent[];
+}
+
+export interface GlobalCommodityData {
+  good: TradeGood;
+  averagePrice: number;
+  totalGalaxyVolume: number;
+  priceVolatility: number; // Standard deviation of prices across systems
+  productionCenters: number[]; // Systems with highest production
+  consumptionCenters: number[]; // Systems with highest consumption
+  tradeRoutes: Array<{ from: number; to: number; volume: number }>;
+  priceCorrelation: Map<number, number>; // systemId -> price correlation
+}
+
+export interface TradeRouteFlow {
+  good: TradeGood;
+  fromSystem: number;
+  toSystem: number;
+  volume: number;
+  frequency: number; // Trades per day
+  profitMargin: number; // Average profit margin
+}
+
+export interface GlobalMarketEvent {
+  type: 'WAR' | 'PEACE' | 'ECONOMIC_CRISIS' | 'TECHNOLOGY_BREAKTHROUGH' | 'RESOURCE_DISCOVERY';
+  affectedSystems: number[];
+  affectedGoods: TradeGood[];
+  magnitude: number;
+  duration: number;
+  remainingDuration: number;
+  description: string;
+}
+
+/**
+ * Market Manager - Global market oversight and coordination
+ */
+export class MarketManager {
+  private galacticMarket: GalacticMarket;
+  private systemMarkets: Map<number, SystemMarketInstance>;
+  private random: SeededRandom;
+  private updateCounter: number = 0;
+
+  constructor(seed: number = Date.now()) {
+    this.random = new SeededRandom(seed);
+    this.galacticMarket = this.initializeGalacticMarket();
+    this.systemMarkets = new Map();
+  }
+
+  /**
+   * Initialize galactic market with all trade goods
+   */
+  private initializeGalacticMarket(): GalacticMarket {
+    const goods = new Map<TradeGood, GlobalCommodityData>();
+    const priceIndices = new Map<string, number>();
+    const tradeFlows: TradeRouteFlow[] = [];
+    const marketEvents: GlobalMarketEvent[] = [];
+
+    // Initialize each trade good
+    for (const good of Object.values(TradeGood)) {
+      goods.set(good as TradeGood, this.initializeCommodityData(good as TradeGood));
+    }
+
+    // Initialize price indices
+    priceIndices.set('CONSUMER_PRICE_INDEX', 100);
+    priceIndices.set('INDUSTRIAL_PRICE_INDEX', 100);
+    priceIndices.set('RAW_MATERIALS_INDEX', 100);
+    priceIndices.set('MILITARY_PRICE_INDEX', 100);
+    priceIndices.set('OVERALL_PRICE_INDEX', 100);
+
+    return {
+      goods,
+      priceIndices,
+      tradeFlows,
+      marketEvents
+    };
+  }
+
+  /**
+   * Initialize global data for a commodity
+   */
+  private initializeCommodityData(good: TradeGood): GlobalCommodityData {
+    const basePrice = this.getBasePrice(good);
+    const productionCenters = this.identifyProductionCenters(good);
+    const consumptionCenters = this.identifyConsumptionCenters(good);
+
+    return {
+      good,
+      averagePrice: basePrice,
+      totalGalaxyVolume: this.calculateGalaxyVolume(good),
+      priceVolatility: this.getPriceVolatility(good),
+      productionCenters,
+      consumptionCenters,
+      tradeRoutes: this.generateTradeRoutes(good),
+      priceCorrelation: new Map()
+    };
+  }
+
+  /**
+   * Create a new system market instance
+   */
+  createSystemMarket(
+    systemId: number,
+    economy: EconomyType,
+    government: GovernmentType,
+    techLevel: TechLevel,
+    position?: { x: number; y: number }
+  ): SystemMarketInstance {
+    const market: SystemMarketInstance = {
+      systemId,
+      marketConditions: this.createMarketConditions(economy, government),
+      commodities: this.createSystemCommodities(economy, techLevel),
+      lastUpdate: Date.now(),
+      updateFrequency: this.calculateUpdateFrequency(techLevel),
+      totalVolume: 0,
+      totalTrades: 0,
+      revenueGenerated: 0,
+      averagePriceLevel: 100,
+      priceStability: this.calculateMarketStability(government, techLevel),
+      tradeHealth: 0.8,
+      galacticInfluence: new Map(),
+      tradeRouteInfluence: new Map()
+    };
+
+    this.systemMarkets.set(systemId, market);
+    return market;
+  }
+
+  /**
+   * Create market conditions based on system properties
+   */
+  private createMarketConditions(economy: EconomyType, government: GovernmentType): MarketConditions {
+    const demand = new Map<TradeGood, number>();
+    const supply = new Map<TradeGood, number>();
+    const priceInfluence = new Map<TradeGood, number>();
+    const specialEvents: MarketEvent[] = [];
+
+    // Economy-based demand/supply patterns
+    for (const good of Object.values(TradeGood)) {
+      const goodEnum = good as TradeGood;
+      const economyMultiplier = this.getEconomyMultiplier(economy, goodEnum);
+      const governmentMultiplier = this.getGovernmentMultiplier(government, goodEnum);
+
+      demand.set(goodEnum, economyMultiplier.demand * governmentMultiplier.demand);
+      supply.set(goodEnum, economyMultiplier.supply * governmentMultiplier.supply);
+      priceInfluence.set(goodEnum, economyMultiplier.price * governmentMultiplier.price);
+    }
+
+    return { demand, supply, specialEvents, priceInfluence };
+  }
+
+  /**
+   * Create commodities for a system market
+   */
+  private createSystemCommodities(economy: EconomyType, techLevel: TechLevel): Map<TradeGood, CommodityMarket> {
+    const commodities = new Map<TradeGood, CommodityMarket>();
+
+    for (const good of Object.values(TradeGood)) {
+      const goodEnum = good as TradeGood;
+      const commodity = this.createCommodityMarket(goodEnum, economy, techLevel);
+      commodities.set(goodEnum, commodity);
+    }
+
+    return commodities;
+  }
+
+  /**
+   * Create individual commodity market data
+   */
+  private createCommodityMarket(
+    good: TradeGood,
+    economy: EconomyType,
+    techLevel: TechLevel
+  ): CommodityMarket {
+    const basePrice = this.getBasePrice(good);
+    const category = this.getCommodityCategory(good);
+    const behavior = this.getPriceBehavior(good);
+    const rarity = this.getCommodityRarity(good);
+
+    // Calculate system-specific multipliers
+    const economyEffect = this.getEconomyEffect(good, economy);
+    const techEffect = this.getTechLevelEffect(good, techLevel);
+    
+    const currentPrice = basePrice * economyEffect.price * techEffect.price;
+    const averageQuantity = this.getAverageQuantity(good) * economyEffect.supply;
+    
+    const market: CommodityMarket = {
+      good,
+      basePrice,
+      currentPrice,
+      quantity: averageQuantity,
+      averageQuantity,
+      lastPrice: currentPrice,
+      priceHistory: [currentPrice],
+      fluctuationRange: this.getFluctuationRange(good),
+      behavior,
+      category,
+      priceElasticity: this.getPriceElasticity(good),
+      supplyResponsiveness: this.getSupplyResponsiveness(good),
+      marketShare: this.calculateMarketShare(good),
+      baseDemand: this.getBaseDemand(good),
+      baseSupply: averageQuantity,
+      productionCost: basePrice * 0.6, // 40% markup
+      rarity,
+      productionDifficulty: this.getProductionDifficulty(good),
+      manufacturer: this.getManufacturer(good),
+      distributor: this.getDistributor(good),
+      galacticVolume: this.getGalacticVolume(good)
+    };
+
+    return market;
+  }
+
+  // =============== Price Calculation Methods ===============
+
+  /**
+   * Calculate current price for a commodity
+   */
+  calculatePrice(
+    market: SystemMarketInstance,
+    good: TradeGood,
+    externalInfluences?: { supply?: number; demand?: number }
+  ): number {
+    const commodity = market.commodities.get(good);
+    if (!commodity) return 0;
+
+    // Get base price
+    let price = commodity.basePrice;
+
+    // Apply market conditions
+    const demandMultiplier = market.marketConditions.demand.get(good) || 1.0;
+    const supplyMultiplier = market.marketConditions.supply.get(good) || 1.0;
+    
+    price *= demandMultiplier / supplyMultiplier;
+
+    // Apply global market influences
+    const globalInfluence = market.galacticInfluence.get(good) || 1.0;
+    const tradeRouteInfluence = market.tradeRouteInfluence.get(good) || 1.0;
+    
+    price *= globalInfluence * tradeRouteInfluence;
+
+    // Apply external influences
+    if (externalInfluences) {
+      if (externalInfluences.supply) {
+        price *= 1.0 / externalInfluences.supply;
+      }
+      if (externalInfluences.demand) {
+        price *= externalInfluences.demand;
+      }
+    }
+
+    // Apply special events
+    const eventMultiplier = this.calculateEventEffects(market.marketConditions.specialEvents, good);
+    price *= eventMultiplier;
+
+    // Apply economic fundamentals
+    const fundamentals = this.calculateEconomicFundamentals(market, good);
+    price *= fundamentals;
+
+    // Add random market noise
+    const noise = 1.0 + (this.random.nextFloat() - 0.5) * 0.1; // ±5% noise
+    price *= noise;
+
+    // Apply price behavior patterns
+    price = this.applyPriceBehavior(commodity, price);
+
+    // Clamp to reasonable bounds
+    price = Math.max(commodity.basePrice * 0.3, Math.min(commodity.basePrice * 5.0, price));
+
+    // Update commodity data
+    commodity.currentPrice = price;
+    commodity.priceHistory.push(price);
+    if (commodity.priceHistory.length > 30) {
+      commodity.priceHistory.shift(); // Keep last 30 prices
+    }
+
+    return price;
+  }
+
+  /**
+   * Apply economic fundamentals to price calculation
+   */
+  private calculateEconomicFundamentals(market: SystemMarketInstance, good: TradeGood): number {
+    const commodity = market.commodities.get(good);
+    if (!commodity) return 1.0;
+
+    const marketHealth = market.tradeHealth;
+    const priceStability = market.priceStability;
+    
+    // Market health affects prices (unhealthy markets have more volatility)
+    const healthEffect = 0.8 + (marketHealth * 0.4); // 0.8-1.2 range
+    
+    // Price stability affects magnitude of price changes
+    const stabilityEffect = 0.9 + (priceStability * 0.2); // 0.9-1.1 range
+    
+    return healthEffect * stabilityEffect;
+  }
+
+  /**
+   * Apply price behavior patterns
+   */
+  private applyPriceBehavior(commodity: CommodityMarket, calculatedPrice: number): number {
+    const history = commodity.priceHistory;
+    if (history.length < 2) return calculatedPrice;
+
+    const recentAverage = history.slice(-5).reduce((sum, price) => sum + price, 0) / Math.min(5, history.length);
+    const trend = (calculatedPrice - recentAverage) / recentAverage;
+
+    switch (commodity.behavior) {
+      case PriceBehavior.STABLE:
+        // Tend toward recent average
+        return calculatedPrice * 0.7 + recentAverage * 0.3;
+      
+      case PriceBehavior.VOLATILE:
+        // Allow larger swings
+        return calculatedPrice;
+      
+      case PriceBehavior.TRENDING:
+        // Strengthen trends
+        const trendStrength = 1.0 + (trend * 0.5);
+        return calculatedPrice * trendStrength;
+      
+      case PriceBehavior.SEASONAL:
+        // Apply seasonal adjustment
+        const seasonFactor = this.getSeasonalFactor();
+        return calculatedPrice * seasonFactor;
+      
+      default:
+        return calculatedPrice;
+    }
+  }
+
+  /**
+   * Calculate effects of market events
+   */
+  private calculateEventEffects(events: MarketEvent[], good: TradeGood): number {
+    let effect = 1.0;
+    
+    for (const event of events) {
+      if (event.remainingDuration > 0) {
+        const specific = event.good === good;
+        const genericMultiplier = specific ? event.magnitude : (event.magnitude - 0.1);
+        
+        // Decay effect over time
+        const timeDecay = event.remainingDuration / event.duration;
+        effect *= Math.pow(genericMultiplier, timeDecay);
+        
+        // Update remaining duration
+        event.remainingDuration -= 1; // Assume 1 hour decay
+        
+        if (event.remainingDuration <= 0) {
+          // Remove expired event
+          const index = events.indexOf(event);
+          events.splice(index, 1);
+        }
+      }
+    }
+    
+    return effect;
+  }
+
+  // =============== System and Economy Methods ===============
+
+  /**
+   * Get economy-based multipliers for a commodity
+   */
+  private getEconomyMultiplier(economy: EconomyType, good: TradeGood): {
+    demand: number;
+    supply: number;
+    price: number;
+  } {
+    const multipliers: { [key in EconomyType]: { [key in TradeGood]?: { demand: number; supply: number; price: number } } } = {
+      [EconomyType.AGRICULTURAL]: {
+        [TradeGood.FOOD_CARTRIDGES]: { demand: 0.8, supply: 2.0, price: 0.6 },
+        [TradeGood.GRAIN]: { demand: 0.7, supply: 3.0, price: 0.5 },
+        [TradeGood.VEGETABLES]: { demand: 0.8, supply: 2.5, price: 0.6 },
+        [TradeGood.MEAT]: { demand: 0.8, supply: 2.2, price: 0.6 },
+        [TradeGood.METALS]: { demand: 1.5, supply: 0.6, price: 1.3 },
+        [TradeGood.MACHINERY]: { demand: 1.3, supply: 0.7, price: 1.2 }
+      },
+      [EconomyType.INDUSTRIAL]: {
+        [TradeGood.METALS]: { demand: 0.8, supply: 2.5, price: 0.6 },
+        [TradeGood.MACHINERY]: { demand: 0.7, supply: 2.0, price: 0.5 },
+        [TradeGood.CHEMICALS]: { demand: 0.8, supply: 2.2, price: 0.6 },
+        [TradeGood.FOOD_CARTRIDGES]: { demand: 1.4, supply: 0.8, price: 1.2 },
+        [TradeGood.GRAIN]: { demand: 1.3, supply: 0.7, price: 1.1 }
+      },
+      [EconomyType.HIGH_TECH]: {
+        [TradeGood.COMPUTERS]: { demand: 0.6, supply: 3.0, price: 0.5 },
+        [TradeGood.SOFTWARE]: { demand: 0.7, supply: 2.5, price: 0.6 },
+        [TradeGood.ROBOTS]: { demand: 0.8, supply: 2.0, price: 0.7 },
+        [TradeGood.MILITARY_EQUIPMENT]: { demand: 0.9, supply: 1.8, price: 0.8 },
+        [TradeGood.FOOD_CARTRIDGES]: { demand: 1.2, supply: 0.9, price: 1.1 }
+      },
+      [EconomyType.MINING]: {
+        [TradeGood.MINERALS]: { demand: 0.6, supply: 3.5, price: 0.4 },
+        [TradeGood.PRECIOUS_STONES]: { demand: 0.7, supply: 2.8, price: 0.5 },
+        [TradeGood.FUEL]: { demand: 0.5, supply: 4.0, price: 0.3 },
+        [TradeGood.METALS]: { demand: 0.8, supply: 2.2, price: 0.6 },
+        [TradeGood.FOOD_CARTRIDGES]: { demand: 1.6, supply: 0.7, price: 1.4 }
+      },
+      [EconomyType.TOURISM]: {
+        [TradeGood.LUXURIES]: { demand: 0.5, supply: 2.8, price: 0.4 },
+        [TradeGood.LIQUOR]: { demand: 0.6, supply: 2.5, price: 0.5 },
+        [TradeGood.CONSUMER_GOODS]: { demand: 0.7, supply: 2.0, price: 0.6 },
+        [TradeGood.FOOD_CARTRIDGES]: { demand: 1.3, supply: 0.8, price: 1.1 }
+      },
+      [EconomyType.MILITARY]: {
+        [TradeGood.WEAPONS]: { demand: 0.6, supply: 3.0, price: 0.5 },
+        [TradeGood.MILITARY_EQUIPMENT]: { demand: 0.7, supply: 2.5, price: 0.6 },
+        [TradeGood.ARMOR]: { demand: 0.7, supply: 2.8, price: 0.6 },
+        [TradeGood.FUEL]: { demand: 0.8, supply: 1.5, price: 0.8 },
+        [TradeGood.FOOD_CARTRIDGES]: { demand: 1.1, supply: 0.9, price: 1.0 }
+      }
+    };
+
+    const economyMultipliers = multipliers[economy] || {};
+    const goodMultipliers = economyMultipliers[good] || { demand: 1.0, supply: 1.0, price: 1.0 };
+    
+    return goodMultipliers;
+  }
+
+  /**
+   * Get government-based multipliers
+   */
+  private getGovernmentMultiplier(government: GovernmentType, good: TradeGood): {
+    demand: number;
+    supply: number;
+    price: number;
+  } {
+    // Simplified government effects
+    const govEffects: { [key in GovernmentType]: { demand: number; supply: number; price: number } } = {
+      [GovernmentType.DEMOCRACY]: { demand: 1.0, supply: 1.0, price: 1.0 },
+      [GovernmentType.CORPORATE_STATE]: { demand: 1.1, supply: 1.1, price: 0.95 },
+      [GovernmentType.DICTATORSHIP]: { demand: 0.9, supply: 0.8, price: 1.2 },
+      [GovernmentType.ANARCHY]: { demand: 1.2, supply: 0.6, price: 1.5 },
+      [GovernmentType.IMPLANTED_EMPIRE]: { demand: 0.95, supply: 1.05, price: 1.05 },
+      [GovernmentType.FEUDAL]: { demand: 0.8, supply: 0.7, price: 1.3 },
+      [GovernmentType.MULTI_GOVERNMENT]: { demand: 1.05, supply: 1.05, price: 0.98 },
+      [GovernmentType.CONFEDERATE]: { demand: 1.0, supply: 1.0, price: 1.0 },
+      [GovernmentType.COMMUNIST]: { demand: 0.9, supply: 1.1, price: 1.1 }
+    };
+
+    return govEffects[government] || { demand: 1.0, supply: 1.0, price: 1.0 };
+  }
+
+  // =============== Commodity Properties ===============
+
+  /**
+   * Get base price for a trade good
+   */
+  private getBasePrice(good: TradeGood): number {
+    const basePrices: { [key in TradeGood]: number } = {
+      [TradeGood.FOOD_CARTRIDGES]: 15,
+      [TradeGood.LIQUOR]: 75,
+      [TradeGood.LUXURIES]: 250,
+      [TradeGood.GRAIN]: 20,
+      [TradeGood.VEGETABLES]: 25,
+      [TradeGood.MEAT]: 45,
+      [TradeGood.METALS]: 120,
+      [TradeGood.MACHINERY]: 500,
+      [TradeGood.CHEMICALS]: 200,
+      [TradeGood.COMPUTERS]: 1000,
+      [TradeGood.SOFTWARE]: 800,
+      [TradeGood.ROBOTS]: 2000,
+      [TradeGood.MINERALS]: 80,
+      [TradeGood.PRECIOUS_STONES]: 1500,
+      [TradeGood.FUEL]: 5,
+      [TradeGood.WEAPONS]: 400,
+      [TradeGood.MILITARY_EQUIPMENT]: 1200,
+      [TradeGood.ARMOR]: 300
+    };
+
+    return basePrices[good] || 100;
+  }
+
+  /**
+   * Get commodity category
+   */
+  private getCommodityCategory(good: TradeGood): CommodityCategory {
+    const categories: { [key in TradeGood]: CommodityCategory } = {
+      [TradeGood.FOOD_CARTRIDGES]: CommodityCategory.CONSUMER,
+      [TradeGood.LIQUOR]: CommodityCategory.CONSUMER,
+      [TradeGood.LUXURIES]: CommodityCategory.CONSUMER,
+      [TradeGood.GRAIN]: CommodityCategory.CONSUMER,
+      [TradeGood.VEGETABLES]: CommodityCategory.CONSUMER,
+      [TradeGood.MEAT]: CommodityCategory.CONSUMER,
+      [TradeGood.METALS]: CommodityCategory.INDUSTRIAL,
+      [TradeGood.MACHINERY]: CommodityCategory.INDUSTRIAL,
+      [TradeGood.CHEMICALS]: CommodityCategory.INDUSTRIAL,
+      [TradeGood.COMPUTERS]: CommodityCategory.INDUSTRIAL,
+      [TradeGood.SOFTWARE]: CommodityCategory.INDUSTRIAL,
+      [TradeGood.ROBOTS]: CommodityCategory.INDUSTRIAL,
+      [TradeGood.MINERALS]: CommodityCategory.RAW_MATERIALS,
+      [TradeGood.PRECIOUS_STONES]: CommodityCategory.RAW_MATERIALS,
+      [TradeGood.FUEL]: CommodityCategory.RAW_MATERIALS,
+      [TradeGood.WEAPONS]: CommodityCategory.MILITARY,
+      [TradeGood.MILITARY_EQUIPMENT]: CommodityCategory.MILITARY,
+      [TradeGood.ARMOR]: CommodityCategory.MILITARY
+    };
+
+    return categories[good] || CommodityCategory.CONSUMER;
+  }
+
+  /**
+   * Get price behavior pattern
+   */
+  private getPriceBehavior(good: TradeGood): PriceBehavior {
+    const behaviors: { [key in TradeGood]: PriceBehavior } = {
+      [TradeGood.FOOD_CARTRIDGES]: PriceBehavior.STABLE,
+      [TradeGood.LIQUOR]: PriceBehavior.SEASONAL,
+      [TradeGood.LUXURIES]: PriceBehavior.VOLATILE,
+      [TradeGood.GRAIN]: PriceBehavior.SEASONAL,
+      [TradeGood.VEGETABLES]: PriceBehavior.STABLE,
+      [TradeGood.MEAT]: PriceBehavior.STABLE,
+      [TradeGood.METALS]: PriceBehavior.STABLE,
+      [TradeGood.MACHINERY]: PriceBehavior.TRENDING,
+      [TradeGood.CHEMICALS]: PriceBehavior.VOLATILE,
+      [TradeGood.COMPUTERS]: PriceBehavior.TRENDING,
+      [TradeGood.SOFTWARE]: PriceBehavior.TRENDING,
+      [TradeGood.ROBOTS]: PriceBehavior.VOLATILE,
+      [TradeGood.MINERALS]: PriceBehavior.VOLATILE,
+      [TradeGood.PRECIOUS_STONES]: PriceBehavior.VOLATILE,
+      [TradeGood.FUEL]: PriceBehavior.STABLE,
+      [TradeGood.WEAPONS]: PriceBehavior.VOLATILE,
+      [TradeGood.MILITARY_EQUIPMENT]: PriceBehavior.VOLATILE,
+      [TradeGood.ARMOR]: PriceBehavior.STABLE
+    };
+
+    return behaviors[good] || PriceBehavior.RANDOM;
+  }
+
+  // =============== Market Update Methods ===============
+
+  /**
+   * Update all system markets
+   */
+  updateMarkets(): void {
+    this.updateCounter++;
+
+    for (const market of this.systemMarkets.values()) {
+      if (this.shouldUpdateMarket(market)) {
+        this.updateSystemMarket(market);
+        market.lastUpdate = Date.now();
+      }
+    }
+
+    // Update global market data periodically
+    if (this.updateCounter % 24 === 0) { // Daily
+      this.updateGalacticMarketData();
+    }
+  }
+
+  /**
+   * Check if market should be updated
+   */
+  private shouldUpdateMarket(market: SystemMarketInstance): boolean {
+    const now = Date.now();
+    const timeSinceUpdate = now - market.lastUpdate;
+    const updateInterval = market.updateFrequency * 3600000; // Convert hours to milliseconds
+    
+    return timeSinceUpdate >= updateInterval;
+  }
+
+  /**
+   * Update individual system market
+   */
+  private updateSystemMarket(market: SystemMarketInstance): void {
+    let totalPriceChange = 0;
+    let priceChanges = 0;
+
+    // Update each commodity
+    for (const [good, commodity] of market.commodities.entries()) {
+      const newPrice = this.calculatePrice(market, good);
+      const priceChange = (newPrice - commodity.currentPrice) / commodity.currentPrice;
+      
+      totalPriceChange += Math.abs(priceChange);
+      priceChanges++;
+
+      // Update quantity based on price (supply response)
+      this.updateCommodityQuantity(commodity, newPrice, market.marketConditions);
+      
+      // Update last price
+      commodity.lastPrice = commodity.currentPrice;
+    }
+
+    // Calculate market health indicators
+    if (priceChanges > 0) {
+      const averagePriceChange = totalPriceChange / priceChanges;
+      market.priceStability = Math.max(0, 1.0 - (averagePriceChange * 10)); // Adjust based on price volatility
+      
+      // Update average price level
+      const totalCurrentValue = Array.from(market.commodities.values())
+        .reduce((sum, commodity) => sum + commodity.currentPrice, 0);
+      market.averagePriceLevel = totalCurrentValue / market.commodities.size;
+      
+      // Calculate trade health based on price stability and activity
+      market.tradeHealth = (market.priceStability + this.calculateTradeActivity(market)) / 2;
+    }
+  }
+
+  /**
+   * Update commodity quantity based on price and market conditions
+   */
+  private updateCommodityQuantity(
+    commodity: CommodityMarket,
+    currentPrice: number,
+    conditions: MarketConditions
+  ): void {
+    // Calculate supply response to price changes
+    const priceRatio = currentPrice / commodity.basePrice;
+    const baseDemand = commodity.baseDemand;
+    const baseSupply = commodity.baseSupply;
+    
+    // Supply increases with price, with some lag/responsiveness
+    const supplyResponse = Math.pow(priceRatio, commodity.supplyResponsiveness);
+    const supplyChange = (supplyResponse - 1) * baseSupply * 0.3; // Max 30% change
+    
+    // Apply market conditions
+    const supplyMultiplier = conditions.supply.get(commodity.good) || 1.0;
+    const demandMultiplier = conditions.demand.get(commodity.good) || 1.0;
+    
+    // Update quantity
+    let newQuantity = commodity.quantity + supplyChange;
+    newQuantity *= supplyMultiplier;
+    newQuantity *= (2.0 - demandMultiplier); // Higher demand reduces supply
+    
+    // Ensure reasonable bounds
+    const minQuantity = commodity.averageQuantity * 0.1;
+    const maxQuantity = commodity.averageQuantity * 10.0;
+    commodity.quantity = Math.max(minQuantity, Math.min(maxQuantity, newQuantity));
+  }
+
+  /**
+   * Calculate trade activity level
+   */
+  private calculateTradeActivity(market: SystemMarketInstance): number {
+    const activityIndicators = [
+      market.totalTrades > 0 ? 1.0 : 0.0,
+      market.revenueGenerated > 1000 ? 1.0 : 0.0,
+      market.totalVolume > 100 ? 1.0 : 0.0
+    ];
+    
+    return activityIndicators.reduce((sum, indicator) => sum + indicator, 0) / activityIndicators.length;
+  }
+
+  /**
+   * Update galactic market data
+   */
+  private updateGalacticMarketData(): void {
+    // Update price indices
+    this.updatePriceIndices();
+    
+    // Update commodity volatilities
+    for (const [good, globalData] of this.galacticMarket.goods.entries()) {
+      this.updateCommodityVolatility(good, globalData);
+    }
+    
+    // Process global market events
+    this.processGlobalMarketEvents();
+  }
+
+  /**
+   * Update price indices
+   */
+  private updatePriceIndices(): void {
+    const categoryGoods = {
+      [CommodityCategory.CONSUMER]: [
+        TradeGood.FOOD_CARTRIDGES, TradeGood.LIQUOR, TradeGood.LUXURIES,
+        TradeGood.GRAIN, TradeGood.VEGETABLES, TradeGood.MEAT
+      ],
+      [CommodityCategory.INDUSTRIAL]: [
+        TradeGood.METALS, TradeGood.MACHINERY, TradeGood.CHEMICALS,
+        TradeGood.COMPUTERS, TradeGood.SOFTWARE, TradeGood.ROBOTS
+      ],
+      [CommodityCategory.RAW_MATERIALS]: [
+        TradeGood.MINERALS, TradeGood.PRECIOUS_STONES, TradeGood.FUEL
+      ],
+      [CommodityCategory.MILITARY]: [
+        TradeGood.WEAPONS, TradeGood.MILITARY_EQUIPMENT, TradeGood.ARMOR
+      ]
+    };
+
+    for (const [category, goods] of Object.entries(categoryGoods)) {
+      const index = this.galacticMarket.priceIndices.get(`${category}_PRICE_INDEX`) || 100;
+      const prices = goods.map(good => {
+        const globalData = this.galacticMarket.goods.get(good);
+        return globalData ? globalData.averagePrice : 100;
+      });
+      
+      const newIndex = prices.reduce((sum, price) => sum + price, 0) / prices.length;
+      this.galacticMarket.priceIndices.set(`${category}_PRICE_INDEX`, newIndex);
+    }
+
+    // Update overall index
+    const allIndices = Array.from(this.galacticMarket.priceIndices.values());
+    const overallIndex = allIndices.reduce((sum, index) => sum + index, 0) / allIndices.length;
+    this.galacticMarket.priceIndices.set('OVERALL_PRICE_INDEX', overallIndex);
+  }
+
+  /**
+   * Update commodity volatility statistics
+   */
+  private updateCommodityVolatility(good: TradeGood, globalData: GlobalCommodityData): void {
+    const allPrices: number[] = [];
+    
+    // Collect prices from all systems
+    for (const market of this.systemMarkets.values()) {
+      const commodity = market.commodities.get(good);
+      if (commodity) {
+        allPrices.push(commodity.currentPrice);
+      }
+    }
+    
+    if (allPrices.length > 1) {
+      const mean = allPrices.reduce((sum, price) => sum + price, 0) / allPrices.length;
+      const variance = allPrices.reduce((sum, price) => sum + Math.pow(price - mean, 2), 0) / allPrices.length;
+      globalData.priceVolatility = Math.sqrt(variance) / mean; // Coefficient of variation
+      globalData.averagePrice = mean;
+    }
+  }
+
+  /**
+   * Process global market events
+   */
+  private processGlobalMarketEvents(): void {
+    // Update existing events
+    for (const event of this.galacticMarket.marketEvents) {
+      event.remainingDuration--;
+      
+      if (event.remainingDuration <= 0) {
+        const index = this.galacticMarket.marketEvents.indexOf(event);
+        this.galacticMarket.marketEvents.splice(index, 1);
+      }
+    }
+
+    // Occasionally generate new events
+    if (this.random.nextFloat() < 0.01) { // 1% chance per day
+      this.generateGlobalMarketEvent();
+    }
+  }
+
+  /**
+   * Generate a new global market event
+   */
+  private generateGlobalMarketEvent(): void {
+    const eventTypes = ['WAR', 'PEACE', 'ECONOMIC_CRISIS', 'TECHNOLOGY_BREAKTHROUGH', 'RESOURCE_DISCOVERY'] as const;
+    const type = this.random.nextChoice(eventTypes);
+    
+    const affectedSystems: number[] = [];
+    const affectedGoods: TradeGood[] = [];
+    
+    // Select random affected systems
+    const systemCount = this.random.nextInt(3, 15);
+    for (let i = 0; i < systemCount && i < this.systemMarkets.size; i++) {
+      const systemIds = Array.from(this.systemMarkets.keys());
+      affectedSystems.push(this.random.nextChoice(systemIds));
+    }
+    
+    // Select affected goods based on event type
+    switch (type) {
+      case 'WAR':
+        affectedGoods.push(TradeGood.WEAPONS, TradeGood.MILITARY_EQUIPMENT, TradeGood.ARMOR);
+        break;
+      case 'TECHNOLOGY_BREAKTHROUGH':
+        affectedGoods.push(TradeGood.COMPUTERS, TradeGood.SOFTWARE, TradeGood.ROBOTS);
+        break;
+      case 'RESOURCE_DISCOVERY':
+        affectedGoods.push(TradeGood.MINERALS, TradeGood.PRECIOUS_STONES);
+        break;
+    }
+    
+    const event: GlobalMarketEvent = {
+      type,
+      affectedSystems,
+      affectedGoods,
+      magnitude: this.random.nextFloat() * 0.5 + 0.5, // 0.5-1.0
+      duration: this.random.nextInt(30, 180), // 30-180 days
+      remainingDuration: this.random.nextInt(30, 180),
+      description: `Global ${type.toLowerCase().replace('_', ' ')} event`
+    };
+    
+    this.galacticMarket.marketEvents.push(event);
+  }
+
+  // =============== Utility Methods ===============
+
+  private getEconomyEffect(good: TradeGood, economy: EconomyType) {
+    const multiplier = this.getEconomyMultiplier(economy, good);
+    return multiplier;
+  }
+
+  private getTechLevelEffect(good: TradeGood, techLevel: TechLevel) {
+    // Tech level generally reduces prices for high-tech goods
+    const techReduction = Math.max(0, 1 - (techLevel / 20));
+    return { price: techReduction };
+  }
+
+  private getAverageQuantity(good: TradeGood): number {
+    // Base quantities vary by good type
+    const baseQuantities: { [key in TradeGood]: number } = {
+      [TradeGood.FOOD_CARTRIDGES]: 200,
+      [TradeGood.LIQUOR]: 50,
+      [TradeGood.LUXURIES]: 20,
+      [TradeGood.GRAIN]: 300,
+      [TradeGood.VEGETABLES]: 150,
+      [TradeGood.MEAT]: 100,
+      [TradeGood.METALS]: 80,
+      [TradeGood.MACHINERY]: 10,
+      [TradeGood.CHEMICALS]: 60,
+      [TradeGood.COMPUTERS]: 5,
+      [TradeGood.SOFTWARE]: 8,
+      [TradeGood.ROBOTS]: 3,
+      [TradeGood.MINERALS]: 120,
+      [TradeGood.PRECIOUS_STONES]: 15,
+      [TradeGood.FUEL]: 500,
+      [TradeGood.WEAPONS]: 25,
+      [TradeGood.MILITARY_EQUIPMENT]: 8,
+      [TradeGood.ARMOR]: 30
+    };
+    return baseQuantities[good] || 50;
+  }
+
+  private getFluctuationRange(good: TradeGood): number {
+    const ranges: { [key in PriceBehavior]: number } = {
+      [PriceBehavior.STABLE]: 10,
+      [PriceBehavior.VOLATILE]: 40,
+      [PriceBehavior.SEASONAL]: 25,
+      [PriceBehavior.TRENDING]: 20,
+      [PriceBehavior.RANDOM]: 30
+    };
+    return ranges[this.getPriceBehavior(good)] || 20;
+  }
+
+  private getPriceElasticity(good: TradeGood): number {
+    // How much demand changes with price
+    const elasticities: { [key in TradeGood]: number } = {
+      [TradeGood.FOOD_CARTRIDGES]: 0.3, // Inelastic - people need food
+      [TradeGood.LUXURIES]: 1.5, // Elastic - luxury purchases are discretionary
+      [TradeGood.FUEL]: 0.2, // Very inelastic - required for travel
+      [TradeGood.COMPUTERS]: 1.2 // Elastic - technology purchases are discretionary
+    };
+    return elasticities[good] || 1.0;
+  }
+
+  private getSupplyResponsiveness(good: TradeGood): number {
+    // How quickly supply adjusts to price changes
+    return this.getPriceElasticity(good) * 0.5;
+  }
+
+  private getSeasonalFactor(): number {
+    // Simple seasonal variation
+    const month = Math.floor(Date.now() / (30 * 24 * 3600000)) % 12;
+    return 0.9 + 0.2 * Math.sin((month / 12) * 2 * Math.PI);
+  }
+
+  private calculateMarketStability(government: GovernmentType, techLevel: TechLevel): number {
+    let stability = 0.8; // Base stability
+    
+    // Government affects stability
+    switch (government) {
+      case GovernmentType.DEMOCRACY:
+      case GovernmentType.CORPORATE_STATE:
+        stability += 0.1;
+        break;
+      case GovernmentType.ANARCHY:
+        stability -= 0.3;
+        break;
+      case GovernmentType.DICTATORSHIP:
+        stability -= 0.1;
+        break;
+    }
+    
+    // Higher tech levels improve stability
+    stability += techLevel / 50;
+    
+    return Math.max(0, Math.min(1, stability));
+  }
+
+  private calculateUpdateFrequency(techLevel: TechLevel): number {
+    // Higher tech = more frequent updates
+    return Math.max(1, 24 - techLevel); // 1-24 hours
+  }
+
+  // Placeholder methods for complex calculations
+  private identifyProductionCenters(good: TradeGood): number[] { return []; }
+  private identifyConsumptionCenters(good: TradeGood): number[] { return []; }
+  private calculateGalaxyVolume(good: TradeGood): number { return 0; }
+  private getPriceVolatility(good: TradeGood): number { return 0.1; }
+  private generateTradeRoutes(good: TradeGood): any[] { return []; }
+  private getCommodityRarity(good: TradeGood): 'COMMON' | 'UNCOMMON' | 'RARE' | 'VERY_RARE' { return 'COMMON'; }
+  private getProductionDifficulty(good: TradeGood): number { return 1.0; }
+  private getManufacturer(good: TradeGood): string { return 'Unknown'; }
+  private getDistributor(good: TradeGood): string { return 'Unknown'; }
+  private getGalacticVolume(good: TradeGood): number { return 0; }
+  private getBaseDemand(good: TradeGood): number { return 1.0; }
+  private calculateMarketShare(good: TradeGood): number { return 0.1; }
+
+  // =============== Public API ===============
+
+  /**
+   * Get or create system market
+   */
+  getSystemMarket(systemId: number): SystemMarketInstance | undefined {
+    return this.systemMarkets.get(systemId);
+  }
+
+  /**
+   * Get galactic market data
+   */
+  getGalacticMarket(): GalacticMarket {
+    return this.galacticMarket;
+  }
+
+  /**
+   * Execute a trade
+   */
+  executeTrade(
+    systemId: number,
+    good: TradeGood,
+    quantity: number,
+    tradeType: 'BUY' | 'SELL'
+  ): { success: boolean; price?: number; quantityAvailable?: number; error?: string } {
+    const market = this.systemMarkets.get(systemId);
+    if (!market) {
+      return { success: false, error: 'Market not found' };
+    }
+
+    const commodity = market.commodities.get(good);
+    if (!commodity) {
+      return { success: false, error: 'Commodity not found' };
+    }
+
+    if (tradeType === 'BUY') {
+      if (commodity.quantity < quantity) {
+        return { 
+          success: false, 
+          quantityAvailable: commodity.quantity,
+          error: 'Insufficient quantity available' 
+        };
+      }
+      
+      // Execute buy
+      commodity.quantity -= quantity;
+      market.totalTrades++;
+      market.totalVolume += quantity;
+      
+      return { success: true, price: commodity.currentPrice };
+    } else {
+      // Execute sell
+      commodity.quantity += quantity;
+      market.totalTrades++;
+      market.totalVolume += quantity;
+      
+      return { success: true, price: commodity.currentPrice };
+    }
+  }
+
+  /**
+   * Get market summary for a system
+   */
+  getMarketSummary(systemId: number): object {
+    const market = this.systemMarkets.get(systemId);
+    if (!market) return {};
+
+    const commoditySummaries = Array.from(market.commodities.entries())
+      .map(([good, commodity]) => ({
+        good,
+        price: commodity.currentPrice,
+        quantity: Math.round(commodity.quantity),
+        priceChange: ((commodity.currentPrice - commodity.lastPrice) / commodity.lastPrice * 100).toFixed(1)
+      }));
+
+    return {
+      systemId,
+      totalCommodities: commoditySummaries.length,
+      averagePriceLevel: market.averagePriceLevel.toFixed(1),
+      priceStability: (market.priceStability * 100).toFixed(0),
+      tradeHealth: (market.tradeHealth * 100).toFixed(0),
+      totalVolume: market.totalVolume,
+      totalTrades: market.totalTrades,
+      commodities: commoditySummaries
+    };
+  }
+}

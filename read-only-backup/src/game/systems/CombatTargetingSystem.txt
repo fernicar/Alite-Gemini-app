@@ -1,0 +1,598 @@
+/**
+ * Combat Targeting System - Advanced targeting and threat assessment
+ * Handles target acquisition, tracking, and combat prioritization
+ */
+
+import { Vector3D } from '../../types/index.js';
+import { ShipType } from '../models/Ship.js';
+
+export interface CombatTarget {
+  id: string;
+  type: ShipType | string;
+  position: Vector3D;
+  velocity: Vector3D;
+  size: number;
+  threat: ThreatLevel;
+  status: TargetStatus;
+  shieldStrength: number;
+  hullIntegrity: number;
+  weaponSystems: TargetWeaponSystem[];
+  detectedAt: number;
+  lastSeen: number;
+  targetValue: number; // Targeting priority score
+  distance: number;
+  closingSpeed: number; // Rate of approach
+}
+
+export enum ThreatLevel {
+  FRIENDLY = 'FRIENDLY',
+  NEUTRAL = 'NEUTRAL',
+  MINOR = 'MINOR',
+  MODERATE = 'MODERATE',
+  HIGH = 'HIGH',
+  SEVERE = 'SEVERE',
+  CRITICAL = 'CRITICAL'
+}
+
+export enum TargetStatus {
+  ACTIVE = 'ACTIVE',
+  ESCAPING = 'ESCAPING',
+  DAMAGED = 'DAMAGED',
+  DEAD = 'DEAD',
+  LOST = 'LOST'
+}
+
+export interface TargetWeaponSystem {
+  type: string;
+  range: number;
+  damage: number;
+  status: 'online' | 'offline' | 'damaged';
+  facing: Vector3D; // Direction weapon is pointing
+}
+
+export interface TargetingCriteria {
+  maxRange: number;
+  threatLevels: ThreatLevel[];
+  targetTypes: string[];
+  allowFriendly: boolean;
+  prioritizeBy: 'distance' | 'threat' | 'value' | 'closingSpeed';
+  avoidFriendlyFire: boolean;
+  considerJamming: boolean;
+}
+
+export interface TargetingResult {
+  target: CombatTarget | null;
+  score: number;
+  reason: string;
+  alternativeTargets: CombatTarget[];
+}
+
+export interface TargetingThreat {
+  targetId: string;
+  threatLevel: ThreatLevel;
+  probability: number;
+  timeToThreat: number;
+  recommendedAction: 'engage' | 'avoid' | 'maintain' | 'retreat';
+}
+
+/**
+ * Advanced Combat Targeting System for Elite-style combat
+ */
+export class CombatTargetingSystem {
+  private trackedTargets: Map<string, CombatTarget>;
+  private currentTarget: string | null;
+  private targetingCriteria: TargetingCriteria;
+  private lastUpdateTime: number = 0;
+  private sensorRange: number = 1000;
+  private lockRange: number = 800;
+  private sensorIntegrity: number = 100;
+
+  constructor() {
+    this.trackedTargets = new Map();
+    this.currentTarget = null;
+    this.targetingCriteria = {
+      maxRange: 600,
+      threatLevels: [ThreatLevel.MINOR, ThreatLevel.MODERATE, ThreatLevel.HIGH, ThreatLevel.SEVERE, ThreatLevel.CRITICAL],
+      targetTypes: ['all'],
+      allowFriendly: false,
+      prioritizeBy: 'threat',
+      avoidFriendlyFire: true,
+      considerJamming: true
+    };
+  }
+
+  /**
+   * Track a new target
+   */
+  trackTarget(target: Omit<CombatTarget, 'detectedAt' | 'lastSeen'>): void {
+    const trackedTarget: CombatTarget = {
+      ...target,
+      detectedAt: this.lastUpdateTime,
+      lastSeen: this.lastUpdateTime
+    };
+    
+    this.trackedTargets.set(target.id, trackedTarget);
+  }
+
+  /**
+   * Update target information
+   */
+  updateTarget(targetId: string, updates: Partial<CombatTarget>): boolean {
+    const target = this.trackedTargets.get(targetId);
+    if (!target) return false;
+
+    // Update position and velocity
+    if (updates.position) {
+      target.position = updates.position;
+      target.lastSeen = this.lastUpdateTime;
+    }
+    
+    if (updates.velocity) {
+      target.velocity = updates.velocity;
+    }
+    
+    // Update status based on integrity
+    if (updates.shieldStrength !== undefined) {
+      target.shieldStrength = updates.shieldStrength;
+    }
+    
+    if (updates.hullIntegrity !== undefined) {
+      target.hullIntegrity = updates.hullIntegrity;
+      if (target.hullIntegrity <= 0) {
+        target.status = TargetStatus.DEAD;
+      } else if (target.hullIntegrity < 50) {
+        target.status = TargetStatus.DAMAGED;
+      }
+    }
+    
+    // Update weapon systems
+    if (updates.weaponSystems) {
+      target.weaponSystems = updates.weaponSystems;
+    }
+    
+    // Recalculate threat and value
+    this.recalculateTargetThreat(target);
+    
+    return true;
+  }
+
+  /**
+   * Remove target from tracking
+   */
+  removeTarget(targetId: string): boolean {
+    if (this.currentTarget === targetId) {
+      this.currentTarget = null;
+    }
+    return this.trackedTargets.delete(targetId);
+  }
+
+  /**
+   * Acquire target based on criteria
+   */
+  acquireTarget(position: Vector3D, weaponsRange: number = 0): TargetingResult {
+    const availableTargets = this.getAvailableTargets(position, weaponsRange);
+    
+    if (availableTargets.length === 0) {
+      return {
+        target: null,
+        score: 0,
+        reason: 'No targets available',
+        alternativeTargets: []
+      };
+    }
+
+    // Sort by priority
+    availableTargets.sort((a, b) => b.targetValue - a.targetValue);
+    
+    const selectedTarget = availableTargets[0];
+    this.currentTarget = selectedTarget.id;
+    
+    return {
+      target: selectedTarget,
+      score: selectedTarget.targetValue,
+      reason: this.getTargetingReason(selectedTarget),
+      alternativeTargets: availableTargets.slice(1, 4)
+    };
+  }
+
+  /**
+   * Get predicted target position (lead prediction)
+   */
+  getPredictedTargetPosition(targetId: string, leadTime: number): Vector3D | null {
+    const target = this.trackedTargets.get(targetId);
+    if (!target) return null;
+
+    // Basic lead calculation based on target velocity
+    return {
+      x: target.position.x + target.velocity.x * leadTime,
+      y: target.position.y + target.velocity.y * leadTime,
+      z: target.position.z + target.velocity.z * leadTime
+    };
+  }
+
+  /**
+   * Calculate targeting solution quality
+   */
+  getTargetingQuality(targetId: string): {
+    range: 'optimal' | 'good' | 'fair' | 'poor';
+    speed: 'slow' | 'moderate' | 'fast';
+    angle: 'excellent' | 'good' | 'poor';
+    prediction: number; // 0-1 quality score
+  } {
+    const target = this.trackedTargets.get(targetId);
+    if (!target) {
+      return {
+        range: 'poor',
+        speed: 'fast',
+        angle: 'poor',
+        prediction: 0
+      };
+    }
+
+    // Range quality
+    let rangeQuality: 'optimal' | 'good' | 'fair' | 'poor';
+    if (target.distance < 200) rangeQuality = 'optimal';
+    else if (target.distance < 400) rangeQuality = 'good';
+    else if (target.distance < 600) rangeQuality = 'fair';
+    else rangeQuality = 'poor';
+
+    // Speed assessment
+    const speed = Math.sqrt(
+      target.velocity.x ** 2 + 
+      target.velocity.y ** 2 + 
+      target.velocity.z ** 2
+    );
+    
+    let speedCategory: 'slow' | 'moderate' | 'fast';
+    if (speed < 50) speedCategory = 'slow';
+    else if (speed < 150) speedCategory = 'moderate';
+    else speedCategory = 'fast';
+
+    // Angle quality (this would require ship's facing direction)
+    const angleQuality: 'excellent' | 'good' | 'poor' = 'good'; // Placeholder
+
+    // Overall prediction quality
+    const prediction = Math.max(0.1, 1 - (target.distance / this.lockRange)) * 
+                     (speedCategory === 'slow' ? 1 : speedCategory === 'moderate' ? 0.8 : 0.6);
+
+    return {
+      range: rangeQuality,
+      speed: speedCategory,
+      angle: angleQuality,
+      prediction
+    };
+  }
+
+  /**
+   * Get threat assessment for area
+   */
+  getThreatAssessment(position: Vector3D): TargetingThreat[] {
+    const threats: TargetingThreat[] = [];
+    
+    this.trackedTargets.forEach(target => {
+      const threat = this.assessIndividualThreat(target, position);
+      if (threat.threatLevel !== ThreatLevel.FRIENDLY) {
+        threats.push(threat);
+      }
+    });
+
+    return threats.sort((a, b) => this.getThreatLevelValue(b.threatLevel) - this.getThreatLevelValue(a.threatLevel));
+  }
+
+  /**
+   * Update targeting criteria
+   */
+  updateCriteria(newCriteria: Partial<TargetingCriteria>): void {
+    this.targetingCriteria = { ...this.targetingCriteria, ...newCriteria };
+  }
+
+  /**
+   * Get current target information
+   */
+  getCurrentTarget(): CombatTarget | null {
+    return this.currentTarget ? this.trackedTargets.get(this.currentTarget) || null : null;
+  }
+
+  /**
+   * Get all tracked targets
+   */
+  getAllTargets(): CombatTarget[] {
+    return Array.from(this.trackedTargets.values());
+  }
+
+  /**
+   * Calculate weapon effectiveness against target
+   */
+  calculateWeaponEffectiveness(weaponType: string, weaponRange: number, targetId: string): number {
+    const target = this.trackedTargets.get(targetId);
+    if (!target) return 0;
+
+    let effectiveness = 0.7; // Base effectiveness
+
+    // Range effectiveness
+    const distancePenalty = Math.max(0, (target.distance / weaponRange) - 1) * 0.5;
+    effectiveness -= distancePenalty;
+
+    // Target type modifiers
+    switch (weaponType.toLowerCase()) {
+      case 'laser':
+        effectiveness *= target.threat === ThreatLevel.CRITICAL ? 1.1 : 1.0;
+        break;
+      case 'missile':
+        if (target.size > 30) effectiveness *= 1.2; // Good against large targets
+        break;
+      case 'ballistics':
+        if (target.distance < 200) effectiveness *= 1.1; // Short range bonus
+        break;
+    }
+
+    // Target status modifiers
+    if (target.status === TargetStatus.DAMAGED) effectiveness *= 1.2;
+    if (target.status === TargetStatus.ESCAPING) effectiveness *= 0.9;
+
+    return Math.max(0.1, Math.min(1.0, effectiveness));
+  }
+
+  /**
+   * Update system (called every frame)
+   */
+  update(deltaTime: number, currentPosition: Vector3D): void {
+    this.lastUpdateTime += deltaTime;
+
+    // Update target tracking
+    this.updateTargetTracking(currentPosition);
+    
+    // Clean up lost targets
+    this.cleanupLostTargets();
+    
+    // Recalculate threat levels
+    this.recalculateAllThreats();
+  }
+
+  /**
+   * Get available targets within range and criteria
+   */
+  private getAvailableTargets(position: Vector3D, weaponsRange: number): CombatTarget[] {
+    return Array.from(this.trackedTargets.values()).filter(target => {
+      // Check if target is still active
+      if (target.status === TargetStatus.DEAD || target.status === TargetStatus.LOST) {
+        return false;
+      }
+
+      // Check distance
+      const distance = this.calculateDistance(position, target.position);
+      const maxRange = weaponsRange > 0 ? Math.min(weaponsRange, this.targetingCriteria.maxRange) : this.targetingCriteria.maxRange;
+      
+      if (distance > maxRange) return false;
+
+      // Check threat levels
+      if (!this.targetingCriteria.threatLevels.includes(target.threat)) {
+        return false;
+      }
+
+      // Check target types
+      if (this.targetingCriteria.targetTypes.length > 0 && 
+          !this.targetingCriteria.targetTypes.includes('all') &&
+          !this.targetingCriteria.targetTypes.includes(target.type)) {
+        return false;
+      }
+
+      // Check friendly fire restrictions
+      if (!this.targetingCriteria.allowFriendly && target.threat === ThreatLevel.FRIENDLY) {
+        return false;
+      }
+
+      return true;
+    });
+  }
+
+  /**
+   * Recalculate target threat level and value
+   */
+  private recalculateTargetThreat(target: CombatTarget): void {
+    // Threat assessment based on multiple factors
+    let threatScore = 0;
+
+    // Weapon systems threat
+    const activeWeapons = target.weaponSystems.filter(ws => ws.status === 'online').length;
+    threatScore += activeWeapons * 0.3;
+
+    // Ship type threat
+    const typeThreat = this.getShipTypeThreat(target.type as ShipType);
+    threatScore += typeThreat * 0.4;
+
+    // Distance threat (closer = higher threat)
+    const distanceThreat = Math.max(0, 1 - (target.distance / this.lockRange));
+    threatScore += distanceThreat * 0.2;
+
+    // Status threat
+    const statusThreat = target.status === TargetStatus.ACTIVE ? 1 :
+                        target.status === TargetStatus.DAMAGED ? 0.5 : 0;
+    threatScore += statusThreat * 0.1;
+
+    // Convert to threat level
+    target.threat = this.scoreToThreatLevel(threatScore);
+    target.targetValue = threatScore;
+
+    // Calculate closing speed
+    target.closingSpeed = this.calculateClosingSpeed(target.position, target.velocity);
+  }
+
+  /**
+   * Score to threat level conversion
+   */
+  private scoreToThreatLevel(score: number): ThreatLevel {
+    if (score >= 0.8) return ThreatLevel.CRITICAL;
+    if (score >= 0.6) return ThreatLevel.SEVERE;
+    if (score >= 0.4) return ThreatLevel.HIGH;
+    if (score >= 0.2) return ThreatLevel.MODERATE;
+    if (score >= 0.1) return ThreatLevel.MINOR;
+    return ThreatLevel.NEUTRAL;
+  }
+
+  /**
+   * Get threat level numeric value for sorting
+   */
+  private getThreatLevelValue(threat: ThreatLevel): number {
+    switch (threat) {
+      case ThreatLevel.CRITICAL: return 10;
+      case ThreatLevel.SEVERE: return 8;
+      case ThreatLevel.HIGH: return 6;
+      case ThreatLevel.MODERATE: return 4;
+      case ThreatLevel.MINOR: return 2;
+      case ThreatLevel.NEUTRAL: return 1;
+      case ThreatLevel.FRIENDLY: return 0;
+      default: return 0;
+    }
+  }
+
+  /**
+   * Get ship type base threat level
+   */
+  private getShipTypeThreat(shipType: ShipType): number {
+    switch (shipType) {
+      case ShipType.CORVETTE:
+      case ShipType.FEDERAL_CRUISER:
+        return 0.9; // Heavy combat ships
+      case ShipType.COBRA_MK3:
+      case ShipType.KRAIT:
+        return 0.7; // Medium combat ships
+      case ShipType.ANACONDA:
+        return 0.8; // Large multi-role ship
+      case ShipType.VIPER:
+      case ShipType.MAMBA:
+        return 0.6; // Light combat ships
+      case ShipType.HAULER:
+      case ShipType.BULK_CARRIER:
+        return 0.2; // Trading ships
+      default:
+        return 0.5; // Unknown ship types
+    }
+  }
+
+  /**
+   * Calculate closing speed (rate of approach)
+   */
+  private calculateClosingSpeed(targetPos: Vector3D, targetVel: Vector3D): number {
+    // This would be more complex with actual ship position data
+    // For now, simplified calculation
+    return Math.sqrt(targetVel.x ** 2 + targetVel.y ** 2 + targetVel.z ** 2);
+  }
+
+  /**
+   * Assess individual threat level
+   */
+  private assessIndividualThreat(target: CombatTarget, observerPosition: Vector3D): TargetingThreat {
+    const distance = this.calculateDistance(observerPosition, target.position);
+    const timeToThreat = distance / Math.max(target.closingSpeed, 1);
+
+    let recommendedAction: 'engage' | 'avoid' | 'maintain' | 'retreat';
+    if (target.threat === ThreatLevel.CRITICAL || target.threat === ThreatLevel.SEVERE) {
+      recommendedAction = distance < 200 ? 'avoid' : 'maintain';
+    } else if (target.threat === ThreatLevel.HIGH) {
+      recommendedAction = 'engage';
+    } else {
+      recommendedAction = 'maintain';
+    }
+
+    return {
+      targetId: target.id,
+      threatLevel: target.threat,
+      probability: Math.max(0.1, 1 - (distance / this.sensorRange)),
+      timeToThreat,
+      recommendedAction
+    };
+  }
+
+  /**
+   * Update target tracking (mark lost targets)
+   */
+  private updateTargetTracking(observerPosition: Vector3D): void {
+    this.trackedTargets.forEach(target => {
+      const distance = this.calculateDistance(observerPosition, target.position);
+      
+      // Mark as lost if outside sensor range for too long
+      if (distance > this.sensorRange && this.lastUpdateTime - target.lastSeen > 10) {
+        target.status = TargetStatus.LOST;
+      }
+    });
+  }
+
+  /**
+   * Clean up lost or dead targets
+   */
+  private cleanupLostTargets(): void {
+    const toRemove: string[] = [];
+    
+    this.trackedTargets.forEach((target, id) => {
+      if (target.status === TargetStatus.DEAD || target.status === TargetStatus.LOST) {
+        toRemove.push(id);
+      }
+    });
+    
+    toRemove.forEach(id => this.trackedTargets.delete(id));
+  }
+
+  /**
+   * Recalculate all target threats
+   */
+  private recalculateAllThreats(): void {
+    this.trackedTargets.forEach(target => {
+      this.recalculateTargetThreat(target);
+    });
+  }
+
+  /**
+   * Get targeting reason for target selection
+   */
+  private getTargetingReason(target: CombatTarget): string {
+    const reasons = [];
+    
+    if (target.distance < 300) reasons.push('close range');
+    if (target.threat === ThreatLevel.HIGH || target.threat === ThreatLevel.SEVERE) reasons.push('high threat');
+    if (target.status === TargetStatus.DAMAGED) reasons.push('vulnerable target');
+    if (target.closingSpeed > 100) reasons.push('closing fast');
+    
+    return reasons.length > 0 ? reasons.join(', ') : 'default selection';
+  }
+
+  /**
+   * Calculate distance between two 3D points
+   */
+  private calculateDistance(pos1: Vector3D, pos2: Vector3D): number {
+    const dx = pos2.x - pos1.x;
+    const dy = pos2.y - pos1.y;
+    const dz = pos2.z - pos1.z;
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  /**
+   * Get system status information
+   */
+  getSystemStatus(): {
+    targetsTracked: number;
+    currentTarget: string | null;
+    sensorRange: number;
+    lockRange: number;
+    sensorIntegrity: number;
+    targetingCriteria: TargetingCriteria;
+  } {
+    return {
+      targetsTracked: this.trackedTargets.size,
+      currentTarget: this.currentTarget,
+      sensorRange: this.sensorRange,
+      lockRange: this.lockRange,
+      sensorIntegrity: this.sensorIntegrity,
+      targetingCriteria: { ...this.targetingCriteria }
+    };
+  }
+
+  /**
+   * Set sensor parameters
+   */
+  setSensorParameters(range: number, lockRange: number, integrity: number): void {
+    this.sensorRange = range;
+    this.lockRange = lockRange;
+    this.sensorIntegrity = Math.max(0, Math.min(100, integrity));
+  }
+}

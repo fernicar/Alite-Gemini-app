@@ -1,0 +1,1029 @@
+/**
+ * Trade History and Analytics System
+ * Tracks all trading activity for price analysis, market trends, and player statistics
+ */
+
+import { TradeGood } from '../models/Market.js';
+
+export interface TradeRecord {
+  id: string;
+  timestamp: number;
+  systemId: number;
+  systemName: string;
+  trader: string; // Player ID or NPC
+  tradeType: 'BUY' | 'SELL';
+  good: TradeGood;
+  quantity: number;
+  pricePerUnit: number;
+  totalValue: number;
+  
+  // Market context
+  marketConditions: {
+    priceStability: number;
+    tradeHealth: number;
+    averagePriceLevel: number;
+  };
+  
+  // Economic context
+  economicFactors: {
+    governmentType: string;
+    economyType: string;
+    techLevel: number;
+    distanceFromCore: number;
+  };
+  
+  // Player context
+  playerContext: {
+    commanderRating: number;
+    shipType: string;
+    cargoCapacityUsed: number;
+    creditsBefore: number;
+    creditsAfter: number;
+  };
+}
+
+export interface SystemTradeHistory {
+  systemId: number;
+  systemName: string;
+  totalTrades: number;
+  totalVolume: number;
+  totalValue: number;
+  
+  // Trade statistics
+  averageTransactionSize: number;
+  mostActiveGoods: TradeGood[];
+  priceVolatility: number;
+  tradeFrequency: number; // trades per day
+  
+  // Market health indicators
+  priceMemory: number[]; // Last 30 days of average prices
+  tradeActivity: number[]; // Trade volume over time
+  stockouts: number; // Number of goods that ran out of stock
+  marketShocks: number; // Number of significant price changes
+  
+  // Temporal patterns
+  peakTradingHours: number[]; // Hours when trading is highest
+  seasonalTrends: Map<number, number>; // Month -> trading volume multiplier
+  
+  // Player preferences
+  topCommodities: { good: TradeGood; volume: number; value: number }[];
+  traderProfiles: Map<string, {
+    totalTrades: number;
+    totalValue: number;
+    preferredGoods: TradeGood[];
+    averageTransactionSize: number;
+  }>;
+}
+
+export interface PlayerTradeHistory {
+  playerId: string;
+  totalTrades: number;
+  totalVolume: number;
+  totalValue: number;
+  netProfit: number;
+  
+  // Trading patterns
+  mostVisitedSystems: { systemId: number; systemName: string; visits: number }[];
+  preferredGoods: { good: TradeGood; volume: number; profit: number }[];
+  averageHoldTime: number; // Days between buy and sell
+  
+  // Performance metrics
+  profitPerDay: number;
+  bestRoute: { fromSystem: number; toSystem: number; profitMargin: number };
+  riskAdjustedReturn: number;
+  
+  // Market influence
+  marketImpactScore: number; // How much player affects markets
+  arbitrageSuccessRate: number;
+  
+  // Trading behavior
+  patienceScore: number; // Tendency to wait for better prices
+  riskAppetite: number; // Willingness to trade risky goods
+  marketTiming: number; // Ability to buy low and sell high
+  
+  // Achievement tracking
+  milestones: {
+    firstTrade: boolean;
+    firstProfit: boolean;
+    millionaire: boolean;
+    highVolumeTrader: boolean;
+    marketManipulator: boolean;
+  };
+}
+
+export interface MarketTrendAnalysis {
+  good: TradeGood;
+  systemId: number;
+  
+  // Price trends
+  priceTrend: 'BULLISH' | 'BEARISH' | 'STABLE';
+  priceMomentum: number; // -1 to 1
+  volatilityRank: number; // 1-10 ranking
+  
+  // Supply and demand trends
+  demandTrend: 'INCREASING' | 'DECREASING' | 'STABLE';
+  supplyTrend: 'INCREASING' | 'DECREASING' | 'STABLE';
+  marketPressure: 'BUYING' | 'SELLING' | 'BALANCED';
+  
+  // Predictive indicators
+  nextWeekPrediction: {
+    expectedPriceChange: number; // percentage
+    confidence: number; // 0-1
+    factors: string[];
+  };
+  
+  // Seasonal patterns
+  seasonalFactors: Map<number, number>; // Month -> price multiplier
+  
+  // Market events
+  recentEvents: {
+    type: string;
+    impact: number; // -1 to 1
+    description: string;
+    timestamp: number;
+  }[];
+}
+
+export interface ArbitrageOpportunity {
+  id: string;
+  good: TradeGood;
+  buySystem: {
+    id: number;
+    name: string;
+    price: number;
+    quantity: number;
+  };
+  sellSystem: {
+    id: number;
+    name: string;
+    price: number;
+    demand: number;
+  };
+  
+  // Opportunity metrics
+  potentialProfit: number;
+  profitMargin: number; // percentage
+  riskLevel: 'LOW' | 'MEDIUM' | 'HIGH';
+  
+  // Constraints
+  maxQuantity: number;
+  transportCost: number;
+  timeConstraint: number; // hours before price converges
+  
+  // Market conditions
+  marketStability: number;
+  competitionLevel: number; // How many other traders know about this
+  marketMemory: number; // How long price differences typically persist
+}
+
+/**
+ * Trade History and Analytics Manager
+ * Centralizes all trade tracking, analysis, and trend detection
+ */
+export class TradeHistoryTracker {
+  private tradeRecords: TradeRecord[];
+  private systemHistories: Map<number, SystemTradeHistory>;
+  private playerHistories: Map<string, PlayerTradeHistory>;
+  private marketTrends: Map<string, MarketTrendAnalysis>; // key: systemId-good
+  private arbitrageOpportunities: ArbitrageOpportunity[];
+  
+  // Analytics and reporting
+  private recentArbitrageChecks: Set<string>; // Avoid duplicate opportunity checks
+  private marketEventDetector: {
+    priceSpikes: Map<string, number[]>; // systemId-good -> [prices]
+    volumeAnomalies: Map<string, number>; // systemId -> volume multiplier
+    unusualActivity: Map<string, number>; // systemId -> activity score
+  };
+  
+  // Configuration
+  private readonly PRICE_HISTORY_DAYS = 30;
+  private readonly ARBITRAGE_CHECK_INTERVAL = 1000 * 60 * 60; // 1 hour
+  private readonly MARKET_MEMORY_DAYS = 7;
+  private readonly TREND_SIGNIFICANCE_THRESHOLD = 0.05; // 5% price change
+  
+  constructor() {
+    this.tradeRecords = [];
+    this.systemHistories = new Map();
+    this.playerHistories = new Map();
+    this.marketTrends = new Map();
+    this.arbitrageOpportunities = [];
+    this.recentArbitrageChecks = new Set();
+    this.marketEventDetector = {
+      priceSpikes: new Map(),
+      volumeAnomalies: new Map(),
+      unusualActivity: new Map()
+    };
+  }
+
+  /**
+   * Record a trade transaction
+   */
+  recordTrade(
+    systemId: number,
+    systemName: string,
+    trader: string,
+    tradeType: 'BUY' | 'SELL',
+    good: TradeGood,
+    quantity: number,
+    pricePerUnit: number,
+    marketContext: any,
+    economicContext: any,
+    playerContext: any
+  ): void {
+    const tradeRecord: TradeRecord = {
+      id: this.generateTradeId(),
+      timestamp: Date.now(),
+      systemId,
+      systemName,
+      trader,
+      tradeType,
+      good,
+      quantity,
+      pricePerUnit,
+      totalValue: quantity * pricePerUnit,
+      marketConditions: marketContext,
+      economicFactors: economicContext,
+      playerContext
+    };
+
+    this.tradeRecords.push(tradeRecord);
+    
+    // Update system history
+    this.updateSystemHistory(tradeRecord);
+    
+    // Update player history
+    this.updatePlayerHistory(tradeRecord);
+    
+    // Detect market events
+    this.detectMarketEvents(tradeRecord);
+    
+    // Update market trends
+    this.updateMarketTrends(tradeRecord);
+    
+    // Check for arbitrage opportunities
+    this.checkArbitrageOpportunities(tradeRecord);
+    
+    // Prune old records if needed
+    this.pruneOldRecords();
+  }
+
+  /**
+   * Update system trade history
+   */
+  private updateSystemHistory(trade: TradeRecord): void {
+    let history = this.systemHistories.get(trade.systemId);
+    if (!history) {
+      history = this.createSystemHistory(trade.systemId, trade.systemName);
+      this.systemHistories.set(trade.systemId, history);
+    }
+
+    // Update basic stats
+    history.totalTrades++;
+    history.totalVolume += trade.quantity;
+    history.totalValue += trade.totalValue;
+
+    // Update top commodities
+    const existingEntry = history.topCommodities.find(entry => entry.good === trade.good);
+    if (existingEntry) {
+      existingEntry.volume += trade.quantity;
+      existingEntry.value += trade.totalValue;
+    } else {
+      history.topCommodities.push({
+        good: trade.good,
+        volume: trade.quantity,
+        value: trade.totalValue
+      });
+    }
+
+    // Sort top commodities by value
+    history.topCommodities.sort((a, b) => b.value - a.value);
+    if (history.topCommodities.length > 10) {
+      history.topCommodities = history.topCommodities.slice(0, 10);
+    }
+
+    // Update trader profiles
+    if (!history.traderProfiles.has(trade.trader)) {
+      history.traderProfiles.set(trade.trader, {
+        totalTrades: 0,
+        totalValue: 0,
+        preferredGoods: [],
+        averageTransactionSize: 0
+      });
+    }
+
+    const profile = history.traderProfiles.get(trade.trader)!;
+    profile.totalTrades++;
+    profile.totalValue += trade.totalValue;
+    
+    // Update preferred goods
+    const goodIndex = profile.preferredGoods.indexOf(trade.good);
+    if (goodIndex === -1) {
+      profile.preferredGoods.push(trade.good);
+    }
+    
+    // Update average transaction size
+    profile.averageTransactionSize = profile.totalValue / profile.totalTrades;
+
+    // Update trading patterns
+    this.updateTradingPatterns(history, trade);
+
+    // Update price memory
+    this.updatePriceMemory(history, trade);
+  }
+
+  /**
+   * Create new system history
+   */
+  private createSystemHistory(systemId: number, systemName: string): SystemTradeHistory {
+    return {
+      systemId,
+      systemName,
+      totalTrades: 0,
+      totalVolume: 0,
+      totalValue: 0,
+      averageTransactionSize: 0,
+      mostActiveGoods: [],
+      priceVolatility: 0,
+      tradeFrequency: 0,
+      priceMemory: [],
+      tradeActivity: [],
+      stockouts: 0,
+      marketShocks: 0,
+      peakTradingHours: [],
+      seasonalTrends: new Map(),
+      topCommodities: [],
+      traderProfiles: new Map()
+    };
+  }
+
+  /**
+   * Update trading patterns for a system
+   */
+  private updateTradingPatterns(history: SystemTradeHistory, trade: TradeRecord): void {
+    const hour = new Date(trade.timestamp).getHours();
+    
+    // Initialize hourly tracking if needed
+    if (!history.tradeActivity[hour]) {
+      history.tradeActivity[hour] = 0;
+    }
+    
+    history.tradeActivity[hour]++;
+
+    // Update peak trading hours
+    history.peakTradingHours = history.tradeActivity
+      .map((activity, hour) => ({ hour, activity }))
+      .sort((a, b) => b.activity - a.activity)
+      .slice(0, 4)
+      .map(entry => entry.hour);
+  }
+
+  /**
+   * Update price memory for trend analysis
+   */
+  private updatePriceMemory(history: SystemTradeHistory, trade: TradeRecord): void {
+    const today = new Date(trade.timestamp);
+    const dayKey = `${today.getFullYear()}-${today.getMonth()}-${today.getDate()}`;
+    
+    // Group trades by day to calculate daily averages
+    const dailyTrades = this.tradeRecords.filter(record => {
+      const recordDate = new Date(record.timestamp);
+      const recordDayKey = `${recordDate.getFullYear()}-${recordDate.getMonth()}-${recordDate.getDate()}`;
+      return recordDayKey === dayKey && record.systemId === trade.systemId;
+    });
+
+    if (dailyTrades.length > 0) {
+      const dailyAverage = dailyTrades.reduce((sum, r) => sum + r.pricePerUnit, 0) / dailyTrades.length;
+      history.priceMemory.push(dailyAverage);
+      
+      // Keep only last 30 days
+      if (history.priceMemory.length > this.PRICE_HISTORY_DAYS) {
+        history.priceMemory.shift();
+      }
+    }
+
+    // Calculate price volatility
+    if (history.priceMemory.length >= 2) {
+      const prices = history.priceMemory;
+      const mean = prices.reduce((sum, price) => sum + price, 0) / prices.length;
+      const variance = prices.reduce((sum, price) => sum + Math.pow(price - mean, 2), 0) / prices.length;
+      history.priceVolatility = Math.sqrt(variance) / mean; // Coefficient of variation
+    }
+  }
+
+  /**
+   * Update player trade history
+   */
+  private updatePlayerHistory(trade: TradeRecord): void {
+    let playerHistory = this.playerHistories.get(trade.trader);
+    if (!playerHistory) {
+      playerHistory = this.createPlayerHistory(trade.trader);
+      this.playerHistories.set(trade.trader, playerHistory);
+    }
+
+    // Update basic stats
+    playerHistory.totalTrades++;
+    playerHistory.totalVolume += trade.quantity;
+    playerHistory.totalValue += trade.totalValue;
+    
+    if (trade.tradeType === 'BUY') {
+      playerHistory.creditsBefore = trade.playerContext.creditsBefore;
+      playerHistory.creditsAfter = trade.playerContext.creditsAfter;
+      playerHistory.netProfit = playerHistory.creditsAfter - (playerHistory.creditsBefore || 0);
+    }
+
+    // Update preferred goods
+    const goodIndex = playerHistory.preferredGoods.findIndex(entry => entry.good === trade.good);
+    if (goodIndex >= 0) {
+      playerHistory.preferredGoods[goodIndex].volume += trade.quantity;
+      playerHistory.preferredGoods[goodIndex].profit += trade.tradeType === 'SELL' ? trade.totalValue : -trade.totalValue;
+    } else {
+      playerHistory.preferredGoods.push({
+        good: trade.good,
+        volume: trade.quantity,
+        profit: trade.tradeType === 'SELL' ? trade.totalValue : -trade.totalValue
+      });
+    }
+
+    // Update most visited systems
+    const systemIndex = playerHistory.mostVisitedSystems.findIndex(entry => entry.systemId === trade.systemId);
+    if (systemIndex >= 0) {
+      playerHistory.mostVisitedSystems[systemIndex].visits++;
+    } else {
+      playerHistory.mostVisitedSystems.push({
+        systemId: trade.systemId,
+        systemName: trade.systemName,
+        visits: 1
+      });
+    }
+
+    // Sort and keep top 10
+    playerHistory.mostVisitedSystems.sort((a, b) => b.visits - a.visits);
+    if (playerHistory.mostVisitedSystems.length > 10) {
+      playerHistory.mostVisitedSystems = playerHistory.mostVisitedSystems.slice(0, 10);
+    }
+
+    // Update achievements
+    this.updateAchievements(playerHistory, trade);
+    
+    // Calculate performance metrics
+    this.updatePerformanceMetrics(playerHistory);
+  }
+
+  /**
+   * Create new player history
+   */
+  private createPlayerHistory(playerId: string): PlayerTradeHistory {
+    return {
+      playerId,
+      totalTrades: 0,
+      totalVolume: 0,
+      totalValue: 0,
+      netProfit: 0,
+      mostVisitedSystems: [],
+      preferredGoods: [],
+      averageHoldTime: 0,
+      profitPerDay: 0,
+      bestRoute: { fromSystem: -1, toSystem: -1, profitMargin: 0 },
+      riskAdjustedReturn: 0,
+      marketImpactScore: 0,
+      arbitrageSuccessRate: 0,
+      patienceScore: 0,
+      riskAppetite: 0,
+      marketTiming: 0,
+      milestones: {
+        firstTrade: false,
+        firstProfit: false,
+        millionaire: false,
+        highVolumeTrader: false,
+        marketManipulator: false
+      }
+    };
+  }
+
+  /**
+   * Update player achievements
+   */
+  private updateAchievements(playerHistory: PlayerTradeHistory, trade: TradeRecord): void {
+    // First trade
+    if (!playerHistory.milestones.firstTrade && trade.tradeType === 'BUY') {
+      playerHistory.milestones.firstTrade = true;
+    }
+
+    // First profit
+    if (!playerHistory.milestones.firstProfit && playerHistory.netProfit > 0) {
+      playerHistory.milestones.firstProfit = true;
+    }
+
+    // Millionaire
+    if (!playerHistory.milestones.millionaire && playerHistory.creditsAfter >= 1000000) {
+      playerHistory.milestones.millionaire = true;
+    }
+
+    // High volume trader
+    if (!playerHistory.milestones.highVolumeTrader && playerHistory.totalVolume >= 10000) {
+      playerHistory.milestones.highVolumeTrader = true;
+    }
+
+    // Market manipulator (affects price by more than 10%)
+    if (!playerHistory.milestones.marketManipulator && playerHistory.marketImpactScore > 0.1) {
+      playerHistory.milestones.marketManipulator = true;
+    }
+  }
+
+  /**
+   * Calculate performance metrics for player
+   */
+  private updatePerformanceMetrics(playerHistory: PlayerTradeHistory): void {
+    // Calculate profit per day
+    const daysActive = Math.max(1, (Date.now() - (playerHistory as any).firstTradeDate) / (1000 * 60 * 60 * 24));
+    playerHistory.profitPerDay = playerHistory.netProfit / daysActive;
+
+    // Risk-adjusted return (simplified)
+    playerHistory.riskAdjustedReturn = playerHistory.netProfit / Math.max(1, playerHistory.totalTrades);
+
+    // Market timing ability (simplified heuristic)
+    const profitableTrades = playerHistory.preferredGoods.filter(entry => entry.profit > 0).length;
+    playerHistory.marketTiming = playerHistory.preferredGoods.length > 0 ? 
+      profitableTrades / playerHistory.preferredGoods.length : 0;
+
+    // Market impact score
+    playerHistory.marketImpactScore = Math.min(1.0, playerHistory.totalVolume / 1000);
+  }
+
+  /**
+   * Detect market events from trade patterns
+   */
+  private detectMarketEvents(trade: TradeRecord): void {
+    const systemGoodKey = `${trade.systemId}-${trade.good}`;
+    
+    // Initialize tracking for this system/good
+    if (!this.marketEventDetector.priceSpikes.has(systemGoodKey)) {
+      this.marketEventDetector.priceSpikes.set(systemGoodKey, []);
+    }
+
+    const priceHistory = this.marketEventDetector.priceSpikes.get(systemGoodKey)!;
+    priceHistory.push(trade.pricePerUnit);
+
+    // Keep only last 50 price points for anomaly detection
+    if (priceHistory.length > 50) {
+      priceHistory.shift();
+    }
+
+    // Detect price spikes
+    if (priceHistory.length >= 10) {
+      const recentPrices = priceHistory.slice(-10);
+      const olderPrices = priceHistory.slice(-20, -10);
+      
+      const recentAvg = recentPrices.reduce((sum, price) => sum + price, 0) / recentPrices.length;
+      const olderAvg = olderPrices.reduce((sum, price) => sum + price, 0) / olderPrices.length;
+      
+      const priceChange = (recentAvg - olderAvg) / olderAvg;
+      
+      if (Math.abs(priceChange) > this.TREND_SIGNIFICANCE_THRESHOLD) {
+        // Market shock detected
+        const systemHistory = this.systemHistories.get(trade.systemId);
+        if (systemHistory) {
+          systemHistory.marketShocks++;
+        }
+      }
+    }
+
+    // Detect volume anomalies
+    const systemKey = trade.systemId.toString();
+    const currentVolume = this.getSystemDailyVolume(trade.systemId, trade.timestamp);
+    
+    if (!this.marketEventDetector.volumeAnomalies.has(systemKey)) {
+      this.marketEventDetector.volumeAnomalies.set(systemKey, currentVolume);
+    } else {
+      const previousVolume = this.marketEventDetector.volumeAnomalies.get(systemKey)!;
+      const volumeChange = currentVolume / Math.max(1, previousVolume);
+      
+      if (volumeChange > 2.0 || volumeChange < 0.5) {
+        this.marketEventDetector.unusualActivity.set(systemKey, volumeChange);
+      }
+      
+      this.marketEventDetector.volumeAnomalies.set(systemKey, currentVolume);
+    }
+  }
+
+  /**
+   * Calculate daily volume for a system
+   */
+  private getSystemDailyVolume(systemId: number, timestamp: number): number {
+    const day = new Date(timestamp);
+    day.setHours(0, 0, 0, 0);
+    const nextDay = new Date(day);
+    nextDay.setDate(nextDay.getDate() + 1);
+
+    return this.tradeRecords
+      .filter(record => 
+        record.systemId === systemId && 
+        record.timestamp >= day.getTime() && 
+        record.timestamp < nextDay.getTime()
+      )
+      .reduce((sum, record) => sum + record.quantity, 0);
+  }
+
+  /**
+   * Update market trends for a system/good
+   */
+  private updateMarketTrends(trade: TradeRecord): void {
+    const key = `${trade.systemId}-${trade.good}`;
+    let trend = this.marketTrends.get(key);
+    
+    if (!trend) {
+      trend = this.createMarketTrend(trade.systemId, trade.good);
+      this.marketTrends.set(key, trend);
+    }
+
+    // Update price trend based on recent trades
+    const recentTrades = this.tradeRecords
+      .filter(record => record.systemId === trade.systemId && record.good === trade.good)
+      .slice(-20); // Last 20 trades
+
+    if (recentTrades.length >= 5) {
+      const prices = recentTrades.map(t => t.pricePerUnit);
+      const recentAvg = prices.slice(-5).reduce((sum, price) => sum + price, 0) / 5;
+      const olderAvg = prices.slice(0, -5).reduce((sum, price) => sum + price, 0) / Math.max(1, prices.length - 5);
+      
+      const priceChange = (recentAvg - olderAvg) / olderAvg;
+      trend.priceMomentum = Math.max(-1, Math.min(1, priceChange * 2));
+      
+      if (trend.priceMomentum > 0.1) {
+        trend.priceTrend = 'BULLISH';
+      } else if (trend.priceMomentum < -0.1) {
+        trend.priceTrend = 'BEARISH';
+      } else {
+        trend.priceTrend = 'STABLE';
+      }
+    }
+
+    // Update supply and demand trends
+    this.updateSupplyDemandTrends(trend, trade);
+  }
+
+  /**
+   * Create new market trend analysis
+   */
+  private createMarketTrend(systemId: number, good: TradeGood): MarketTrendAnalysis {
+    return {
+      good,
+      systemId,
+      priceTrend: 'STABLE',
+      priceMomentum: 0,
+      volatilityRank: 5,
+      demandTrend: 'STABLE',
+      supplyTrend: 'STABLE',
+      marketPressure: 'BALANCED',
+      nextWeekPrediction: {
+        expectedPriceChange: 0,
+        confidence: 0.5,
+        factors: []
+      },
+      seasonalFactors: new Map(),
+      recentEvents: []
+    };
+  }
+
+  /**
+   * Update supply and demand trends
+   */
+  private updateSupplyDemandTrends(trend: MarketTrendAnalysis, trade: TradeRecord): void {
+    // Simplified supply/demand inference from trade patterns
+    const systemTrades = this.tradeRecords.filter(r => 
+      r.systemId === trade.systemId && r.good === trade.good
+    ).slice(-50);
+
+    if (systemTrades.length >= 10) {
+      const buyTrades = systemTrades.filter(t => t.tradeType === 'BUY');
+      const sellTrades = systemTrades.filter(t => t.tradeType === 'SELL');
+      
+      const buyVolume = buyTrades.reduce((sum, t) => sum + t.quantity, 0);
+      const sellVolume = sellTrades.reduce((sum, t) => sum + t.quantity, 0);
+      
+      const demandRatio = buyVolume / Math.max(1, sellVolume);
+      
+      if (demandRatio > 1.2) {
+        trend.demandTrend = 'INCREASING';
+        trend.marketPressure = 'BUYING';
+      } else if (demandRatio < 0.8) {
+        trend.demandTrend = 'DECREASING';
+        trend.marketPressure = 'SELLING';
+      }
+      
+      // Supply trend (simplified - more selling means more supply)
+      if (sellVolume > buyVolume * 1.5) {
+        trend.supplyTrend = 'INCREASING';
+      } else if (buyVolume > sellVolume * 1.5) {
+        trend.supplyTrend = 'DECREASING';
+      }
+    }
+  }
+
+  /**
+   * Check for arbitrage opportunities
+   */
+  private checkArbitrageOpportunities(trade: TradeRecord): void {
+    const checkKey = `${trade.systemId}-${trade.good}`;
+    const now = Date.now();
+    
+    // Rate limit arbitrage checks
+    if (this.recentArbitrageChecks.has(checkKey) && 
+        now - (this as any).lastArbitrageCheck.get(checkKey, 0) < this.ARBITRAGE_CHECK_INTERVAL) {
+      return;
+    }
+
+    this.recentArbitrageChecks.add(checkKey);
+    (this as any).lastArbitrageCheck.set(checkKey, now);
+
+    // Find opportunities for this commodity
+    const opportunity = this.findArbitrageOpportunity(trade.good, trade.systemId);
+    if (opportunity) {
+      // Remove old opportunities for this commodity
+      this.arbitrageOpportunities = this.arbitrageOpportunities.filter(opp => opp.good !== trade.good);
+      this.arbitrageOpportunities.push(opportunity);
+    }
+  }
+
+  /**
+   * Find arbitrage opportunity for a commodity
+   */
+  private findArbitrageOpportunity(good: TradeGood, excludeSystemId: number): ArbitrageOpportunity | null {
+    let bestBuy: { systemId: number; price: number; quantity: number; name: string } | null = null;
+    let bestSell: { systemId: number; price: number; demand: number; name: string } | null = null;
+
+    // Find best buy opportunity (lowest price)
+    const recentTrades = this.tradeRecords.filter(t => 
+      t.good === good && 
+      t.systemId !== excludeSystemId &&
+      t.timestamp > Date.now() - 24 * 60 * 60 * 1000 // Last 24 hours
+    );
+
+    for (const trade of recentTrades) {
+      if (trade.tradeType === 'SELL') {
+        // This is a selling opportunity (prices go up with SELL trades)
+        if (!bestSell || trade.pricePerUnit > bestSell.price) {
+          const systemHistory = this.systemHistories.get(trade.systemId);
+          bestSell = {
+            systemId: trade.systemId,
+            price: trade.pricePerUnit,
+            demand: this.calculateMarketDemand(good, trade.systemId),
+            name: systemHistory?.systemName || `System ${trade.systemId}`
+          };
+        }
+      } else {
+        // This is a buying opportunity (prices go down with BUY trades)
+        if (!bestBuy || trade.pricePerUnit < bestBuy.price) {
+          const systemHistory = this.systemHistories.get(trade.systemId);
+          bestBuy = {
+            systemId: trade.systemId,
+            price: trade.pricePerUnit,
+            quantity: this.calculateMarketSupply(good, trade.systemId),
+            name: systemHistory?.systemName || `System ${trade.systemId}`
+          };
+        }
+      }
+    }
+
+    // Check if we have a viable arbitrage opportunity
+    if (bestBuy && bestSell && bestSell.price > bestBuy.price * 1.1) { // Minimum 10% profit margin
+      const profitMargin = (bestSell.price - bestBuy.price) / bestBuy.price;
+      const potentialProfit = Math.min(bestBuy.quantity || 100, 1000) * (bestSell.price - bestBuy.price);
+      
+      return {
+        id: this.generateOpportunityId(),
+        good,
+        buySystem: {
+          id: bestBuy.systemId,
+          name: bestBuy.name,
+          price: bestBuy.price,
+          quantity: bestBuy.quantity || 100
+        },
+        sellSystem: {
+          id: bestSell.systemId,
+          name: bestSell.name,
+          price: bestSell.price,
+          demand: bestSell.demand
+        },
+        potentialProfit,
+        profitMargin,
+        riskLevel: profitMargin > 0.3 ? 'HIGH' : profitMargin > 0.15 ? 'MEDIUM' : 'LOW',
+        maxQuantity: Math.min(bestBuy.quantity || 100, 1000),
+        transportCost: 0, // Simplified
+        timeConstraint: 24, // 24 hours
+        marketStability: 0.8, // Simplified
+        competitionLevel: 0.5, // Medium competition
+        marketMemory: 12 // 12 hours market memory
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Calculate market demand for a good in a system
+   */
+  private calculateMarketDemand(good: TradeGood, systemId: number): number {
+    // Simplified demand calculation based on recent buy trades
+    const recentBuyTrades = this.tradeRecords.filter(t => 
+      t.good === good && 
+      t.systemId === systemId && 
+      t.tradeType === 'BUY' &&
+      t.timestamp > Date.now() - 24 * 60 * 60 * 1000
+    );
+
+    return recentBuyTrades.reduce((sum, t) => sum + t.quantity, 0);
+  }
+
+  /**
+   * Calculate market supply for a good in a system
+   */
+  private calculateMarketSupply(good: TradeGood, systemId: number): number {
+    // Simplified supply calculation based on recent sell trades
+    const recentSellTrades = this.tradeRecords.filter(t => 
+      t.good === good && 
+      t.systemId === systemId && 
+      t.tradeType === 'SELL' &&
+      t.timestamp > Date.now() - 24 * 60 * 60 * 1000
+    );
+
+    return recentSellTrades.reduce((sum, t) => sum + t.quantity, 0) + 100; // Base supply
+  }
+
+  /**
+   * Prune old trade records to manage memory
+   */
+  private pruneOldRecords(): void {
+    const cutoffTime = Date.now() - (90 * 24 * 60 * 60 * 1000); // 90 days
+    
+    const oldRecords = this.tradeRecords.filter(record => record.timestamp < cutoffTime);
+    
+    if (oldRecords.length > 0) {
+      this.tradeRecords = this.tradeRecords.filter(record => record.timestamp >= cutoffTime);
+      
+      // Note: In a full implementation, we'd also update aggregated histories
+      // For now, we keep the aggregates since they're more valuable
+    }
+  }
+
+  /**
+   * Generate unique trade ID
+   */
+  private generateTradeId(): string {
+    return `trade_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  /**
+   * Generate unique opportunity ID
+   */
+  private generateOpportunityId(): string {
+    return `opp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  // =============== Public API ===============
+
+  /**
+   * Get system trade history
+   */
+  getSystemHistory(systemId: number): SystemTradeHistory | undefined {
+    return this.systemHistories.get(systemId);
+  }
+
+  /**
+   * Get player trade history
+   */
+  getPlayerHistory(playerId: string): PlayerTradeHistory | undefined {
+    return this.playerHistories.get(playerId);
+  }
+
+  /**
+   * Get market trends for a system/good
+   */
+  getMarketTrends(systemId: number, good: TradeGood): MarketTrendAnalysis | undefined {
+    return this.marketTrends.get(`${systemId}-${good}`);
+  }
+
+  /**
+   * Get current arbitrage opportunities
+   */
+  getArbitrageOpportunities(): ArbitrageOpportunity[] {
+    // Filter out expired opportunities
+    const now = Date.now();
+    return this.arbitrageOpportunities.filter(opp => 
+      now - parseInt(opp.id.split('_')[1]) < 24 * 60 * 60 * 1000 // 24 hours
+    );
+  }
+
+  /**
+   * Get trading statistics summary
+   */
+  getTradingStatistics(): {
+    totalTrades: number;
+    totalSystems: number;
+    totalPlayers: number;
+    totalVolume: number;
+    totalValue: number;
+    averageTradeSize: number;
+    mostActiveSystem: { systemId: number; systemName: string; trades: number } | null;
+    mostTradedGood: { good: TradeGood; volume: number } | null;
+  } {
+    const totalTrades = this.tradeRecords.length;
+    const totalSystems = this.systemHistories.size;
+    const totalPlayers = this.playerHistories.size;
+    const totalVolume = this.tradeRecords.reduce((sum, record) => sum + record.quantity, 0);
+    const totalValue = this.tradeRecords.reduce((sum, record) => sum + record.totalValue, 0);
+    const averageTradeSize = totalTrades > 0 ? totalVolume / totalTrades : 0;
+
+    // Find most active system
+    let mostActiveSystem = null;
+    let maxTrades = 0;
+    for (const [systemId, history] of this.systemHistories.entries()) {
+      if (history.totalTrades > maxTrades) {
+        maxTrades = history.totalTrades;
+        mostActiveSystem = { systemId, systemName: history.systemName, trades: history.totalTrades };
+      }
+    }
+
+    // Find most traded good
+    const goodVolumes = new Map<TradeGood, number>();
+    for (const record of this.tradeRecords) {
+      goodVolumes.set(record.good, (goodVolumes.get(record.good) || 0) + record.quantity);
+    }
+    
+    let mostTradedGood = null;
+    let maxVolume = 0;
+    for (const [good, volume] of goodVolumes.entries()) {
+      if (volume > maxVolume) {
+        maxVolume = volume;
+        mostTradedGood = { good, volume };
+      }
+    }
+
+    return {
+      totalTrades,
+      totalSystems,
+      totalPlayers,
+      totalVolume,
+      totalValue,
+      averageTradeSize,
+      mostActiveSystem,
+      mostTradedGood
+    };
+  }
+
+  /**
+   * Search trade records
+   */
+  searchTradeRecords(
+    filters: {
+      systemId?: number;
+      playerId?: string;
+      good?: TradeGood;
+      tradeType?: 'BUY' | 'SELL';
+      startDate?: number;
+      endDate?: number;
+      minValue?: number;
+      maxValue?: number;
+    },
+    limit: number = 100
+  ): TradeRecord[] {
+    let results = this.tradeRecords;
+
+    if (filters.systemId !== undefined) {
+      results = results.filter(record => record.systemId === filters.systemId);
+    }
+    
+    if (filters.playerId) {
+      results = results.filter(record => record.trader === filters.playerId);
+    }
+    
+    if (filters.good) {
+      results = results.filter(record => record.good === filters.good);
+    }
+    
+    if (filters.tradeType) {
+      results = results.filter(record => record.tradeType === filters.tradeType);
+    }
+    
+    if (filters.startDate) {
+      results = results.filter(record => record.timestamp >= filters.startDate);
+    }
+    
+    if (filters.endDate) {
+      results = results.filter(record => record.timestamp <= filters.endDate);
+    }
+    
+    if (filters.minValue !== undefined) {
+      results = results.filter(record => record.totalValue >= filters.minValue);
+    }
+    
+    if (filters.maxValue !== undefined) {
+      results = results.filter(record => record.totalValue <= filters.maxValue);
+    }
+
+    // Sort by timestamp (most recent first) and limit
+    return results
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(0, limit);
+  }
+}

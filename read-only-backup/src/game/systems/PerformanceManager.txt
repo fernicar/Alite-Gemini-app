@@ -1,0 +1,310 @@
+/**
+ * Performance Manager - Core performance monitoring and optimization system
+ * Handles frame rate monitoring, rendering optimization, and performance profiling
+ */
+
+export interface PerformanceMetrics {
+  fps: number;
+  frameTime: number;
+  memoryUsage: number;
+  renderTime: number;
+  updateTime: number;
+  physicsTime: number;
+  aiTime: number;
+  uiTime: number;
+}
+
+export interface PerformanceThresholds {
+  targetFPS: number;
+  minFPS: number;
+  maxMemory: number;
+  maxFrameTime: number;
+  maxRenderTime: number;
+  maxUpdateTime: number;
+}
+
+export enum PerformanceLevel {
+  HIGH = 'high',
+  MEDIUM = 'medium',
+  LOW = 'low',
+  ULTRA_LOW = 'ultra_low'
+}
+
+export class PerformanceManager {
+  private static instance: PerformanceManager;
+  
+  private metrics: PerformanceMetrics;
+  private thresholds: PerformanceThresholds;
+  private currentLevel: PerformanceLevel;
+  private frameCount: number = 0;
+  private lastFPSUpdate: number = 0;
+  private fpsHistory: number[] = [];
+  private maxHistoryLength: number = 60; // Store 1 second of FPS data
+  
+  // Performance optimization flags
+  private optimizations: {
+    enableLOD: boolean;
+    enableParticleCulling: boolean;
+    enableTextureCompression: boolean;
+    enableAudioQualityReduction: boolean;
+    enableShadowReduction: boolean;
+    enableVSync: boolean;
+  };
+
+  private constructor() {
+    this.metrics = {
+      fps: 0,
+      frameTime: 0,
+      memoryUsage: 0,
+      renderTime: 0,
+      updateTime: 0,
+      physicsTime: 0,
+      aiTime: 0,
+      uiTime: 0
+    };
+
+    this.thresholds = {
+      targetFPS: 60,
+      minFPS: 30,
+      maxMemory: 512 * 1024 * 1024, // 512MB
+      maxFrameTime: 16.67, // 60 FPS target
+      maxRenderTime: 10,
+      maxUpdateTime: 6.67
+    };
+
+    this.currentLevel = PerformanceLevel.HIGH;
+    this.optimizations = {
+      enableLOD: true,
+      enableParticleCulling: true,
+      enableTextureCompression: false,
+      enableAudioQualityReduction: false,
+      enableShadowReduction: false,
+      enableVSync: true
+    };
+
+    this.initializePerformanceMonitoring();
+  }
+
+  public static getInstance(): PerformanceManager {
+    if (!PerformanceManager.instance) {
+      PerformanceManager.instance = new PerformanceManager();
+    }
+    return PerformanceManager.instance;
+  }
+
+  private initializePerformanceMonitoring(): void {
+    // Set up periodic performance assessment
+    setInterval(() => {
+      this.assessPerformance();
+    }, 5000); // Every 5 seconds
+
+    // Monitor memory usage
+    if (performance.memory) {
+      setInterval(() => {
+        this.updateMemoryUsage();
+      }, 1000);
+    }
+  }
+
+  public startFrame(): number {
+    return performance.now();
+  }
+
+  public endFrame(startTime: number, renderTime: number = 0): void {
+    const endTime = performance.now();
+    const frameTime = endTime - startTime;
+    
+    this.metrics.frameTime = frameTime;
+    this.metrics.fps = 1000 / frameTime;
+    this.metrics.renderTime = renderTime;
+    
+    // Update FPS history
+    this.frameCount++;
+    if (this.frameCount - this.lastFPSUpdate >= 10) {
+      this.fpsHistory.push(this.metrics.fps);
+      if (this.fpsHistory.length > this.maxHistoryLength) {
+        this.fpsHistory.shift();
+      }
+      this.lastFPSUpdate = this.frameCount;
+    }
+
+    this.checkPerformanceThresholds();
+  }
+
+  public startTiming(operation: string): number {
+    return performance.now();
+  }
+
+  public endTiming(operation: 'update' | 'physics' | 'ai' | 'ui', startTime: number): void {
+    const endTime = performance.now();
+    const duration = endTime - startTime;
+    
+    switch (operation) {
+      case 'update':
+        this.metrics.updateTime = duration;
+        break;
+      case 'physics':
+        this.metrics.physicsTime = duration;
+        break;
+      case 'ai':
+        this.metrics.aiTime = duration;
+        break;
+      case 'ui':
+        this.metrics.uiTime = duration;
+        break;
+    }
+  }
+
+  private assessPerformance(): void {
+    const averageFPS = this.getAverageFPS();
+    const averageFrameTime = this.getAverageFrameTime();
+    
+    // Determine performance level based on metrics
+    if (averageFPS >= this.thresholds.targetFPS * 0.95 && 
+        this.metrics.memoryUsage < this.thresholds.maxMemory * 0.7) {
+      this.currentLevel = PerformanceLevel.HIGH;
+    } else if (averageFPS >= this.thresholds.targetFPS * 0.8 && 
+               this.metrics.memoryUsage < this.thresholds.maxMemory * 0.8) {
+      this.currentLevel = PerformanceLevel.MEDIUM;
+    } else if (averageFPS >= this.thresholds.minFPS) {
+      this.currentLevel = PerformanceLevel.LOW;
+    } else {
+      this.currentLevel = PerformanceLevel.ULTRA_LOW;
+    }
+
+    this.applyOptimizations();
+  }
+
+  private getAverageFPS(): number {
+    if (this.fpsHistory.length === 0) return this.metrics.fps;
+    
+    const sum = this.fpsHistory.reduce((acc, fps) => acc + fps, 0);
+    return sum / this.fpsHistory.length;
+  }
+
+  private getAverageFrameTime(): number {
+    if (this.fpsHistory.length === 0) return this.metrics.frameTime;
+    
+    // Convert FPS to frame time
+    const avgFPS = this.getAverageFPS();
+    return 1000 / avgFPS;
+  }
+
+  private checkPerformanceThresholds(): void {
+    if (this.metrics.fps < this.thresholds.minFPS) {
+      console.warn(`Performance warning: FPS below minimum threshold (${this.metrics.fps.toFixed(1)} < ${this.thresholds.minFPS})`);
+    }
+
+    if (this.metrics.frameTime > this.thresholds.maxFrameTime) {
+      console.warn(`Performance warning: Frame time above threshold (${this.metrics.frameTime.toFixed(1)}ms > ${this.thresholds.maxFrameTime}ms)`);
+    }
+
+    if (this.metrics.memoryUsage > this.thresholds.maxMemory) {
+      console.warn(`Memory usage above threshold: ${(this.metrics.memoryUsage / (1024 * 1024)).toFixed(1)}MB`);
+    }
+  }
+
+  private applyOptimizations(): void {
+    switch (this.currentLevel) {
+      case PerformanceLevel.HIGH:
+        this.optimizations.enableLOD = true;
+        this.optimizations.enableParticleCulling = true;
+        this.optimizations.enableTextureCompression = false;
+        this.optimizations.enableAudioQualityReduction = false;
+        this.optimizations.enableShadowReduction = false;
+        this.optimizations.enableVSync = true;
+        break;
+        
+      case PerformanceLevel.MEDIUM:
+        this.optimizations.enableLOD = true;
+        this.optimizations.enableParticleCulling = true;
+        this.optimizations.enableTextureCompression = true;
+        this.optimizations.enableAudioQualityReduction = false;
+        this.optimizations.enableShadowReduction = false;
+        this.optimizations.enableVSync = true;
+        break;
+        
+      case PerformanceLevel.LOW:
+        this.optimizations.enableLOD = true;
+        this.optimizations.enableParticleCulling = true;
+        this.optimizations.enableTextureCompression = true;
+        this.optimizations.enableAudioQualityReduction = true;
+        this.optimizations.enableShadowReduction = true;
+        this.optimizations.enableVSync = false;
+        break;
+        
+      case PerformanceLevel.ULTRA_LOW:
+        this.optimizations.enableLOD = true;
+        this.optimizations.enableParticleCulling = true;
+        this.optimizations.enableTextureCompression = true;
+        this.optimizations.enableAudioQualityReduction = true;
+        this.optimizations.enableShadowReduction = true;
+        this.optimizations.enableVSync = false;
+        break;
+    }
+  }
+
+  private updateMemoryUsage(): void {
+    if (performance.memory) {
+      this.metrics.memoryUsage = performance.memory.usedJSHeapSize;
+    }
+  }
+
+  public getMetrics(): PerformanceMetrics {
+    return { ...this.metrics };
+  }
+
+  public getCurrentLevel(): PerformanceLevel {
+    return this.currentLevel;
+  }
+
+  public getOptimizations(): typeof this.optimizations {
+    return { ...this.optimizations };
+  }
+
+  public setThresholds(thresholds: Partial<PerformanceThresholds>): void {
+    this.thresholds = { ...this.thresholds, ...thresholds };
+  }
+
+  public getAveragePerformance(): number {
+    const fps = this.getAverageFPS();
+    const frameTime = this.getAverageFrameTime();
+    
+    // Normalize performance score (0-1, where 1 is perfect)
+    const fpsScore = Math.min(fps / this.thresholds.targetFPS, 1);
+    const frameTimeScore = Math.min(this.thresholds.maxFrameTime / frameTime, 1);
+    
+    return (fpsScore + frameTimeScore) / 2;
+  }
+
+  public shouldEnableFeature(feature: keyof typeof this.optimizations): boolean {
+    return this.optimizations[feature];
+  }
+
+  public getFrameBudget(): number {
+    // Returns the time budget for the current frame in milliseconds
+    return 1000 / this.thresholds.targetFPS;
+  }
+
+  public isPerformanceGood(): boolean {
+    return this.metrics.fps >= this.thresholds.targetFPS * 0.9;
+  }
+
+  public isPerformanceAcceptable(): boolean {
+    return this.metrics.fps >= this.thresholds.minFPS;
+  }
+
+  public getPerformanceSummary(): string {
+    return `FPS: ${this.metrics.fps.toFixed(1)} | Level: ${this.currentLevel.toUpperCase()} | Memory: ${(this.metrics.memoryUsage / (1024 * 1024)).toFixed(1)}MB`;
+  }
+
+  public forceLowPerformanceMode(): void {
+    this.currentLevel = PerformanceLevel.ULTRA_LOW;
+    this.applyOptimizations();
+  }
+
+  public resetPerformanceMode(): void {
+    this.currentLevel = PerformanceLevel.HIGH;
+    this.applyOptimizations();
+  }
+}

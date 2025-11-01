@@ -1,0 +1,509 @@
+import { Logger } from '@utils/Logging';
+import { AudioConfig } from '@types/index';
+
+/**
+ * Audio manager for handling sound effects and music
+ */
+export class AudioManager {
+  private static instance: AudioManager;
+  private context: AudioContext | null = null;
+  private masterGainNode: GainNode | null = null;
+  private musicGainNode: GainNode | null = null;
+  private sfxGainNode: GainNode | null = null;
+  private sounds: Map<string, AudioBuffer> = new Map();
+  private musicTracks: Map<string, AudioBuffer> = new Map();
+  private currentMusic: AudioBufferSourceNode | null = null;
+  private currentMusicId: string | null = null;
+  private logger: Logger;
+  private config: AudioConfig;
+
+  private constructor() {
+    this.logger = Logger.getInstance();
+    this.config = {
+      masterVolume: 0.8,
+      musicVolume: 0.6,
+      sfxVolume: 0.8,
+      spatialAudio: true
+    };
+  }
+
+  public static getInstance(): AudioManager {
+    if (!AudioManager.instance) {
+      AudioManager.instance = new AudioManager();
+    }
+    return AudioManager.instance;
+  }
+
+  /**
+   * Initialize audio system
+   */
+  public async initialize(): Promise<void> {
+    try {
+      // Create audio context
+      this.context = new (window.AudioContext || (window as any).webkitAudioContext)();
+      
+      if (this.context.state === 'suspended') {
+        await this.context.resume();
+      }
+
+      // Create gain nodes for volume control
+      this.masterGainNode = this.context.createGain();
+      this.musicGainNode = this.context.createGain();
+      this.sfxGainNode = this.context.createGain();
+
+      // Connect gain nodes
+      this.musicGainNode.connect(this.masterGainNode);
+      this.sfxGainNode.connect(this.masterGainNode);
+      this.masterGainNode.connect(this.context.destination);
+
+      // Set initial volumes
+      this.updateVolumes();
+
+      this.logger.info('Audio system initialized successfully');
+    } catch (error) {
+      this.logger.error('Failed to initialize audio system', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Load a sound effect
+   */
+  public async loadSound(id: string, url: string): Promise<void> {
+    if (!this.context) {
+      throw new Error('Audio context not initialized');
+    }
+
+    if (this.sounds.has(id)) {
+      this.logger.warn(`Sound already loaded: ${id}`);
+      return;
+    }
+
+    try {
+      this.logger.debug(`Loading sound: ${id} from ${url}`);
+      
+      const response = await fetch(url);
+      const arrayBuffer = await response.arrayBuffer();
+      const audioBuffer = await this.context.decodeAudioData(arrayBuffer);
+      
+      this.sounds.set(id, audioBuffer);
+      this.logger.debug(`Sound loaded successfully: ${id}`);
+    } catch (error) {
+      this.logger.error(`Failed to load sound: ${id}`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Load a music track
+   */
+  public async loadMusic(id: string, url: string): Promise<void> {
+    if (!this.context) {
+      throw new Error('Audio context not initialized');
+    }
+
+    if (this.musicTracks.has(id)) {
+      this.logger.warn(`Music track already loaded: ${id}`);
+      return;
+    }
+
+    try {
+      this.logger.debug(`Loading music: ${id} from ${url}`);
+      
+      const response = await fetch(url);
+      const arrayBuffer = await response.arrayBuffer();
+      const audioBuffer = await this.context.decodeAudioData(arrayBuffer);
+      
+      this.musicTracks.set(id, audioBuffer);
+      this.logger.debug(`Music loaded successfully: ${id}`);
+    } catch (error) {
+      this.logger.error(`Failed to load music: ${id}`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Play a sound effect
+   */
+  public playSound(id: string, volume: number = 1.0, pitch: number = 1.0): AudioBufferSourceNode | null {
+    if (!this.context || !this.sfxGainNode) {
+      return null;
+    }
+
+    const audioBuffer = this.sounds.get(id);
+    if (!audioBuffer) {
+      this.logger.warn(`Sound not found: ${id}`);
+      return null;
+    }
+
+    try {
+      // Create source node
+      const source = this.context.createBufferSource();
+      source.buffer = audioBuffer;
+      source.playbackRate.value = pitch;
+
+      // Create gain node for volume control
+      const gainNode = this.context.createGain();
+      gainNode.gain.value = volume;
+
+      // Connect nodes
+      source.connect(gainNode);
+      gainNode.connect(this.sfxGainNode);
+
+      // Play sound
+      source.start();
+
+      this.logger.debug(`Playing sound: ${id}`);
+      return source;
+    } catch (error) {
+      this.logger.error(`Failed to play sound: ${id}`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Play positional sound (3D audio)
+   */
+  public playPositionalSound(
+    id: string,
+    position: { x: number; y: number; z?: number },
+    listenerPosition: { x: number; y: number; z?: number } = { x: 0, y: 0, z: 0 },
+    volume: number = 1.0
+  ): AudioBufferSourceNode | null {
+    if (!this.context || !this.sfxGainNode || !this.config.spatialAudio) {
+      return this.playSound(id, volume);
+    }
+
+    const audioBuffer = this.sounds.get(id);
+    if (!audioBuffer) {
+      return null;
+    }
+
+    try {
+      // Create source and panner nodes
+      const source = this.context.createBufferSource();
+      source.buffer = audioBuffer;
+
+      const panner = this.context.createPanner();
+      panner.panningModel = 'HRTF';
+      panner.distanceModel = 'inverse';
+      panner.refDistance = 1;
+      panner.maxDistance = 1000;
+      panner.rolloffFactor = 1;
+      panner.coneInnerAngle = 360;
+      panner.coneOuterAngle = 0;
+      panner.coneOuterGain = 0;
+
+      // Set position
+      panner.positionX.value = position.x;
+      panner.positionY.value = position.y;
+      panner.positionZ.value = position.z || 0;
+
+      // Set listener position
+      if (this.context.listener.positionX) {
+        this.context.listener.positionX.value = listenerPosition.x;
+        this.context.listener.positionY.value = listenerPosition.y;
+        this.context.listener.positionZ.value = listenerPosition.z || 0;
+      }
+
+      // Create gain node for volume
+      const gainNode = this.context.createGain();
+      gainNode.gain.value = volume;
+
+      // Connect nodes
+      source.connect(panner);
+      panner.connect(gainNode);
+      gainNode.connect(this.sfxGainNode);
+
+      // Play sound
+      source.start();
+
+      return source;
+    } catch (error) {
+      this.logger.error(`Failed to play positional sound: ${id}`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Play music track
+   */
+  public playMusic(id: string, loop: boolean = true, fadeIn: boolean = false): void {
+    if (!this.context || !this.musicGainNode) {
+      return;
+    }
+
+    // Stop current music if different
+    if (this.currentMusicId && this.currentMusicId !== id) {
+      this.stopMusic();
+    }
+
+    const audioBuffer = this.musicTracks.get(id);
+    if (!audioBuffer) {
+      this.logger.warn(`Music track not found: ${id}`);
+      return;
+    }
+
+    // If same music is already playing, don't restart
+    if (this.currentMusicId === id && this.currentMusic) {
+      return;
+    }
+
+    try {
+      // Create source node
+      const source = this.context.createBufferSource();
+      source.buffer = audioBuffer;
+      source.loop = loop;
+
+      // Connect to music gain node
+      source.connect(this.musicGainNode);
+
+      if (fadeIn) {
+        // Fade in effect
+        this.musicGainNode.gain.setValueAtTime(0, this.context.currentTime);
+        this.musicGainNode.gain.linearRampToValueAtTime(
+          this.config.musicVolume * this.config.masterVolume,
+          this.context.currentTime + 2
+        );
+      }
+
+      // Play music
+      source.start();
+      this.currentMusic = source;
+      this.currentMusicId = id;
+
+      source.onended = () => {
+        if (this.currentMusicId === id) {
+          this.currentMusic = null;
+          this.currentMusicId = null;
+        }
+      };
+
+      this.logger.debug(`Playing music: ${id}`);
+    } catch (error) {
+      this.logger.error(`Failed to play music: ${id}`, error);
+    }
+  }
+
+  /**
+   * Stop current music
+   */
+  public stopMusic(fadeOut: boolean = false): void {
+    if (!this.currentMusic || !this.context || !this.musicGainNode) {
+      return;
+    }
+
+    try {
+      if (fadeOut) {
+        // Fade out effect
+        this.musicGainNode.gain.linearRampToValueAtTime(
+          0,
+          this.context.currentTime + 1
+        );
+      }
+
+      this.currentMusic.stop();
+      this.currentMusic = null;
+      this.currentMusicId = null;
+
+      this.logger.debug('Music stopped');
+    } catch (error) {
+      this.logger.error('Failed to stop music', error);
+    }
+  }
+
+  /**
+   * Get current music ID
+   */
+  public getCurrentMusic(): string | null {
+    return this.currentMusicId;
+  }
+
+  /**
+   * Set master volume
+   */
+  public setMasterVolume(volume: number): void {
+    this.config.masterVolume = Math.max(0, Math.min(1, volume));
+    this.updateVolumes();
+  }
+
+  /**
+   * Set music volume
+   */
+  public setMusicVolume(volume: number): void {
+    this.config.musicVolume = Math.max(0, Math.min(1, volume));
+    this.updateVolumes();
+  }
+
+  /**
+   * Set sound effects volume
+   */
+  public setSfxVolume(volume: number): void {
+    this.config.sfxVolume = Math.max(0, Math.min(1, volume));
+    this.updateVolumes();
+  }
+
+  /**
+   * Enable/disable spatial audio
+   */
+  public setSpatialAudio(enabled: boolean): void {
+    this.config.spatialAudio = enabled;
+  }
+
+  /**
+   * Get current audio configuration
+   */
+  public getConfig(): AudioConfig {
+    return { ...this.config };
+  }
+
+  /**
+   * Load multiple sounds at once
+   */
+  public async loadSounds(sounds: { id: string; url: string }[]): Promise<void> {
+    this.logger.info(`Loading ${sounds.length} sound files...`);
+    
+    const promises = sounds.map(({ id, url }) => this.loadSound(id, url));
+    
+    try {
+      await Promise.all(promises);
+      this.logger.info('All sounds loaded successfully');
+    } catch (error) {
+      this.logger.warn('Some sounds failed to load', error);
+    }
+  }
+
+  /**
+   * Load multiple music tracks at once
+   */
+  public async loadMusicTracks(tracks: { id: string; url: string }[]): Promise<void> {
+    this.logger.info(`Loading ${tracks.length} music tracks...`);
+    
+    const promises = tracks.map(({ id, url }) => this.loadMusic(id, url));
+    
+    try {
+      await Promise.all(promises);
+      this.logger.info('All music tracks loaded successfully');
+    } catch (error) {
+      this.logger.warn('Some music tracks failed to load', error);
+    }
+  }
+
+  /**
+   * Resume audio context (required for user interaction)
+   */
+  public async resumeAudioContext(): Promise<void> {
+    if (this.context && this.context.state === 'suspended') {
+      await this.context.resume();
+    }
+  }
+
+  /**
+   * Update volume levels
+   */
+  private updateVolumes(): void {
+    if (!this.context) return;
+
+    const now = this.context.currentTime;
+
+    if (this.masterGainNode) {
+      this.masterGainNode.gain.setValueAtTime(this.config.masterVolume, now);
+    }
+
+    if (this.musicGainNode) {
+      this.musicGainNode.gain.setValueAtTime(this.config.musicVolume, now);
+    }
+
+    if (this.sfxGainNode) {
+      this.sfxGainNode.gain.setValueAtTime(this.config.sfxVolume, now);
+    }
+  }
+
+  /**
+   * Create a simple tone generator for testing
+   */
+  public createTone(frequency: number, duration: number, type: OscillatorType = 'sine'): void {
+    if (!this.context || !this.sfxGainNode) return;
+
+    try {
+      const oscillator = this.context.createOscillator();
+      const gainNode = this.context.createGain();
+
+      oscillator.type = type;
+      oscillator.frequency.setValueAtTime(frequency, this.context.currentTime);
+      gainNode.gain.setValueAtTime(0.1, this.context.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, this.context.currentTime + duration);
+
+      oscillator.connect(gainNode);
+      gainNode.connect(this.sfxGainNode);
+
+      oscillator.start();
+      oscillator.stop(this.context.currentTime + duration);
+    } catch (error) {
+      this.logger.error('Failed to create tone', error);
+    }
+  }
+
+  /**
+   * Cleanup audio resources
+   */
+  public destroy(): void {
+    this.stopMusic();
+    
+    if (this.context) {
+      this.context.close();
+      this.context = null;
+    }
+    
+    this.sounds.clear();
+    this.musicTracks.clear();
+    
+    this.logger.info('Audio system destroyed');
+  }
+}
+
+/**
+ * Audio asset management
+ */
+export class AudioAssetManager {
+  private audioManager: AudioManager;
+
+  constructor() {
+    this.audioManager = AudioManager.getInstance();
+  }
+
+  /**
+   * Load all game audio assets
+   */
+  public async loadGameAudio(): Promise<void> {
+    const sounds = [
+      { id: 'laser', url: '/assets/sounds/laser.wav' },
+      { id: 'explosion', url: '/assets/sounds/explosion.wav' },
+      { id: 'thruster', url: '/assets/sounds/thruster.wav' },
+      { id: 'docking', url: '/assets/sounds/docking.wav' },
+      { id: 'alert', url: '/assets/sounds/alert.wav' },
+      { id: 'beep', url: '/assets/sounds/beep.wav' }
+    ];
+
+    const music = [
+      { id: 'main_theme', url: '/assets/sounds/main_theme.mp3' },
+      { id: 'galaxy_map', url: '/assets/sounds/galaxy_map.mp3' },
+      { id: 'combat', url: '/assets/sounds/combat.mp3' },
+      { id: 'peaceful', url: '/assets/sounds/peaceful.mp3' }
+    ];
+
+    try {
+      await this.audioManager.loadSounds(sounds);
+      await this.audioManager.loadMusicTracks(music);
+    } catch (error) {
+      console.warn('Failed to load some audio assets:', error);
+    }
+  }
+
+  /**
+   * Get audio manager instance
+   */
+  public getAudioManager(): AudioManager {
+    return this.audioManager;
+  }
+}

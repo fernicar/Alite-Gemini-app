@@ -1,0 +1,396 @@
+/**
+ * Enhanced Seeded Random Number Generator
+ * Implements multiple algorithms for consistent procedural generation
+ * Based on the original Elite 32-bit seed algorithm and extended with modern techniques
+ */
+
+/**
+ * Custom hash function for creating consistent seeds from strings
+ */
+export class SeededRandomGenerator {
+  private _seed: number;
+  private _state: number;
+  private _buffer: number[];
+  private _bufferIndex: number;
+
+  constructor(seed: number | string) {
+    if (typeof seed === 'string') {
+      this._seed = this.hashString(seed);
+    } else {
+      this._seed = seed >>> 0;
+    }
+    this._state = this._seed;
+    this._buffer = new Array(256);
+    this._bufferIndex = 0;
+    this._refillBuffer();
+  }
+
+  /**
+   * Hash a string into a 32-bit number using FNV-1a algorithm
+   */
+  private hashString(str: string): number {
+    let hash = 0x811C9DC5; // FNV offset basis
+    
+    for (let i = 0; i < str.length; i++) {
+      hash ^= str.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193); // FNV prime
+    }
+    
+    return hash >>> 0;
+  }
+
+  /**
+   * Enhanced seeded random - wraps Java's tweakRandom algorithm
+   * This is the core algorithm used by the original Elite game
+   */
+  tweakRandom(change: number = 0): number {
+    this._state = (this._state * 0x41C64E6D + 0x3039 + change) & 0xFFFFFFFF;
+    return this._state >>> 0;
+  }
+
+  /**
+   * Get next random number in 0-1 range
+   */
+  next(): number {
+    const value = this.tweakRandom();
+    return (value & 0xFFFFFFFF) / 0x100000000;
+  }
+
+  /**
+   * Get random integer between min (inclusive) and max (inclusive)
+   */
+  nextInt(min: number, max: number): number {
+    return Math.floor(this.next() * (max - min + 1)) + min;
+  }
+
+  /**
+   * Get random boolean
+   */
+  nextBoolean(): boolean {
+    return (this.tweakRandom() & 0x80000000) !== 0;
+  }
+
+  /**
+   * Get random element from array
+   */
+  choice<T>(array: T[]): T {
+    return array[this.nextInt(0, array.length - 1)];
+  }
+
+  /**
+   * Get random elements without replacement
+   */
+  sample<T>(array: T[], count: number): T[] {
+    const result: T[] = [];
+    const workingArray = [...array];
+    
+    for (let i = 0; i < count && workingArray.length > 0; i++) {
+      const index = this.nextInt(0, workingArray.length - 1);
+      result.push(workingArray[index]);
+      workingArray.splice(index, 1);
+    }
+    
+    return result;
+  }
+
+  /**
+   * Get weighted random choice from weighted items
+   */
+  weightedChoice<T>(items: Array<{ item: T; weight: number }>): T {
+    const totalWeight = items.reduce((sum, item) => sum + item.weight, 0);
+    let random = this.next() * totalWeight;
+    
+    for (const { item, weight } of items) {
+      random -= weight;
+      if (random <= 0) {
+        return item;
+      }
+    }
+    
+    return items[items.length - 1].item; // Fallback
+  }
+
+  /**
+   * Generate normal (Gaussian) distributed random number
+   * Uses Box-Muller transform
+   */
+  nextGaussian(mean: number = 0, stdDev: number = 1): number {
+    let u1 = 0, u2 = 0;
+    
+    // Generate uniform(0,1) values
+    while (u1 === 0) u1 = this.next();
+    while (u2 === 0) u2 = this.next();
+    
+    // Box-Muller transform
+    const z0 = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
+    return z0 * stdDev + mean;
+  }
+
+  /**
+   * Generate random number following a specific distribution
+   */
+  distribution(type: 'uniform' | 'normal' | 'exponential' | 'gamma' | 'beta', params: any): number {
+    switch (type) {
+      case 'uniform':
+        return this.next() * (params.max - params.min) + params.min;
+      case 'normal':
+        return this.nextGaussian(params.mean || 0, params.stdDev || 1);
+      case 'exponential':
+        return -Math.log(1 - this.next()) / (params.lambda || 1);
+      case 'gamma':
+        // Simple gamma distribution using exponential distributions
+        const k = params.shape || 1;
+        const theta = params.scale || 1;
+        let sum = 0;
+        for (let i = 0; i < k; i++) {
+          sum += this.distribution('exponential', { lambda: 1 / theta });
+        }
+        return sum;
+      case 'beta':
+        const alpha = params.alpha || 1;
+        const beta = params.beta || 1;
+        const x = this.distribution('gamma', { shape: alpha, scale: 1 });
+        const y = this.distribution('gamma', { shape: beta, scale: 1 });
+        return x / (x + y);
+      default:
+        return this.next();
+    }
+  }
+
+  /**
+   * Generate deterministic hash-based coordinates
+   * Useful for consistent positioning
+   */
+  generateCoordinate(seed1: number, seed2: number, range: number): number {
+    const combined = (seed1 * 0x41C64E6D + seed2 * 0x3039) & 0xFFFFFFFF;
+    const normalized = (combined & 0xFFFF) / 0xFFFF;
+    return normalized * range * 2 - range; // -range to +range
+  }
+
+  /**
+   * Create a new generator with a derived seed
+   */
+  derive(seed: number | string): SeededRandomGenerator {
+    if (typeof seed === 'string') {
+      const combinedSeed = this.hashString(seed);
+      return new SeededRandomGenerator((this._seed ^ combinedSeed) >>> 0);
+    } else {
+      return new SeededRandomGenerator((this._seed ^ seed) >>> 0);
+    }
+  }
+
+  /**
+   * Set seed (reset generator state)
+   */
+  setSeed(seed: number | string): void {
+    if (typeof seed === 'string') {
+      this._seed = this.hashString(seed);
+    } else {
+      this._seed = seed >>> 0;
+    }
+    this._state = this._seed;
+    this._bufferIndex = 0;
+    this._refillBuffer();
+  }
+
+  /**
+   * Get current seed
+   */
+  getSeed(): number {
+    return this._seed >>> 0;
+  }
+
+  /**
+   * Save state for later restoration
+   */
+  saveState(): number {
+    return (this._state << 32) | (this._bufferIndex & 0xFFFFFFFF);
+  }
+
+  /**
+   * Restore previously saved state
+   */
+  restoreState(state: number): void {
+    this._state = state >>> 0;
+    this._bufferIndex = state & 0xFF;
+  }
+
+  /**
+   * Refill the random number buffer for better performance
+   */
+  private _refillBuffer(): void {
+    for (let i = 0; i < this._buffer.length; i++) {
+      this._buffer[i] = this.tweakRandom();
+    }
+    this._bufferIndex = 0;
+  }
+
+  /**
+   * Get multiple random numbers at once for efficiency
+   */
+  nextBatch(count: number): number[] {
+    const result: number[] = [];
+    for (let i = 0; i < count; i++) {
+      if (this._bufferIndex >= this._buffer.length) {
+        this._refillBuffer();
+      }
+      result.push(this._buffer[this._bufferIndex++]);
+    }
+    return result;
+  }
+
+  /**
+   * Generate a random UUID-like identifier based on the seed
+   */
+  generateUUID(): string {
+    const parts = this.nextBatch(4);
+    return parts.map(part => (part >>> 0).toString(16).padStart(8, '0')).join('-');
+  }
+}
+
+/**
+ * Specialized random generators for different game systems
+ */
+export class GalaxyRandom extends SeededRandomGenerator {
+  /**
+   * Generate galaxy index (0-7)
+   */
+  nextGalaxyIndex(): number {
+    return this.nextInt(0, 7);
+  }
+
+  /**
+   * Generate system index within galaxy (0-255)
+   */
+  nextSystemIndex(): number {
+    return this.nextInt(0, 255);
+  }
+
+  /**
+   * Generate coordinate pair for galaxy layout
+   */
+  nextGalaxyCoordinates(): { x: number; y: number } {
+    return {
+      x: this.next() * 1000,
+      y: this.next() * 1000
+    };
+  }
+
+  /**
+   * Generate distance from galaxy core
+   */
+  nextCoreDistance(): number {
+    // Use exponential distribution for realistic galaxy density
+    return this.distribution('exponential', { lambda: 0.001 }) * 5000;
+  }
+}
+
+export class MarketRandom extends SeededRandomGenerator {
+  /**
+   * Generate price fluctuation
+   */
+  nextPriceFluctuation(basePrice: number, volatility: number): number {
+    // Use normal distribution around base price
+    const fluctuation = this.nextGaussian(0, volatility);
+    return Math.max(0.1, basePrice + fluctuation);
+  }
+
+  /**
+   * Generate quantity for a commodity
+   */
+  nextCommodityQuantity(average: number, variance: number): number {
+    const quantity = Math.max(0, this.nextGaussian(average, variance));
+    return Math.round(quantity);
+  }
+
+  /**
+   * Generate market event
+   */
+  nextMarketEvent(): {
+    type: 'surplus' | 'shortage' | 'festival' | 'war' | 'boom' | 'recession';
+    duration: number;
+    intensity: number;
+  } {
+    const types = ['surplus', 'shortage', 'festival', 'war', 'boom', 'recession'] as const;
+    return {
+      type: this.choice(types),
+      duration: this.nextInt(10, 180), // 10-180 days
+      intensity: this.next() * 0.5 + 0.5 // 0.5 to 1.0
+    };
+  }
+}
+
+export class NameRandom extends SeededRandomGenerator {
+  // The original Elite syllable table (32 syllables)
+  private static readonly SYLLABLES = [
+    // Vowel-starting syllables
+    'Ar', 'Be', 'Ce', 'Di', 'Er', 'Fa', 'Go', 'Ha', 'Ir', 'Ju',
+    'Ka', 'Le', 'Ma', 'Na', 'Or', 'Pa', 'Qu', 'Re', 'Sa', 'Ta',
+    // Consonant-starting syllables  
+    'U', 'Ve', 'W', 'Xe', 'Ya', 'Ze',
+    // Two-letter combinations
+    'AC', 'AD', 'AE', 'AF', 'AG', 'AH', 'AI', 'AK', 'AL', 'AM',
+    'AN', 'AO', 'AP', 'AQ', 'AR', 'AS', 'AT', 'AU', 'AV', 'AW',
+    'AX', 'AY', 'AZ', 'BA', 'BB', 'BC', 'BD', 'BE', 'BF', 'BG',
+    'BH', 'BI', 'BJ', 'BK', 'BL', 'BM', 'BN', 'BO', 'BP', 'BQ',
+    'BR', 'BS', 'BT', 'BU', 'BV', 'BW', 'BX', 'BY', 'BZ'
+  ];
+
+  /**
+   * Generate a system name using the Elite algorithm
+   */
+  nextSystemName(): string {
+    const syllables = this.nextInt(2, 4);
+    const parts: string[] = [];
+    
+    for (let i = 0; i < syllables; i++) {
+      parts.push(this.choice(NameRandom.SYLLABLES));
+    }
+    
+    let name = parts.join('');
+    
+    // Capitalize appropriately
+    name = name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
+    
+    // Add common name suffixes and prefixes
+    if (this.nextBoolean() && this.next() < 0.3) {
+      const prefixes = ['New', 'Old', 'Grand', 'Royal', 'High', 'Low'];
+      const suffixes = ['Prime', 'Major', 'Minor', 'Central', 'Outer'];
+      
+      if (this.nextBoolean()) {
+        name = `${this.choice(prefixes)} ${name}`;
+      } else {
+        name = `${name} ${this.choice(suffixes)}`;
+      }
+    }
+    
+    return name;
+  }
+
+  /**
+   * Generate a personal name for commanders
+   */
+  nextCommanderName(): string {
+    const firstNames = [
+      'Alex', 'Morgan', 'Riley', 'Sam', 'Jordan', 'Casey', 'Avery', 'Taylor',
+      'Jamie', 'Cameron', 'Quinn', 'Reese', 'Skyler', 'Dakota', 'Phoenix'
+    ];
+    
+    const lastNames = [
+      'Smith', 'Johnson', 'Brown', 'Davis', 'Miller', 'Wilson', 'Moore', 'Taylor',
+      'Anderson', 'Thomas', 'Jackson', 'White', 'Harris', 'Martin', 'Thompson'
+    ];
+    
+    return `${this.choice(firstNames)} ${this.choice(lastNames)}`;
+  }
+
+  /**
+   * Generate faction name
+   */
+  nextFactionName(): string {
+    const prefix = ['Galactic', 'Solar', 'Interstellar', 'Cosmic', 'Universal'];
+    const suffix = ['Federation', 'Alliance', 'Empire', 'Coalition', 'Republic'];
+    
+    return `${this.choice(prefix)} ${this.choice(suffix)}`;
+  }
+}

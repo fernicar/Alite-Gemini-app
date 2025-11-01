@@ -1,0 +1,760 @@
+/**
+ * Navigation Coordinator - Central integration hub for all navigation and physics systems
+ * Coordinates ship navigation, physics simulation, fuel management, gravitational effects, 
+ * hyperspace jumping, and docking procedures
+ */
+
+import { Vector3D, ThrustVector } from '../../types/index.js';
+import { Ship } from '../models/Ship.js';
+import { PhysicsSimulation } from './PhysicsSimulation.js';
+import { FuelConsumptionSystem } from './FuelConsumptionSystem.js';
+import { GravitationalFieldSystem } from './GravitationalFieldSystem.js';
+import { HyperspaceJumpSystem } from './HyperspaceJumpSystem.js';
+import { DockingSystem } from './DockingSystem.js';
+
+/**
+ * Navigation system status
+ */
+export interface NavigationSystemStatus {
+  physics: {
+    active: boolean;
+    simulationSpeed: number;
+    shipsInPhysics: number;
+    gravitationalFields: number;
+    recentCollisions: number;
+  };
+  fuel: {
+    active: boolean;
+    trackedShips: number;
+    totalFuelEvents: number;
+    averageEfficiency: number;
+  };
+  gravity: {
+    active: boolean;
+    gravitationalFields: number;
+    shipInteractions: number;
+    strongGravityRegions: number;
+  };
+  hyperspace: {
+    active: boolean;
+    fsdSystemsActive: number;
+    jumpsInProgress: number;
+    emergencyJumpCooldowns: number;
+  };
+  docking: {
+    active: boolean;
+    operationalPorts: number;
+    shipsDocked: number;
+    dockingRequests: number;
+  };
+}
+
+/**
+ * Ship navigation state
+ */
+export interface ShipNavigationState {
+  shipId: string;
+  ship: Ship;
+  physicsState: any;
+  fuelStatus: any;
+  gravityInteraction: any;
+  hyperspaceState: any;
+  dockingState: any;
+  navigationMode: 'FLIGHT' | 'JUMP_APPROACH' | 'DOCKING' | 'DOCKED';
+  thrustInput: ThrustVector;
+  lastUpdate: number;
+  performanceMetrics: {
+    flightTime: number;
+    fuelConsumed: number;
+    jumpsCompleted: number;
+    docksCompleted: number;
+    averageSpeed: number;
+  };
+}
+
+/**
+ * Navigation command types
+ */
+export enum NavigationCommand {
+  SET_THRUST = 'SET_THRUST',
+  BRAKE = 'BRAKE',
+  REQUEST_DOCKING = 'REQUEST_DOCKING',
+  BEGIN_JUMP = 'BEGIN_JUMP',
+  EXECUTE_JUMP = 'EXECUTE_JUMP',
+  EMERGENCY_JUMP = 'EMERGENCY_JUMP',
+  CANCEL_OPERATION = 'CANCEL_OPERATION'
+}
+
+/**
+ * Navigation command parameters
+ */
+export interface NavigationCommandData {
+  command: NavigationCommand;
+  shipId: string;
+  parameters?: any;
+  timestamp: number;
+}
+
+/**
+ * System integration event
+ */
+export interface NavigationEvent {
+  shipId: string;
+  system: 'PHYSICS' | 'FUEL' | 'GRAVITY' | 'HYPERSPACE' | 'DOCKING';
+  event: string;
+  data: any;
+  timestamp: number;
+}
+
+/**
+ * Advanced Navigation Coordinator
+ * Central management system for all navigation and physics subsystems
+ */
+export class NavigationCoordinator {
+  private ships: Map<string, ShipNavigationState> = new Map();
+  private systems: {
+    physics: PhysicsSimulation;
+    fuel: FuelConsumptionSystem;
+    gravity: GravitationalFieldSystem;
+    hyperspace: HyperspaceJumpSystem;
+    docking: DockingSystem;
+  };
+  
+  private commands: NavigationCommandData[] = [];
+  private events: NavigationEvent[] = [];
+  private maxEvents: number = 1000;
+  private lastUpdate: number = 0;
+  private globalTime: number = 0;
+  private navigationLoop: NodeJS.Timeout | null = null;
+
+  constructor(
+    physicsConfig?: any,
+    fuelConfig?: any
+  ) {
+    // Initialize all navigation systems
+    this.systems = {
+      physics: new PhysicsSimulation(physicsConfig?.timeStep),
+      fuel: new FuelConsumptionSystem(fuelConfig),
+      gravity: new GravitationalFieldSystem(),
+      hyperspace: new HyperspaceJumpSystem(),
+      docking: new DockingSystem()
+    };
+
+    this.startNavigationLoop();
+  }
+
+  /**
+   * Add ship to navigation system
+   */
+  addShipToNavigation(ship: Ship): void {
+    const shipId = ship.getId();
+    
+    // Initialize ship state
+    const navigationState: ShipNavigationState = {
+      shipId,
+      ship,
+      physicsState: null,
+      fuelStatus: null,
+      gravityInteraction: null,
+      hyperspaceState: null,
+      dockingState: null,
+      navigationMode: 'FLIGHT',
+      thrustInput: { forward: 0, reverse: 0, up: 0, down: 0, left: 0, right: 0 },
+      lastUpdate: Date.now(),
+      performanceMetrics: {
+        flightTime: 0,
+        fuelConsumed: 0,
+        jumpsCompleted: 0,
+        docksCompleted: 0,
+        averageSpeed: 0
+      }
+    };
+
+    // Initialize all subsystems for this ship
+    this.systems.physics.initializeShipPhysics(ship);
+    this.systems.fuel.initializeShipFuel(ship);
+    this.systems.hyperspace.initializeShipJumpSystem(ship);
+
+    this.ships.set(shipId, navigationState);
+  }
+
+  /**
+   * Remove ship from navigation system
+   */
+  removeShipFromNavigation(shipId: string): void {
+    // Clean up from all systems
+    this.systems.physics.removeShip(shipId);
+    this.systems.fuel.removeShip(shipId);
+    this.systems.gravity.removeShip(shipId);
+    this.systems.hyperspace.removeShip(shipId);
+    this.systems.docking.removeShip(shipId);
+
+    this.ships.delete(shipId);
+  }
+
+  /**
+   * Set thrust input for a ship
+   */
+  setShipThrust(shipId: string, thrust: ThrustVector): void {
+    const shipState = this.ships.get(shipId);
+    if (!shipState) return;
+
+    shipState.thrustInput = { ...thrust };
+    
+    // Apply to physics system
+    this.systems.physics.applyThrust(shipId, thrust);
+  }
+
+  /**
+   * Set braking for a ship
+   */
+  setShipBraking(shipId: string, braking: boolean): void {
+    const shipState = this.ships.get(shipId);
+    if (!shipState) return;
+
+    this.systems.physics.setBraking(shipId, braking);
+  }
+
+  /**
+   * Request docking clearance
+   */
+  requestDockingClearance(shipId: string, portId: string): { 
+    success: boolean; 
+    message: string; 
+    details?: any;
+  } {
+    const shipState = this.ships.get(shipId);
+    if (!shipState) {
+      return { success: false, message: 'Ship not found in navigation system' };
+    }
+
+    const result = this.systems.docking.requestDockingClearance(shipState.ship, portId);
+    
+    if (result.success) {
+      shipState.navigationMode = 'DOCKING';
+    }
+
+    this.logNavigationEvent({
+      shipId,
+      system: 'DOCKING',
+      event: result.success ? 'DOCKING_CLEARED' : 'DOCKING_DENIED',
+      data: result,
+      timestamp: Date.now()
+    });
+
+    return {
+      success: result.success,
+      message: result.message,
+      details: result
+    };
+  }
+
+  /**
+   * Begin docking approach
+   */
+  beginDockingApproach(shipId: string, portId: string): { 
+    success: boolean; 
+    message: string; 
+    approach?: any;
+  } {
+    const shipState = this.ships.get(shipId);
+    if (!shipState) {
+      return { success: false, message: 'Ship not found in navigation system' };
+    }
+
+    const result = this.systems.docking.beginDockingApproach(shipState.ship, portId);
+    
+    if (result.success) {
+      shipState.navigationMode = 'DOCKING';
+      shipState.thrustInput = { forward: 0, reverse: 0, up: 0, down: 0, left: 0, right: 0 };
+    }
+
+    this.logNavigationEvent({
+      shipId,
+      system: 'DOCKING',
+      event: 'APPROACH_STARTED',
+      data: result,
+      timestamp: Date.now()
+    });
+
+    return {
+      success: result.success,
+      message: result.message,
+      approach: result.approach
+    };
+  }
+
+  /**
+   * Execute docking
+   */
+  executeDocking(shipId: string, portId: string): any {
+    const shipState = this.ships.get(shipId);
+    if (!shipState) {
+      return { success: false, message: 'Ship not found in navigation system' };
+    }
+
+    const result = this.systems.docking.executeDocking(shipState.ship, portId);
+    
+    if (result.success) {
+      shipState.navigationMode = 'DOCKED';
+      shipState.performanceMetrics.docksCompleted++;
+      
+      // Update ship position
+      shipState.ship.getState().position = result.newPosition;
+    }
+
+    this.logNavigationEvent({
+      shipId,
+      system: 'DOCKING',
+      event: result.success ? 'DOCKING_COMPLETE' : 'DOCKING_FAILED',
+      data: result,
+      timestamp: Date.now()
+    });
+
+    return result;
+  }
+
+  /**
+   * Calculate jump destinations
+   */
+  calculateJumpDestinations(shipId: string, currentSystemId: number): any[] {
+    const shipState = this.ships.get(shipId);
+    if (!shipState) return [];
+
+    return this.systems.hyperspace.calculateJumpDestinations(currentSystemId, shipState.ship);
+  }
+
+  /**
+   * Calculate detailed jump
+   */
+  calculateJump(shipId: string, destination: any): any {
+    const shipState = this.ships.get(shipId);
+    if (!shipState) return null;
+
+    return this.systems.hyperspace.calculateJump(destination, shipState.ship);
+  }
+
+  /**
+   * Begin hyperspace jump
+   */
+  beginHyperspaceJump(shipId: string, destination: any): { 
+    success: boolean; 
+    message: string; 
+  } {
+    const shipState = this.ships.get(shipId);
+    if (!shipState) {
+      return { success: false, message: 'Ship not found in navigation system' };
+    }
+
+    const result = this.systems.hyperspace.startJumpCharging(destination, shipState.ship);
+    
+    if (result) {
+      shipState.navigationMode = 'JUMP_APPROACH';
+      shipState.thrustInput = { forward: 0, reverse: 0, up: 0, down: 0, left: 0, right: 0 };
+    }
+
+    this.logNavigationEvent({
+      shipId,
+      system: 'HYPERSPACE',
+      event: 'JUMP_CHARGING_STARTED',
+      data: { destination },
+      timestamp: Date.now()
+    });
+
+    return {
+      success: result,
+      message: result ? 'Jump charging initiated' : 'Failed to initiate jump charging'
+    };
+  }
+
+  /**
+   * Execute hyperspace jump
+   */
+  executeHyperspaceJump(shipId: string, destination: any): any {
+    const shipState = this.ships.get(shipId);
+    if (!shipState) {
+      return { success: false, message: 'Ship not found in navigation system' };
+    }
+
+    const result = this.systems.hyperspace.executeJump(shipState.ship, destination);
+    
+    if (result.success) {
+      shipState.performanceMetrics.jumpsCompleted++;
+      shipState.navigationMode = 'FLIGHT';
+      
+      // Note: In real implementation, system change would happen here
+    }
+
+    this.logNavigationEvent({
+      shipId,
+      system: 'HYPERSPACE',
+      event: result.success ? 'JUMP_EXECUTED' : 'JUMP_FAILED',
+      data: result,
+      timestamp: Date.now()
+    });
+
+    return result;
+  }
+
+  /**
+   * Execute emergency jump
+   */
+  executeEmergencyJump(shipId: string, destination: any): any {
+    const shipState = this.ships.get(shipId);
+    if (!shipState) {
+      return { success: false, message: 'Ship not found in navigation system' };
+    }
+
+    const result = this.systems.hyperspace.executeEmergencyJump(shipState.ship, destination);
+    
+    if (result.success) {
+      shipState.performanceMetrics.jumpsCompleted++;
+      shipState.navigationMode = 'FLIGHT';
+    }
+
+    this.logNavigationEvent({
+      shipId,
+      system: 'HYPERSPACE',
+      event: 'EMERGENCY_JUMP',
+      data: result,
+      timestamp: Date.now()
+    });
+
+    return result;
+  }
+
+  /**
+   * Update navigation system
+   */
+  update(deltaTime: number): void {
+    this.globalTime += deltaTime;
+    this.lastUpdate = Date.now();
+
+    // Update all ships
+    for (const [shipId, shipState] of this.ships.entries()) {
+      this.updateShipNavigation(shipId, shipState, deltaTime);
+    }
+
+    // Update system-specific processes
+    this.updateSystemProcesses(deltaTime);
+  }
+
+  /**
+   * Update individual ship navigation
+   */
+  private updateShipNavigation(shipId: string, shipState: ShipNavigationState, deltaTime: number): void {
+    try {
+      const ship = shipState.ship;
+      const state = ship.getState();
+
+      // Update physics simulation
+      this.systems.physics.update(deltaTime);
+      
+      // Get updated physics state
+      shipState.physicsState = this.systems.physics.getPhysicsState(shipId);
+      if (shipState.physicsState) {
+        // Sync physics state back to ship
+        state.position = shipState.physicsState.position;
+        state.velocity = shipState.physicsState.velocity;
+      }
+
+      // Update fuel consumption
+      if (shipState.navigationMode === 'FLIGHT') {
+        shipState.fuelStatus = this.systems.fuel.update(deltaTime, ship, shipState.thrustInput);
+      }
+
+      // Update gravitational effects
+      const shipPositions = new Map([[shipId, state.position]]);
+      this.systems.gravity.updateAllShips(shipPositions);
+      shipState.gravityInteraction = this.systems.gravity.getShipInteraction(shipId);
+
+      // Update hyperspace charging if in progress
+      if (shipState.navigationMode === 'JUMP_APPROACH') {
+        const chargingStatus = this.systems.hyperspace.updateJumpCharging(deltaTime, ship);
+        // Handle charging completion
+        if (chargingStatus.state === 'IN_STANDSTILL') {
+          // Ready to jump - this would trigger UI update
+        }
+      }
+
+      // Update FSD condition
+      this.systems.hyperspace.updateFSDCondition(shipId, deltaTime);
+
+      // Update docking state
+      shipState.dockingState = this.systems.docking.getDockingState(shipId);
+
+      // Update performance metrics
+      this.updatePerformanceMetrics(shipState, deltaTime);
+
+      shipState.lastUpdate = Date.now();
+      
+    } catch (error) {
+      console.error(`Error updating ship ${shipId}:`, error);
+      this.logNavigationEvent({
+        shipId,
+        system: 'PHYSICS',
+        event: 'UPDATE_ERROR',
+        data: { error: error.message },
+        timestamp: Date.now()
+      });
+    }
+  }
+
+  /**
+   * Update system-wide processes
+   */
+  private updateSystemProcesses(deltaTime: number): void {
+    // Update docking system
+    this.systems.docking.update(deltaTime);
+  }
+
+  /**
+   * Update ship performance metrics
+   */
+  private updatePerformanceMetrics(shipState: ShipNavigationState, deltaTime: number): void {
+    const velocity = shipState.physicsState?.velocity;
+    if (velocity) {
+      const speed = Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y + velocity.z * velocity.z);
+      
+      shipState.performanceMetrics.flightTime += deltaTime;
+      shipState.performanceMetrics.averageSpeed = 
+        (shipState.performanceMetrics.averageSpeed + speed) / 2;
+    }
+  }
+
+  /**
+   * Get ship navigation state
+   */
+  getShipNavigationState(shipId: string): ShipNavigationState | null {
+    return this.ships.get(shipId) || null;
+  }
+
+  /**
+   * Get all ship navigation states
+   */
+  getAllShipStates(): ShipNavigationState[] {
+    return Array.from(this.ships.values());
+  }
+
+  /**
+   * Get system-wide status
+   */
+  getNavigationSystemStatus(): NavigationSystemStatus {
+    const physicsStats = this.systems.physics.getStatistics();
+    const fuelStats = this.systems.fuel.getStatistics();
+    const gravityStats = this.systems.gravity.getStatistics();
+    const hyperspaceStats = this.systems.hyperspace.getStatistics();
+    const dockingStats = this.systems.docking.getStatistics();
+
+    return {
+      physics: {
+        active: true,
+        simulationSpeed: 1.0,
+        shipsInPhysics: physicsStats.activeShips,
+        gravitationalFields: physicsStats.gravitationalFields,
+        recentCollisions: physicsStats.collisionsLastFrame
+      },
+      fuel: {
+        active: true,
+        trackedShips: fuelStats.trackedShips,
+        totalFuelEvents: fuelStats.totalFuelEvents,
+        averageEfficiency: 0.85 // Simplified calculation
+      },
+      gravity: {
+        active: true,
+        gravitationalFields: gravityStats.totalFields,
+        shipInteractions: gravityStats.shipInteractions,
+        strongGravityRegions: Math.floor(gravityStats.totalFields * 0.3) // Estimate
+      },
+      hyperspace: {
+        active: true,
+        fsdSystemsActive: hyperspaceStats.fsdStatus.length,
+        jumpsInProgress: Object.values(hyperspaceStats.jumpStates).reduce((sum: number, count: number) => 
+          sum + (count > 0 ? count : 0), 0),
+        emergencyJumpCooldowns: 0 // Would need to track this
+      },
+      docking: {
+        active: true,
+        operationalPorts: dockingStats.operationalPorts,
+        shipsDocked: dockingStats.activeDockingStates['DOCKED'] || 0,
+        dockingRequests: dockingStats.pendingRequests
+      }
+    };
+  }
+
+  /**
+   * Initialize navigation for a new system
+   */
+  initializeSystemNavigation(systemId: number, systemData: any): void {
+    // Initialize gravitational fields
+    this.systems.gravity.initializeSystemFields(systemId, systemData);
+    
+    // Initialize docking ports
+    this.systems.docking.initializeSystemDocking(systemId, systemData);
+  }
+
+  /**
+   * Get available docking ports for a ship
+   */
+  getAvailableDockingPorts(shipId: string): any[] {
+    const shipState = this.ships.get(shipId);
+    if (!shipState) return [];
+
+    return this.systems.docking.getAvailablePorts(shipState.ship);
+  }
+
+  /**
+   * Get fuel information for a ship
+   */
+  getShipFuelStatus(shipId: string): any {
+    const shipState = this.ships.get(shipId);
+    if (!shipState) return null;
+
+    return this.systems.fuel.getFuelStatus(shipState.ship);
+  }
+
+  /**
+   * Get FSD status for a ship
+   */
+  getShipFSDStatus(shipId: string): any {
+    return this.systems.hyperspace.getFSDStatus(shipId);
+  }
+
+  /**
+   * Get gravitational information for a ship
+   */
+  getShipGravityStatus(shipId: string): any {
+    const shipState = this.ships.get(shipId);
+    if (!shipState) return null;
+
+    return this.systems.gravity.getShipInteraction(shipId);
+  }
+
+  /**
+   * Get navigation events for a ship
+   */
+  getShipNavigationEvents(shipId: string, limit: number = 50): NavigationEvent[] {
+    return this.events
+      .filter(event => event.shipId === shipId)
+      .slice(-limit)
+      .reverse();
+  }
+
+  /**
+   * Add gravitational field to system
+   */
+  addGravitationalField(fieldId: string, position: Vector3D, mass: number, radius: number): void {
+    this.systems.gravity.addGravitationalField(fieldId, position, mass, radius);
+  }
+
+  /**
+   * Refuel ship
+   */
+  refuelShip(shipId: string, amount: number): number {
+    const shipState = this.ships.get(shipId);
+    if (!shipState) return 0;
+
+    const amountRefueled = this.systems.fuel.refuel(shipState.ship, amount);
+    
+    this.logNavigationEvent({
+      shipId,
+      system: 'FUEL',
+      event: 'REFUEL',
+      data: { amountRequested: amount, amountRefueled },
+      timestamp: Date.now()
+    });
+
+    return amountRefueled;
+  }
+
+  /**
+   * Repair FSD system
+   */
+  repairFSD(shipId: string, amount: number): number {
+    const shipState = this.ships.get(shipId);
+    if (!shipState) return 0;
+
+    const repaired = this.systems.hyperspace.repairFSD(shipState.ship, amount);
+    
+    this.logNavigationEvent({
+      shipId,
+      system: 'HYPERSPACE',
+      event: 'FSD_REPAIR',
+      data: { repairRequested: amount, repairCompleted: repaired },
+      timestamp: Date.now()
+    });
+
+    return repaired;
+  }
+
+  /**
+   * Log navigation event
+   */
+  private logNavigationEvent(event: NavigationEvent): void {
+    this.events.push(event);
+    
+    // Maintain event log size
+    if (this.events.length > this.maxEvents) {
+      this.events = this.events.slice(-this.maxEvents);
+    }
+  }
+
+  /**
+   * Start navigation update loop
+   */
+  private startNavigationLoop(): void {
+    const updateInterval = 1000 / 60; // 60 FPS
+    
+    this.navigationLoop = setInterval(() => {
+      const deltaTime = 1 / 60; // Fixed timestep for consistent physics
+      this.update(deltaTime);
+    }, updateInterval);
+  }
+
+  /**
+   * Stop navigation update loop
+   */
+  stopNavigationLoop(): void {
+    if (this.navigationLoop) {
+      clearInterval(this.navigationLoop);
+      this.navigationLoop = null;
+    }
+  }
+
+  /**
+   * Get comprehensive navigation statistics
+   */
+  getComprehensiveStatistics(): object {
+    const status = this.getNavigationSystemStatus();
+    const shipCount = this.ships.size;
+    const totalEvents = this.events.length;
+    
+    return {
+      navigationSystems: {
+        active: true,
+        shipCount,
+        globalTime: this.globalTime,
+        lastUpdate: this.lastUpdate
+      },
+      systemStatus: status,
+      performance: {
+        activeShips: shipCount,
+        totalEvents,
+        eventsPerShip: shipCount > 0 ? totalEvents / shipCount : 0,
+        averageEventRate: totalEvents / Math.max(1, this.globalTime)
+      }
+    };
+  }
+
+  /**
+   * Cleanup and shutdown
+   */
+  shutdown(): void {
+    this.stopNavigationLoop();
+    
+    // Clear all data
+    this.ships.clear();
+    this.commands = [];
+    this.events = [];
+  }
+}

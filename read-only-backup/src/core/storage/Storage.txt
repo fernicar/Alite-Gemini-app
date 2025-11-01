@@ -1,0 +1,627 @@
+import { Logger } from '@utils/Logging';
+import { SaveGameData, GameSettings } from '@types/index';
+
+/**
+ * Local storage wrapper for game settings and preferences
+ */
+export class SettingsStorage {
+  private static instance: SettingsStorage;
+  private logger: Logger;
+  private settingsKey = 'alite_settings';
+  private saveGamesKey = 'alite_save_games';
+
+  private constructor() {
+    this.logger = Logger.getInstance();
+  }
+
+  public static getInstance(): SettingsStorage {
+    if (!SettingsStorage.instance) {
+      SettingsStorage.instance = new SettingsStorage();
+    }
+    return SettingsStorage.instance;
+  }
+
+  /**
+   * Save game settings
+   */
+  public saveSettings(settings: GameSettings): boolean {
+    try {
+      const settingsJson = JSON.stringify(settings);
+      localStorage.setItem(this.settingsKey, settingsJson);
+      
+      this.logger.debug('Game settings saved successfully');
+      return true;
+    } catch (error) {
+      this.logger.error('Failed to save settings', error);
+      return false;
+    }
+  }
+
+  /**
+   * Load game settings
+   */
+  public loadSettings(): GameSettings | null {
+    try {
+      const settingsJson = localStorage.getItem(this.settingsKey);
+      if (!settingsJson) {
+        return null;
+      }
+
+      const settings = JSON.parse(settingsJson) as GameSettings;
+      this.logger.debug('Game settings loaded successfully');
+      return settings;
+    } catch (error) {
+      this.logger.error('Failed to load settings', error);
+      return null;
+    }
+  }
+
+  /**
+   * Get default game settings
+   */
+  public getDefaultSettings(): GameSettings {
+    return {
+      graphics: {
+        fullscreen: false,
+        vsync: true,
+        antialias: true,
+        textureQuality: 'MEDIUM',
+        resolution: { width: window.innerWidth, height: window.innerHeight }
+      },
+      audio: {
+        masterVolume: 0.8,
+        musicVolume: 0.6,
+        sfxVolume: 0.8,
+        spatialAudio: true
+      },
+      controls: {
+        mouseSensitivity: 1.0,
+        invertY: false,
+        enableJoystick: this.isMobileDevice()
+      },
+      game: {
+        difficulty: 'NORMAL',
+        showFPS: false,
+        autoSave: true
+      }
+    };
+  }
+
+  /**
+   * Save control mappings
+   */
+  public saveControlMappings(mappings: Map<string, any>): boolean {
+    try {
+      const mappingsObj: Record<string, any> = {};
+      mappings.forEach((value, key) => {
+        mappingsObj[key] = value;
+      });
+      
+      const mappingsJson = JSON.stringify(mappingsObj);
+      localStorage.setItem('alite_controls', mappingsJson);
+      
+      this.logger.debug('Control mappings saved successfully');
+      return true;
+    } catch (error) {
+      this.logger.error('Failed to save control mappings', error);
+      return false;
+    }
+  }
+
+  /**
+   * Load control mappings
+   */
+  public loadControlMappings(): Record<string, any> | null {
+    try {
+      const mappingsJson = localStorage.getItem('alite_controls');
+      if (!mappingsJson) {
+        return null;
+      }
+
+      const mappings = JSON.parse(mappingsJson);
+      this.logger.debug('Control mappings loaded successfully');
+      return mappings;
+    } catch (error) {
+      this.logger.error('Failed to load control mappings', error);
+      return null;
+    }
+  }
+
+  /**
+   * Check if running on mobile device
+   */
+  private isMobileDevice(): boolean {
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+           window.innerWidth <= 768;
+  }
+}
+
+/**
+ * Save game storage using IndexedDB for large data
+ */
+export class SaveGameStorage {
+  private static instance: SaveGameStorage;
+  private db: IDBDatabase | null = null;
+  private logger: Logger;
+  private readonly dbName = 'AliteGameDB';
+  private readonly saveGamesStore = 'saveGames';
+  private readonly version = 1;
+
+  private constructor() {
+    this.logger = Logger.getInstance();
+  }
+
+  public static getInstance(): SaveGameStorage {
+    if (!SaveGameStorage.instance) {
+      SaveGameStorage.instance = new SaveGameStorage();
+    }
+    return SaveGameStorage.instance;
+  }
+
+  /**
+   * Initialize the database
+   */
+  public async initialize(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(this.dbName, this.version);
+
+      request.onerror = () => {
+        this.logger.error('Failed to open IndexedDB');
+        reject(new Error('Failed to open database'));
+      };
+
+      request.onsuccess = () => {
+        this.db = request.result;
+        this.logger.info('Save game storage initialized');
+        resolve();
+      };
+
+      request.onupgradeneeded = (event) => {
+        const db = (event.target as IDBOpenDBRequest).result;
+        
+        // Create save games object store
+        if (!db.objectStoreNames.contains(this.saveGamesStore)) {
+          const store = db.createObjectStore(this.saveGamesStore, { keyPath: 'id' });
+          store.createIndex('timestamp', 'timestamp', { unique: false });
+          store.createIndex('commanderName', 'commander.name', { unique: false });
+        }
+      };
+    });
+  }
+
+  /**
+   * Save a game
+   */
+  public async saveGame(saveData: SaveGameData, saveName?: string): Promise<string> {
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+
+    const saveId = saveName || `save_${Date.now()}`;
+    const saveGame = {
+      id: saveId,
+      data: saveData,
+      timestamp: Date.now(),
+      version: '1.0.0'
+    };
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([this.saveGamesStore], 'readwrite');
+      const store = transaction.objectStore(this.saveGamesStore);
+
+      const request = store.put(saveGame);
+
+      request.onsuccess = () => {
+        this.logger.debug(`Save game created: ${saveId}`);
+        resolve(saveId);
+      };
+
+      request.onerror = () => {
+        this.logger.error(`Failed to save game: ${saveId}`);
+        reject(new Error('Failed to save game'));
+      };
+    });
+  }
+
+  /**
+   * Load a saved game
+   */
+  public async loadGame(saveId: string): Promise<SaveGameData | null> {
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([this.saveGamesStore], 'readonly');
+      const store = transaction.objectStore(this.saveGamesStore);
+
+      const request = store.get(saveId);
+
+      request.onsuccess = () => {
+        const result = request.result;
+        if (result) {
+          this.logger.debug(`Save game loaded: ${saveId}`);
+          resolve(result.data);
+        } else {
+          this.logger.warn(`Save game not found: ${saveId}`);
+          resolve(null);
+        }
+      };
+
+      request.onerror = () => {
+        this.logger.error(`Failed to load game: ${saveId}`);
+        reject(new Error('Failed to load game'));
+      };
+    });
+  }
+
+  /**
+   * Get list of all saved games
+   */
+  public async getSaveGameList(): Promise<Array<{ id: string; timestamp: number; commanderName?: string }>> {
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([this.saveGamesStore], 'readonly');
+      const store = transaction.objectStore(this.saveGamesStore);
+      const index = store.index('timestamp');
+
+      const request = index.getAll();
+
+      request.onsuccess = () => {
+        const results = request.result.map((save: any) => ({
+          id: save.id,
+          timestamp: save.timestamp,
+          commanderName: save.data?.commander?.name
+        })).sort((a, b) => b.timestamp - a.timestamp);
+
+        resolve(results);
+      };
+
+      request.onerror = () => {
+        this.logger.error('Failed to get save game list');
+        reject(new Error('Failed to get save game list'));
+      };
+    });
+  }
+
+  /**
+   * Delete a saved game
+   */
+  public async deleteGame(saveId: string): Promise<boolean> {
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([this.saveGamesStore], 'readwrite');
+      const store = transaction.objectStore(this.saveGamesStore);
+
+      const request = store.delete(saveId);
+
+      request.onsuccess = () => {
+        this.logger.debug(`Save game deleted: ${saveId}`);
+        resolve(true);
+      };
+
+      request.onerror = () => {
+        this.logger.error(`Failed to delete game: ${saveId}`);
+        reject(new Error('Failed to delete game'));
+      };
+    });
+  }
+
+  /**
+   * Export save game data
+   */
+  public async exportSaveGame(saveId: string): Promise<string | null> {
+    const saveData = await this.loadGame(saveId);
+    if (!saveData) {
+      return null;
+    }
+
+    return JSON.stringify({
+      id: saveId,
+      data: saveData,
+      exported: Date.now()
+    }, null, 2);
+  }
+
+  /**
+   * Import save game data
+   */
+  public async importSaveGame(importData: string): Promise<string> {
+    try {
+      const parsed = JSON.parse(importData);
+      
+      if (!parsed.data || !parsed.id) {
+        throw new Error('Invalid save game format');
+      }
+
+      // Validate save game structure
+      this.validateSaveGameData(parsed.data);
+
+      // Save with imported data
+      const saveId = await this.saveGame(parsed.data, parsed.id);
+      this.logger.info(`Save game imported: ${saveId}`);
+      
+      return saveId;
+    } catch (error) {
+      this.logger.error('Failed to import save game', error);
+      throw new Error('Invalid save game file format');
+    }
+  }
+
+  /**
+   * Validate save game data structure
+   */
+  private validateSaveGameData(data: any): void {
+    const required = ['commander', 'playerShip', 'galaxy', 'settings'];
+    
+    for (const field of required) {
+      if (!(field in data)) {
+        throw new Error(`Missing required field: ${field}`);
+      }
+    }
+  }
+
+  /**
+   * Clear all saved games
+   */
+  public async clearAllSaves(): Promise<void> {
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([this.saveGamesStore], 'readwrite');
+      const store = transaction.objectStore(this.saveGamesStore);
+
+      const request = store.clear();
+
+      request.onsuccess = () => {
+        this.logger.info('All save games cleared');
+        resolve();
+      };
+
+      request.onerror = () => {
+        this.logger.error('Failed to clear save games');
+        reject(new Error('Failed to clear save games'));
+      };
+    });
+  }
+
+  /**
+   * Get storage usage information
+   */
+  public async getStorageInfo(): Promise<{ used: number; quota: number }> {
+    if ('storage' in navigator && 'estimate' in navigator.storage) {
+      try {
+        const estimate = await navigator.storage.estimate();
+        return {
+          used: estimate.usage || 0,
+          quota: estimate.quota || 0
+        };
+      } catch (error) {
+        this.logger.warn('Failed to get storage estimate', error);
+      }
+    }
+    
+    return { used: 0, quota: 0 };
+  }
+}
+
+/**
+ * High-level save game manager
+ */
+export class SaveGameManager {
+  private saveGameStorage: SaveGameStorage;
+  private settingsStorage: SettingsStorage;
+  private logger: Logger;
+  private autoSaveInterval: number | null = null;
+  private autoSaveEnabled: boolean = true;
+  private autoSaveIntervalMs: number = 30000; // 30 seconds
+
+  constructor() {
+    this.saveGameStorage = SaveGameStorage.getInstance();
+    this.settingsStorage = SettingsStorage.getInstance();
+    this.logger = Logger.getInstance();
+  }
+
+  /**
+   * Initialize save game manager
+   */
+  public async initialize(): Promise<void> {
+    await this.saveGameStorage.initialize();
+    this.logger.info('Save game manager initialized');
+  }
+
+  /**
+   * Save the current game state
+   */
+  public async saveCurrentGame(
+    saveData: SaveGameData, 
+    saveName?: string,
+    isAutoSave: boolean = false
+  ): Promise<string> {
+    try {
+      const timestamp = new Date().toISOString();
+      const name = isAutoSave ? `Auto Save - ${timestamp}` : (saveName || `Manual Save - ${timestamp}`);
+      
+      const saveId = await this.saveGameStorage.saveGame(saveData, name);
+      
+      this.logger.info(`Game saved: ${saveId} ${isAutoSave ? '(Auto)' : ''}`);
+      return saveId;
+    } catch (error) {
+      this.logger.error('Failed to save current game', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Load a saved game
+   */
+  public async loadGame(saveId: string): Promise<SaveGameData | null> {
+    try {
+      const saveData = await this.saveGameStorage.loadGame(saveId);
+      if (saveData) {
+        this.logger.info(`Game loaded: ${saveId}`);
+      }
+      return saveData;
+    } catch (error) {
+      this.logger.error('Failed to load game', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get list of all saved games
+   */
+  public async getSaveGameList(): Promise<Array<{ id: string; timestamp: number; commanderName?: string }>> {
+    return await this.saveGameStorage.getSaveGameList();
+  }
+
+  /**
+   * Delete a saved game
+   */
+  public async deleteSaveGame(saveId: string): Promise<void> {
+    try {
+      await this.saveGameStorage.deleteGame(saveId);
+      this.logger.info(`Save game deleted: ${saveId}`);
+    } catch (error) {
+      this.logger.error('Failed to delete save game', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Enable auto-save
+   */
+  public enableAutoSave(saveFunction: () => Promise<SaveGameData>, intervalMs?: number): void {
+    if (this.autoSaveInterval) {
+      this.disableAutoSave();
+    }
+
+    this.autoSaveEnabled = true;
+    this.autoSaveIntervalMs = intervalMs || 30000;
+
+    this.autoSaveInterval = window.setInterval(async () => {
+      try {
+        if (this.autoSaveEnabled) {
+          const saveData = await saveFunction();
+          await this.saveCurrentGame(saveData, undefined, true);
+        }
+      } catch (error) {
+        this.logger.error('Auto-save failed', error);
+      }
+    }, this.autoSaveIntervalMs);
+
+    this.logger.info('Auto-save enabled');
+  }
+
+  /**
+   * Disable auto-save
+   */
+  public disableAutoSave(): void {
+    if (this.autoSaveInterval) {
+      clearInterval(this.autoSaveInterval);
+      this.autoSaveInterval = null;
+      this.autoSaveEnabled = false;
+      this.logger.info('Auto-save disabled');
+    }
+  }
+
+  /**
+   * Export save game to file
+   */
+  public async exportSaveGame(saveId: string): Promise<void> {
+    try {
+      const exportData = await this.saveGameStorage.exportSaveGame(saveId);
+      if (exportData) {
+        const blob = new Blob([exportData], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `alite_save_${saveId}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        
+        URL.revokeObjectURL(url);
+        this.logger.info(`Save game exported: ${saveId}`);
+      }
+    } catch (error) {
+      this.logger.error('Failed to export save game', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Import save game from file
+   */
+  public async importSaveGame(file: File): Promise<string> {
+    try {
+      const text = await file.text();
+      const saveId = await this.saveGameStorage.importSaveGame(text);
+      this.logger.info(`Save game imported: ${saveId}`);
+      return saveId;
+    } catch (error) {
+      this.logger.error('Failed to import save game', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get storage usage information
+   */
+  public async getStorageInfo(): Promise<{ used: number; quota: number; saveCount: number }> {
+    const [storageInfo, saveList] = await Promise.all([
+      this.saveGameStorage.getStorageInfo(),
+      this.getSaveGameList()
+    ]);
+
+    return {
+      ...storageInfo,
+      saveCount: saveList.length
+    };
+  }
+
+  /**
+   * Create a new game with default data
+   */
+  public createNewGameData(): SaveGameData {
+    return {
+      version: '1.0.0',
+      timestamp: Date.now(),
+      commander: {
+        name: 'Commander',
+        credits: 1000,
+        score: 0,
+        rating: 'Harmless',
+        legalStatus: 0,
+        missionsCompleted: 0,
+        shipsOwned: ['Cobra Mk III'],
+        currentLocation: { galaxy: 0, system: 7 }
+      },
+      playerShip: {
+        type: 'Cobra Mk III',
+        cargoCapacity: 20,
+        cargo: [],
+        equipment: ['Pulse Laser', 'Fuel Scoops'],
+        hull: 100,
+        shields: 100,
+        fuel: 100,
+        energy: 100
+      },
+      galaxy: {
+        galaxies: [],
+        currentGalaxy: 0,
+        currentSystem: 7
+      },
+      settings: this.settingsStorage.getDefaultSettings()
+    };
+  }
+}

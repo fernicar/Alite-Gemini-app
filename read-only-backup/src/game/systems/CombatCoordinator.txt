@@ -1,0 +1,598 @@
+/**
+ * Combat Coordinator - Central integration hub for all combat systems
+ * Orchestrates weapon, projectile, damage, energy, targeting, and effects systems
+ */
+
+import { Vector3D } from '../../types/index.js';
+import { WeaponSystem, WeaponTarget } from './WeaponSystem.js';
+import { ProjectileSystem } from './ProjectileSystem.js';
+import { DamageSystem } from './DamageSystem.js';
+import { EnergyManagementSystem } from './EnergyManagementSystem.js';
+import { CombatTargetingSystem } from './CombatTargetingSystem.js';
+import { ExplosiveEffectsSystem } from './ExplosiveEffectsSystem.js';
+import { WeaponType } from '../models/Ship.js';
+import { PhysicsSimulation } from './PhysicsSimulation.js';
+
+export interface CombatState {
+  mode: CombatMode;
+  isActive: boolean;
+  currentTarget: string | null;
+  threatLevel: 'peaceful' | 'alert' | 'combat' | 'emergency';
+  lastCombatTime: number;
+  combatTimer: number;
+  systemsOnline: Set<string>;
+}
+
+export enum CombatMode {
+  PEACEFUL = 'PEACEFUL',
+  ALERT = 'ALERT',
+  COMBAT = 'COMBAT',
+  RETREAT = 'RETREAT',
+  EMERGENCY = 'EMERGENCY'
+}
+
+export interface CombatAction {
+  type: 'fire' | 'evade' | 'retreat' | 'reload' | 'reposition';
+  target?: string;
+  priority: number;
+  duration: number;
+  energyCost: number;
+}
+
+export interface CombatUpdate {
+  projectiles: number;
+  damage: number;
+  energyUsage: number;
+  heatLevel: number;
+  shieldStatus: number;
+  hullStatus: number;
+  targetDistance: number;
+  threatAssessment: string;
+}
+
+export interface CombatPerformance {
+  accuracy: number; // 0-1
+  damageDealt: number;
+  damageReceived: number;
+  survivalTime: number;
+  efficiency: number; // Energy efficiency
+  effectiveness: number; // Combat effectiveness
+}
+
+/**
+ * Advanced Combat Coordinator for Elite-style space combat
+ */
+export class CombatCoordinator {
+  private weaponSystem: WeaponSystem;
+  private projectileSystem: ProjectileSystem;
+  private damageSystem: DamageSystem;
+  private energySystem: EnergyManagementSystem;
+  private targetingSystem: CombatTargetingSystem;
+  private effectsSystem: ExplosiveEffectsSystem;
+  private physics: PhysicsSimulation;
+
+  private combatState: CombatState;
+  private combatQueue: CombatAction[];
+  private performanceMetrics: CombatPerformance;
+  private autoCombat: boolean = false;
+  private lastUpdateTime: number = 0;
+
+  constructor(physics: PhysicsSimulation) {
+    // Initialize all combat systems
+    this.physics = physics;
+    this.damageSystem = new DamageSystem();
+    this.energySystem = new EnergyManagementSystem(10.0);
+    this.projectileSystem = new ProjectileSystem(this.damageSystem, physics);
+    this.weaponSystem = new WeaponSystem(this.projectileSystem, this.energySystem);
+    this.targetingSystem = new CombatTargetingSystem();
+    this.effectsSystem = new ExplosiveEffectsSystem(physics);
+
+    // Initialize combat state
+    this.combatState = {
+      mode: CombatMode.PEACEFUL,
+      isActive: false,
+      currentTarget: null,
+      threatLevel: 'peaceful',
+      lastCombatTime: 0,
+      combatTimer: 0,
+      systemsOnline: new Set(['weapons', 'shields', 'targeting', 'effects'])
+    };
+
+    this.combatQueue = [];
+    this.performanceMetrics = {
+      accuracy: 0,
+      damageDealt: 0,
+      damageReceived: 0,
+      survivalTime: 0,
+      efficiency: 0,
+      effectiveness: 0
+    };
+
+    this.initializeCombatSystems();
+  }
+
+  /**
+   * Initialize and connect all combat systems
+   */
+  private initializeCombatSystems(): void {
+    // Request power for combat systems
+    this.energySystem.requestPower('weapons', 3.0, 7);
+    this.energySystem.requestPower('targeting', 1.0, 6);
+    this.energySystem.requestPower('effects', 0.5, 3);
+  }
+
+  /**
+   * Update combat system (called every frame)
+   */
+  update(deltaTime: number, shipPosition: Vector3D, shipVelocity: Vector3D): CombatUpdate {
+    this.lastUpdateTime += deltaTime;
+
+    // Update combat state
+    this.updateCombatState(deltaTime);
+    
+    // Update all combat systems
+    this.weaponSystem.update(deltaTime);
+    this.projectileSystem.update(deltaTime);
+    this.damageSystem.update(deltaTime);
+    this.energySystem.update(deltaTime);
+    this.targetingSystem.update(deltaTime, shipPosition);
+    this.effectsSystem.update(deltaTime);
+
+    // Process combat actions
+    this.processCombatQueue(deltaTime, shipPosition);
+
+    // Auto-combat logic
+    if (this.autoCombat && this.combatState.mode === CombatMode.COMBAT) {
+      this.executeAutoCombat(deltaTime, shipPosition, shipVelocity);
+    }
+
+    // Calculate performance metrics
+    this.updatePerformanceMetrics(deltaTime);
+
+    return this.generateCombatUpdate();
+  }
+
+  /**
+   * Enter combat mode
+   */
+  enterCombatMode(threatLevel: 'peaceful' | 'alert' | 'combat' | 'emergency'): void {
+    this.combatState.mode = this.getCombatModeFromThreat(threatLevel);
+    this.combatState.isActive = true;
+    this.combatState.threatLevel = threatLevel;
+    this.combatState.lastCombatTime = this.lastUpdateTime;
+    this.combatState.combatTimer = 0;
+
+    // Activate all combat systems
+    this.combatState.systemsOnline.add('weapons');
+    this.combatState.systemsOnline.add('targeting');
+    this.combatState.systemsOnline.add('effects');
+
+    // Boost power to combat systems
+    this.energySystem.setPowerDistribution({
+      weapons: 4.0,
+      shields: 2.5,
+      engines: 2.0,
+      lifeSupport: 1.0,
+      sensors: 0.5,
+      utility: 0.5,
+      reserves: 0
+    });
+  }
+
+  /**
+   * Exit combat mode
+   */
+  exitCombatMode(): void {
+    this.combatState.mode = CombatMode.PEACEFUL;
+    this.combatState.isActive = false;
+    this.combatState.currentTarget = null;
+    this.combatState.threatLevel = 'peaceful';
+    
+    // Power down combat systems
+    this.energySystem.setPowerDistribution({
+      weapons: 2.0,
+      shields: 2.0,
+      engines: 3.0,
+      lifeSupport: 1.0,
+      sensors: 1.0,
+      utility: 1.0,
+      reserves: 0
+    });
+  }
+
+  /**
+   * Fire weapons at target
+   */
+  fireAtTarget(targetId: string): boolean {
+    const target = this.targetingSystem.getCurrentTarget();
+    if (!target || target.id !== targetId) {
+      return false;
+    }
+
+    const weaponTarget: WeaponTarget = {
+      id: targetId,
+      position: target.position,
+      velocity: target.velocity,
+      size: target.size,
+      type: target.type
+    };
+
+    // Get optimal weapons for target distance and size
+    const optimalWeapons = this.weaponSystem.getOptimalWeapons(
+      target.distance,
+      target.size
+    );
+
+    if (optimalWeapons.length === 0) {
+      return false;
+    }
+
+    // Fire the best weapon
+    const weapon = optimalWeapons[0];
+    const result = this.weaponSystem.fireWeapon(weapon.id, weaponTarget);
+    
+    if (result.success && result.projectileId) {
+      // Add to combat actions
+      this.addCombatAction({
+        type: 'fire',
+        target: targetId,
+        priority: 8,
+        duration: weapon.specifications.cooldownTime,
+        energyCost: result.energyUsed
+      });
+      
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Acquire and track target
+   */
+  acquireTarget(position: Vector3D, weaponsRange: number = 0): boolean {
+    const result = this.targetingSystem.acquireTarget(position, weaponsRange);
+    
+    if (result.target) {
+      this.combatState.currentTarget = result.target.id;
+      
+      // Add combat action for target acquisition
+      this.addCombatAction({
+        type: 'reposition',
+        target: result.target.id,
+        priority: 5,
+        duration: 2.0,
+        energyCost: 0
+      });
+      
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Add weapon to combat system
+   */
+  addWeapon(weaponData: any): string {
+    // This would integrate with actual ship equipment system
+    // For now, just a placeholder
+    return this.weaponSystem.installWeapon(weaponData, { x: 0, y: 0, z: 0 });
+  }
+
+  /**
+   * Enable/disable automatic combat
+   */
+  setAutoCombat(enabled: boolean): void {
+    this.autoCombat = enabled;
+    if (enabled && !this.combatState.isActive) {
+      this.enterCombatMode('alert');
+    }
+  }
+
+  /**
+   * Get combat performance statistics
+   */
+  getPerformanceMetrics(): CombatPerformance {
+    return { ...this.performanceMetrics };
+  }
+
+  /**
+   * Get current combat state
+   */
+  getCombatState(): CombatState {
+    return { ...this.combatState };
+  }
+
+  /**
+   * Get target threat assessment
+   */
+  getThreatAssessment(position: Vector3D): any {
+    return this.targetingSystem.getThreatAssessment(position);
+  }
+
+  /**
+   * Process combat action queue
+   */
+  private processCombatQueue(deltaTime: number, shipPosition: Vector3D): void {
+    const actionsToProcess: CombatAction[] = [];
+    
+    this.combatQueue.forEach(action => {
+      if (action.duration > 0) {
+        action.duration -= deltaTime;
+        if (action.duration <= 0) {
+          actionsToProcess.push(action);
+        }
+      } else {
+        actionsToProcess.push(action);
+      }
+    });
+
+    // Remove completed actions
+    this.combatQueue = this.combatQueue.filter(action => action.duration > 0);
+    
+    // Process completed actions
+    actionsToProcess.forEach(action => {
+      this.executeCombatAction(action, shipPosition);
+    });
+  }
+
+  /**
+   * Execute individual combat action
+   */
+  private executeCombatAction(action: CombatAction, shipPosition: Vector3D): void {
+    switch (action.type) {
+      case 'fire':
+        if (action.target) {
+          this.fireAtTarget(action.target);
+        }
+        break;
+        
+      case 'evade':
+        // Calculate evasion maneuver
+        this.executeEvasionManeuver();
+        break;
+        
+      case 'retreat':
+        this.executeRetreatManeuver();
+        break;
+        
+      case 'reposition':
+        if (action.target) {
+          this.executeRepositioning(action.target, shipPosition);
+        }
+        break;
+    }
+  }
+
+  /**
+   * Execute automatic combat decisions
+   */
+  private executeAutoCombat(deltaTime: number, shipPosition: Vector3D, shipVelocity: Vector3D): void {
+    const currentTarget = this.targetingSystem.getCurrentTarget();
+    
+    if (!currentTarget) {
+      // Try to acquire target
+      this.acquireTarget(shipPosition, 500);
+      return;
+    }
+
+    // Calculate combat decisions
+    const distance = currentTarget.distance;
+    const threat = currentTarget.threat;
+    
+    // Tactical decisions based on distance and threat
+    if (distance < 100 && threat !== 'FRIENDLY') {
+      // Close combat - fire weapons
+      if (Math.random() < 0.8) { // 80% chance to fire
+        this.fireAtTarget(currentTarget.id);
+      }
+    } else if (distance > 300 && threat !== 'FRIENDLY') {
+      // Long range - reposition for better angle
+      if (Math.random() < 0.3) { // 30% chance to reposition
+        this.addCombatAction({
+          type: 'reposition',
+          target: currentTarget.id,
+          priority: 4,
+          duration: 3.0,
+          energyCost: 0
+        });
+      }
+    }
+
+    // Emergency actions
+    const damageReport = this.damageSystem.getDamageReport('player');
+    if (damageReport.hullStatus === 'critical') {
+      this.addCombatAction({
+        type: 'retreat',
+        priority: 10,
+        duration: 5.0,
+        energyCost: 0
+      });
+    }
+  }
+
+  /**
+   * Execute evasion maneuver
+   */
+  private executeEvasionManeuver(): void {
+    // This would integrate with navigation/physics system
+    // For now, just a placeholder
+  }
+
+  /**
+   * Execute retreat maneuver
+   */
+  private executeRetreatManeuver(): void {
+    this.combatState.mode = CombatMode.RETREAT;
+    this.combatState.threatLevel = 'emergency';
+  }
+
+  /**
+   * Execute repositioning for better combat angle
+   */
+  private executeRepositioning(targetId: string, shipPosition: Vector3D): void {
+    const target = this.targetingSystem.getCurrentTarget();
+    if (target && target.id === targetId) {
+      // Calculate optimal approach vector
+      // This would integrate with navigation system
+    }
+  }
+
+  /**
+   * Update combat state
+   */
+  private updateCombatState(deltaTime: number): void {
+    if (this.combatState.isActive) {
+      this.combatState.combatTimer += deltaTime;
+      
+      // Check for combat end condition (no threats for 30 seconds)
+      if (this.lastUpdateTime - this.combatState.lastCombatTime > 30) {
+        this.exitCombatMode();
+      }
+    }
+  }
+
+  /**
+   * Update performance metrics
+   */
+  private updatePerformanceMetrics(deltaTime: number): void {
+    const stats = this.damageSystem.getCombatStats('player');
+    this.performanceMetrics.damageDealt = stats.damageDealt;
+    this.performanceMetrics.damageReceived = stats.damageReceived;
+    this.performanceMetrics.survivalTime = stats.survivalTime;
+    
+    // Calculate efficiency (damage per energy spent)
+    const totalEnergyUsed = this.weaponSystem.getWeapons()
+      .reduce((sum, weapon) => sum + (weapon.energyCost * 60), 0); // Rough estimate
+    
+    this.performanceMetrics.efficiency = totalEnergyUsed > 0 ? 
+      stats.damageDealt / totalEnergyUsed : 0;
+    
+    // Calculate effectiveness (damage ratio)
+    this.performanceMetrics.effectiveness = stats.damageReceived > 0 ? 
+      stats.damageDealt / stats.damageReceived : stats.damageDealt;
+    
+    // Calculate accuracy (hit rate simulation)
+    this.performanceMetrics.accuracy = this.calculateAccuracy();
+  }
+
+  /**
+   * Calculate weapon accuracy
+   */
+  private calculateAccuracy(): number {
+    const weapons = this.weaponSystem.getWeapons();
+    if (weapons.length === 0) return 0;
+    
+    // Simplified accuracy calculation based on heat levels and cooldowns
+    let totalAccuracy = 0;
+    weapons.forEach(weapon => {
+      const heatPenalty = weapon.heatLevel > 50 ? (weapon.heatLevel - 50) * 0.002 : 0;
+      const cooldownPenalty = weapon.cooldown > 0 ? 0.1 : 0;
+      const weaponAccuracy = Math.max(0.1, weapon.accuracy - heatPenalty - cooldownPenalty);
+      totalAccuracy += weaponAccuracy;
+    });
+    
+    return totalAccuracy / weapons.length;
+  }
+
+  /**
+   * Add combat action to queue
+   */
+  private addCombatAction(action: CombatAction): void {
+    // Insert based on priority
+    let inserted = false;
+    for (let i = 0; i < this.combatQueue.length; i++) {
+      if (this.combatQueue[i].priority < action.priority) {
+        this.combatQueue.splice(i, 0, action);
+        inserted = true;
+        break;
+      }
+    }
+    
+    if (!inserted) {
+      this.combatQueue.push(action);
+    }
+  }
+
+  /**
+   * Generate combat update report
+   */
+  private generateCombatUpdate(): CombatUpdate {
+    const projectileStats = this.projectileSystem.getProjectileStats();
+    const weaponHeat = this.weaponSystem.getHeatLevels();
+    const averageHeat = weaponHeat.size > 0 ? 
+      Array.from(weaponHeat.values()).reduce((sum, heat) => sum + heat, 0) / weaponHeat.size : 0;
+    
+    const currentTarget = this.targetingSystem.getCurrentTarget();
+    
+    return {
+      projectiles: projectileStats.active,
+      damage: 0, // Would calculate from damage events
+      energyUsage: this.energySystem.getPowerPlantStatus().currentOutput,
+      heatLevel: averageHeat,
+      shieldStatus: 100, // Would get from actual ship status
+      hullStatus: 100, // Would get from actual ship status
+      targetDistance: currentTarget ? currentTarget.distance : 0,
+      threatAssessment: currentTarget ? currentTarget.threat : 'none'
+    };
+  }
+
+  /**
+   * Convert threat level to combat mode
+   */
+  private getCombatModeFromThreat(threat: 'peaceful' | 'alert' | 'combat' | 'emergency'): CombatMode {
+    switch (threat) {
+      case 'peaceful': return CombatMode.PEACEFUL;
+      case 'alert': return CombatMode.ALERT;
+      case 'combat': return CombatMode.COMBAT;
+      case 'emergency': return CombatMode.EMERGENCY;
+      default: return CombatMode.PEACEFUL;
+    }
+  }
+
+  /**
+   * Get system integration status
+   */
+  getSystemStatus(): {
+    weapons: number;
+    projectiles: number;
+    energy: any;
+    targeting: any;
+    effects: any;
+    damage: any;
+    combatMode: CombatMode;
+    systemsOnline: string[];
+  } {
+    return {
+      weapons: this.weaponSystem.getWeapons().length,
+      projectiles: this.projectileSystem.getProjectileStats().active,
+      energy: this.energySystem.getPowerSystemDiagnostics(),
+      targeting: this.targetingSystem.getSystemStatus(),
+      effects: this.effectsSystem.getSystemStatus(),
+      damage: this.damageSystem.getSystemSummary(),
+      combatMode: this.combatState.mode,
+      systemsOnline: Array.from(this.combatState.systemsOnline)
+    };
+  }
+
+  /**
+   * Reset combat system
+   */
+  resetCombat(): void {
+    this.exitCombatMode();
+    this.combatQueue = [];
+    this.projectileSystem.clearAllProjectiles();
+    this.effectsSystem.clearAllEffects();
+    this.damageSystem.cleanupOldEvents();
+    
+    this.performanceMetrics = {
+      accuracy: 0,
+      damageDealt: 0,
+      damageReceived: 0,
+      survivalTime: 0,
+      efficiency: 0,
+      effectiveness: 0
+    };
+  }
+}

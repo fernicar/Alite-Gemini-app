@@ -1,0 +1,343 @@
+import { LogLevel } from '@types/index';
+
+/**
+ * Advanced logging system for the Alite game engine
+ */
+export class Logger {
+  private static instance: Logger;
+  private logLevel: LogLevel = LogLevel.INFO;
+  private logs: LogEntry[] = [];
+  private maxLogs: number = 1000;
+  private listeners: ((entry: LogEntry) => void)[] = [];
+
+  private constructor() {}
+
+  public static getInstance(): Logger {
+    if (!Logger.instance) {
+      Logger.instance = new Logger();
+    }
+    return Logger.instance;
+  }
+
+  public setLogLevel(level: LogLevel): void {
+    this.logLevel = level;
+  }
+
+  public debug(message: string, ...args: any[]): void {
+    this.log(LogLevel.DEBUG, message, ...args);
+  }
+
+  public info(message: string, ...args: any[]): void {
+    this.log(LogLevel.INFO, message, ...args);
+  }
+
+  public warn(message: string, ...args: any[]): void {
+    this.log(LogLevel.WARN, message, ...args);
+  }
+
+  public error(message: string, ...args: any[]): void {
+    this.log(LogLevel.ERROR, message, ...args);
+  }
+
+  private log(level: LogLevel, message: string, ...args: any[]): void {
+    if (this.shouldLog(level)) {
+      const timestamp = new Date().toISOString();
+      const formattedMessage = this.formatMessage(message, ...args);
+      const entry: LogEntry = {
+        level,
+        message: formattedMessage,
+        timestamp,
+        args
+      };
+
+      this.logs.push(entry);
+      this.trimLogs();
+      this.notifyListeners(entry);
+      
+      // Console output with styling
+      this.outputToConsole(entry);
+    }
+  }
+
+  private shouldLog(level: LogLevel): boolean {
+    const levels = {
+      [LogLevel.DEBUG]: 0,
+      [LogLevel.INFO]: 1,
+      [LogLevel.WARN]: 2,
+      [LogLevel.ERROR]: 3
+    };
+    return levels[level] >= levels[this.logLevel];
+  }
+
+  private formatMessage(message: string, ...args: any[]): string {
+    if (args.length === 0) return message;
+    
+    try {
+      return message.replace(/\{(\d+)\}/g, (match, index) => {
+        const argIndex = parseInt(index, 10);
+        return args[argIndex] !== undefined ? String(args[argIndex]) : match;
+      });
+    } catch {
+      return `${message} ${args.join(' ')}`;
+    }
+  }
+
+  private outputToConsole(entry: LogEntry): void {
+    const { level, message } = entry;
+    
+    switch (level) {
+      case LogLevel.DEBUG:
+        console.debug(`[DEBUG] ${message}`);
+        break;
+      case LogLevel.INFO:
+        console.info(`[INFO] ${message}`);
+        break;
+      case LogLevel.WARN:
+        console.warn(`[WARN] ${message}`);
+        break;
+      case LogLevel.ERROR:
+        console.error(`[ERROR] ${message}`);
+        break;
+    }
+  }
+
+  private trimLogs(): void {
+    if (this.logs.length > this.maxLogs) {
+      this.logs = this.logs.slice(-this.maxLogs);
+    }
+  }
+
+  private notifyListeners(entry: LogEntry): void {
+    this.listeners.forEach(listener => listener(entry));
+  }
+
+  public addListener(listener: (entry: LogEntry) => void): void {
+    this.listeners.push(listener);
+  }
+
+  public removeListener(listener: (entry: LogEntry) => void): void {
+    const index = this.listeners.indexOf(listener);
+    if (index > -1) {
+      this.listeners.splice(index, 1);
+    }
+  }
+
+  public getLogs(level?: LogLevel): LogEntry[] {
+    if (!level) return [...this.logs];
+    return this.logs.filter(entry => entry.level === level);
+  }
+
+  public clear(): void {
+    this.logs.length = 0;
+  }
+
+  public exportLogs(): string {
+    return this.logs
+      .map(entry => `[${entry.timestamp}] ${entry.level}: ${entry.message}`)
+      .join('\n');
+  }
+}
+
+interface LogEntry {
+  level: LogLevel;
+  message: string;
+  timestamp: string;
+  args: any[];
+}
+
+/**
+ * Performance monitoring and metrics collection
+ */
+export class PerformanceMonitor {
+  private static instance: PerformanceMonitor;
+  private frameTimes: number[] = [];
+  private lastFrameTime: number = 0;
+  private fps: number = 0;
+  private frameCount: number = 0;
+  private maxFrameTimes: number = 60;
+
+  private constructor() {}
+
+  public static getInstance(): PerformanceMonitor {
+    if (!PerformanceMonitor.instance) {
+      PerformanceMonitor.instance = new PerformanceMonitor();
+    }
+    return PerformanceMonitor.instance;
+  }
+
+  public startFrame(): void {
+    this.lastFrameTime = performance.now();
+  }
+
+  public endFrame(): void {
+    const now = performance.now();
+    const frameTime = now - this.lastFrameTime;
+    
+    this.frameTimes.push(frameTime);
+    if (this.frameTimes.length > this.maxFrameTimes) {
+      this.frameTimes.shift();
+    }
+
+    // Calculate FPS
+    this.frameCount++;
+    if (this.frameCount % 60 === 0) { // Update every 60 frames
+      const avgFrameTime = this.frameTimes.reduce((a, b) => a + b, 0) / this.frameTimes.length;
+      this.fps = Math.round(1000 / avgFrameTime);
+    }
+  }
+
+  public getFPS(): number {
+    return this.fps;
+  }
+
+  public getAverageFrameTime(): number {
+    if (this.frameTimes.length === 0) return 0;
+    return this.frameTimes.reduce((a, b) => a + b, 0) / this.frameTimes.length;
+  }
+
+  public getMinFrameTime(): number {
+    if (this.frameTimes.length === 0) return 0;
+    return Math.min(...this.frameTimes);
+  }
+
+  public getMaxFrameTime(): number {
+    if (this.frameTimes.length === 0) return 0;
+    return Math.max(...this.frameTimes);
+  }
+
+  public getMemoryUsage(): number {
+    if ('memory' in performance) {
+      return (performance as any).memory.usedJSHeapSize / (1024 * 1024); // MB
+    }
+    return 0;
+  }
+
+  public getMetrics() {
+    return {
+      fps: this.getFPS(),
+      avgFrameTime: this.getAverageFrameTime(),
+      minFrameTime: this.getMinFrameTime(),
+      maxFrameTime: this.getMaxFrameTime(),
+      memoryUsage: this.getMemoryUsage()
+    };
+  }
+
+  public reset(): void {
+    this.frameTimes.length = 0;
+    this.frameCount = 0;
+    this.fps = 0;
+  }
+}
+
+/**
+ * Assertion utility for development-time checks
+ */
+export class Assert {
+  public static assert(condition: boolean, message?: string): void {
+    if (!condition) {
+      const errorMessage = message || 'Assertion failed';
+      Logger.getInstance().error(`ASSERTION FAILED: ${errorMessage}`);
+      throw new Error(errorMessage);
+    }
+  }
+
+  public static assertNotNull<T>(value: T | null | undefined, message?: string): T {
+    this.assert(value !== null && value !== undefined, message || 'Value is null or undefined');
+    return value!;
+  }
+
+  public static assertString(value: any, message?: string): string {
+    this.assert(typeof value === 'string', message || `Expected string, got ${typeof value}`);
+    return value;
+  }
+
+  public static assertNumber(value: any, message?: string): number {
+    this.assert(typeof value === 'number', message || `Expected number, got ${typeof value}`);
+    return value;
+  }
+
+  public static assertFunction(value: any, message?: string): Function {
+    this.assert(typeof value === 'function', message || `Expected function, got ${typeof value}`);
+    return value;
+  }
+}
+
+/**
+ * Debug overlay for in-game performance monitoring
+ */
+export class DebugOverlay {
+  private canvas: HTMLCanvasElement;
+  private ctx: CanvasRenderingContext2D;
+  private visible: boolean = false;
+  private position: { x: number; y: number } = { x: 10, y: 10 };
+
+  constructor() {
+    this.canvas = document.createElement('canvas');
+    this.canvas.width = 300;
+    this.canvas.height = 200;
+    this.canvas.style.position = 'absolute';
+    this.canvas.style.top = '0';
+    this.canvas.style.left = '0';
+    this.canvas.style.pointerEvents = 'none';
+    this.canvas.style.zIndex = '9999';
+    this.canvas.style.opacity = '0.8';
+    this.canvas.style.display = 'none';
+
+    this.ctx = this.canvas.getContext('2d')!;
+  }
+
+  public show(): void {
+    this.visible = true;
+    this.canvas.style.display = 'block';
+  }
+
+  public hide(): void {
+    this.visible = false;
+    this.canvas.style.display = 'none';
+  }
+
+  public toggle(): void {
+    this.visible ? this.hide() : this.show();
+  }
+
+  public update(metrics: any): void {
+    if (!this.visible) return;
+
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    
+    // Background
+    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    
+    // Text
+    this.ctx.fillStyle = '#00ff00';
+    this.ctx.font = '12px monospace';
+    
+    let y = 20;
+    const lineHeight = 16;
+    
+    this.ctx.fillText(`FPS: ${metrics.fps}`, 10, y); y += lineHeight;
+    this.ctx.fillText(`Frame Time: ${metrics.avgFrameTime.toFixed(2)}ms`, 10, y); y += lineHeight;
+    this.ctx.fillText(`Min: ${metrics.minFrameTime.toFixed(2)}ms`, 10, y); y += lineHeight;
+    this.ctx.fillText(`Max: ${metrics.maxFrameTime.toFixed(2)}ms`, 10, y); y += lineHeight;
+    this.ctx.fillText(`Memory: ${metrics.memoryUsage.toFixed(1)}MB`, 10, y); y += lineHeight;
+    
+    if (metrics.renderTime) {
+      this.ctx.fillText(`Render: ${metrics.renderTime.toFixed(2)}ms`, 10, y); y += lineHeight;
+    }
+    
+    if (metrics.updateTime) {
+      this.ctx.fillText(`Update: ${metrics.updateTime.toFixed(2)}ms`, 10, y); y += lineHeight;
+    }
+  }
+
+  public addTo(container: HTMLElement): void {
+    container.appendChild(this.canvas);
+  }
+
+  public remove(): void {
+    if (this.canvas.parentNode) {
+      this.canvas.parentNode.removeChild(this.canvas);
+    }
+  }
+}

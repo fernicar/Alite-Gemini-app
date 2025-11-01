@@ -1,0 +1,1134 @@
+/**
+ * Settings Screen - Game configuration and options
+ * Manages graphics, audio, controls, and game settings
+ */
+
+import { BaseScreen, UIManager, ScreenId } from '../ui/UIManager';
+import { UIPanel, UIButton, UIText, UIProgressBar, UIButtonOptions, UIPanelOptions } from '../ui/components/UIBasicComponents';
+import { Vector2D } from '../../types/index';
+
+export interface GameSettings {
+  graphics: {
+    resolution: { width: number; height: number };
+    fullscreen: boolean;
+    vsync: boolean;
+    antialias: boolean;
+    textureQuality: 'LOW' | 'MEDIUM' | 'HIGH';
+    shadows: boolean;
+    particles: boolean;
+  };
+  audio: {
+    masterVolume: number;
+    musicVolume: number;
+    sfxVolume: number;
+    spatialAudio: boolean;
+    audioDevice: string;
+  };
+  controls: {
+    mouseSensitivity: number;
+    invertY: boolean;
+    keyBindings: { [action: string]: string };
+    controllerEnabled: boolean;
+    controllerSensitivity: number;
+    joystickDeadzone: number;
+  };
+  game: {
+    difficulty: 'EASY' | 'NORMAL' | 'HARD' | 'INSANE';
+    autoSave: boolean;
+    tutorialEnabled: boolean;
+    showFPS: boolean;
+    autoDock: boolean;
+    quickDock: boolean;
+  };
+  interface: {
+    theme: 'DEFAULT' | 'DARK' | 'LIGHT' | 'COLORFUL';
+    fontSize: 'SMALL' | 'MEDIUM' | 'LARGE';
+    showTooltips: boolean;
+    confirmActions: boolean;
+    minimapSize: number;
+    hudOpacity: number;
+  };
+}
+
+export class SettingsScreen extends BaseScreen {
+  private settings: GameSettings;
+  private settingsPanel: UIPanel;
+  private controlPanel: UIPanel;
+  private graphicsPanel: UIPanel;
+  private audioPanel: UIPanel;
+  private controlsPanel: UIPanel;
+  private gamePanel: UIPanel;
+  private interfacePanel: UIPanel;
+  private activePanel: string = 'graphics';
+  private settingsChanged: boolean = false;
+
+  // UI Components
+  private volumeBars: Map<string, UIProgressBar> = new Map();
+  private toggleButtons: Map<string, UIButton> = new Map();
+  private selectionButtons: Map<string, UIButton> = new Map();
+
+  constructor() {
+    const rootComponent = new UIPanel('settings-root', {
+      width: 800,
+      height: 600,
+      backgroundColor: '#1a202c',
+      borderWidth: 0,
+      shadow: false,
+      opacity: 1.0
+    });
+
+    super('settings', 'Settings', rootComponent);
+
+    // Initialize default settings
+    this.settings = this.getDefaultSettings();
+
+    this.initializeUI();
+  }
+
+  private getDefaultSettings(): GameSettings {
+    return {
+      graphics: {
+        resolution: { width: 1024, height: 768 },
+        fullscreen: false,
+        vsync: true,
+        antialias: true,
+        textureQuality: 'MEDIUM',
+        shadows: true,
+        particles: true
+      },
+      audio: {
+        masterVolume: 0.8,
+        musicVolume: 0.6,
+        sfxVolume: 0.8,
+        spatialAudio: true,
+        audioDevice: 'Default'
+      },
+      controls: {
+        mouseSensitivity: 1.0,
+        invertY: false,
+        keyBindings: {
+          'move_forward': 'W',
+          'move_backward': 'S',
+          'move_left': 'A',
+          'move_right': 'D',
+          'fire': 'SPACE',
+          'dock': 'D',
+          'map': 'M',
+          'inventory': 'I'
+        },
+        controllerEnabled: false,
+        controllerSensitivity: 1.0,
+        joystickDeadzone: 0.2
+      },
+      game: {
+        difficulty: 'NORMAL',
+        autoSave: true,
+        tutorialEnabled: true,
+        showFPS: false,
+        autoDock: false,
+        quickDock: true
+      },
+      interface: {
+        theme: 'DEFAULT',
+        fontSize: 'MEDIUM',
+        showTooltips: true,
+        confirmActions: true,
+        minimapSize: 0.8,
+        hudOpacity: 0.9
+      }
+    };
+  }
+
+  private initializeUI(): void {
+    const root = this.component as UIPanel;
+
+    // Settings Panel (left navigation)
+    this.settingsPanel = new UIPanel('navigation', {
+      width: 200,
+      height: 480,
+      backgroundColor: '#2d3748',
+      borderColor: '#40e0ff',
+      borderWidth: 2,
+      cornerRadius: 0,
+      shadow: true,
+      opacity: 0.9
+    });
+    this.settingsPanel.position = { x: 20, y: 20 };
+
+    // Control Panel (bottom)
+    this.controlPanel = new UIPanel('controls', {
+      width: 760,
+      height: 80,
+      backgroundColor: '#2d3748',
+      borderColor: '#40e0ff',
+      borderWidth: 2,
+      cornerRadius: 0,
+      shadow: true,
+      opacity: 0.9
+    });
+    this.controlPanel.position = { x: 20, y: 500 };
+
+    // Initialize panels
+    this.initializeNavigationPanel();
+    this.initializeControlPanel();
+
+    // Add main panels
+    root.addChild(this.settingsPanel);
+    root.addChild(this.controlPanel);
+
+    // Load initial settings panel
+    this.loadSettingsPanel('graphics');
+  }
+
+  private initializeNavigationPanel(): void {
+    // Title
+    const title = new UIText('settings-title', 'SETTINGS', {
+      fontSize: 18,
+      fontFamily: 'Arial, sans-serif',
+      color: '#40e0ff',
+      textAlign: 'center',
+      bold: true
+    });
+    title.position = { x: 10, y: 15 };
+    title.size = { x: 180, y: 30 };
+    this.settingsPanel.addChild(title);
+
+    // Navigation buttons
+    const navButtons = [
+      { id: 'graphics', label: 'Graphics' },
+      { id: 'audio', label: 'Audio' },
+      { id: 'controls', label: 'Controls' },
+      { id: 'game', label: 'Game' },
+      { id: 'interface', label: 'Interface' }
+    ];
+
+    navButtons.forEach((button, index) => {
+      const navButton = new UIButton(`nav-${button.id}`, button.label, {
+        width: 160,
+        height: 40,
+        backgroundColor: button.id === 'graphics' ? '#4a5568' : '#2d3748',
+        textColor: '#ffffff',
+        fontSize: 14,
+        borderColor: '#40e0ff',
+        borderWidth: 2,
+        cornerRadius: 5
+      }, () => this.loadSettingsPanel(button.id));
+      
+      navButton.position = { x: 20, y: 60 + index * 50 };
+      this.settingsPanel.addChild(navButton);
+    });
+  }
+
+  private initializeControlPanel(): void {
+    // Apply button
+    const applyButton = new UIButton('apply', 'APPLY', {
+      width: 100,
+      height: 35,
+      backgroundColor: '#48bb78',
+      textColor: '#ffffff',
+      fontSize: 14,
+      borderColor: '#38a169',
+      borderWidth: 2,
+      cornerRadius: 5
+    }, () => this.applySettings());
+    applyButton.position = { x: 20, y: 20 };
+    this.controlPanel.addChild(applyButton);
+
+    // Reset button
+    const resetButton = new UIButton('reset', 'RESET', {
+      width: 100,
+      height: 35,
+      backgroundColor: '#ed8936',
+      textColor: '#ffffff',
+      fontSize: 14,
+      borderColor: '#dd6b20',
+      borderWidth: 2,
+      cornerRadius: 5
+    }, () => this.resetSettings());
+    resetButton.position = { x: 140, y: 20 };
+    this.controlPanel.addChild(resetButton);
+
+    // Save & Close button
+    const saveCloseButton = new UIButton('save-close', 'SAVE & CLOSE', {
+      width: 150,
+      height: 35,
+      backgroundColor: '#9f7aea',
+      textColor: '#ffffff',
+      fontSize: 14,
+      borderColor: '#805ad5',
+      borderWidth: 2,
+      cornerRadius: 5
+    }, () => this.saveAndClose());
+    saveCloseButton.position = { x: 260, y: 20 };
+    this.controlPanel.addChild(saveCloseButton);
+
+    // Cancel button
+    const cancelButton = new UIButton('cancel', 'CANCEL', {
+      width: 100,
+      height: 35,
+      backgroundColor: '#e53e3e',
+      textColor: '#ffffff',
+      fontSize: 14,
+      borderColor: '#c53030',
+      borderWidth: 2,
+      cornerRadius: 5
+    }, () => this.cancelSettings());
+    cancelButton.position = { x: 430, y: 20 };
+    this.controlPanel.addChild(cancelButton);
+
+    // Settings status
+    const statusText = new UIText('status', 'No changes made', {
+      fontSize: 12,
+      color: '#888888'
+    });
+    statusText.position = { x: 20, y: 60 };
+    statusText.size = { x: 200, y: 15 };
+    this.controlPanel.addChild(statusText);
+  }
+
+  private loadSettingsPanel(panelId: string): void {
+    // Remove existing settings panel
+    if (this.activePanel !== 'graphics') {
+      const existingPanel = this.findChild(`${this.activePanel}-panel`);
+      if (existingPanel) {
+        this.component.removeChild(existingPanel);
+      }
+    }
+
+    this.activePanel = panelId;
+
+    // Update navigation button colors
+    this.updateNavigationColors(panelId);
+
+    // Create new settings panel
+    switch (panelId) {
+      case 'graphics':
+        this.createGraphicsPanel();
+        break;
+      case 'audio':
+        this.createAudioPanel();
+        break;
+      case 'controls':
+        this.createControlsPanel();
+        break;
+      case 'game':
+        this.createGamePanel();
+        break;
+      case 'interface':
+        this.createInterfacePanel();
+        break;
+    }
+  }
+
+  private updateNavigationColors(activePanelId: string): void {
+    const navButtons = ['graphics', 'audio', 'controls', 'game', 'interface'];
+    navButtons.forEach(panelId => {
+      const button = this.settingsPanel.findChild(`nav-${panelId}`) as UIButton;
+      if (button) {
+        button.options.backgroundColor = panelId === activePanelId ? '#4a5568' : '#2d3748';
+      }
+    });
+  }
+
+  private createGraphicsPanel(): void {
+    this.graphicsPanel = new UIPanel('graphics-panel', {
+      width: 560,
+      height: 480,
+      backgroundColor: '#2d3748',
+      borderColor: '#40e0ff',
+      borderWidth: 2,
+      cornerRadius: 0,
+      shadow: true,
+      opacity: 0.9
+    });
+    this.graphicsPanel.position = { x: 240, y: 20 };
+
+    // Title
+    const title = new UIText('graphics-title', 'GRAPHICS SETTINGS', {
+      fontSize: 18,
+      fontFamily: 'Arial, sans-serif',
+      color: '#40e0ff',
+      textAlign: 'center',
+      bold: true
+    });
+    title.position = { x: 20, y: 15 };
+    title.size = { x: 520, y: 30 };
+    this.graphicsPanel.addChild(title);
+
+    let yPos = 60;
+
+    // Resolution settings
+    const resolutionLabel = new UIText('resolution-label', 'Resolution:', {
+      fontSize: 14,
+      color: '#ffffff'
+    });
+    resolutionLabel.position = { x: 20, y: yPos };
+    resolutionLabel.size = { x: 120, y: 25 };
+    this.graphicsPanel.addChild(resolutionLabel);
+
+    const resolutionButton = new UIButton('resolution', `${this.settings.graphics.resolution.width}x${this.settings.graphics.resolution.height}`, {
+      width: 150,
+      height: 30,
+      backgroundColor: '#4a5568',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.cycleResolution());
+    resolutionButton.position = { x: 150, y: yPos };
+    this.graphicsPanel.addChild(resolutionButton);
+
+    yPos += 40;
+
+    // Fullscreen toggle
+    const fullscreenLabel = new UIText('fullscreen-label', 'Fullscreen:', {
+      fontSize: 14,
+      color: '#ffffff'
+    });
+    fullscreenLabel.position = { x: 20, y: yPos };
+    fullscreenLabel.size = { x: 120, y: 25 };
+    this.graphicsPanel.addChild(fullscreenLabel);
+
+    const fullscreenButton = new UIButton('fullscreen', this.settings.graphics.fullscreen ? 'ON' : 'OFF', {
+      width: 80,
+      height: 30,
+      backgroundColor: this.settings.graphics.fullscreen ? '#48bb78' : '#e53e3e',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.toggleFullscreen());
+    fullscreenButton.position = { x: 150, y: yPos };
+    this.graphicsPanel.addChild(fullscreenButton);
+
+    yPos += 40;
+
+    // VSync toggle
+    const vsyncLabel = new UIText('vsync-label', 'VSync:', {
+      fontSize: 14,
+      color: '#ffffff'
+    });
+    vsyncLabel.position = { x: 20, y: yPos };
+    vsyncLabel.size = { x: 120, y: 25 };
+    this.graphicsPanel.addChild(vsyncLabel);
+
+    const vsyncButton = new UIButton('vsync', this.settings.graphics.vsync ? 'ON' : 'OFF', {
+      width: 80,
+      height: 30,
+      backgroundColor: this.settings.graphics.vsync ? '#48bb78' : '#e53e3e',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.toggleVSync());
+    vsyncButton.position = { x: 150, y: yPos };
+    this.graphicsPanel.addChild(vsyncButton);
+
+    yPos += 40;
+
+    // Antialiasing toggle
+    const antialiasLabel = new UIText('antialias-label', 'Antialiasing:', {
+      fontSize: 14,
+      color: '#ffffff'
+    });
+    antialiasLabel.position = { x: 20, y: yPos };
+    antialiasLabel.size = { x: 120, y: 25 };
+    this.graphicsPanel.addChild(antialiasLabel);
+
+    const antialiasButton = new UIButton('antialias', this.settings.graphics.antialias ? 'ON' : 'OFF', {
+      width: 80,
+      height: 30,
+      backgroundColor: this.settings.graphics.antialias ? '#48bb78' : '#e53e3e',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.toggleAntialias());
+    antialiasButton.position = { x: 150, y: yPos };
+    this.graphicsPanel.addChild(antialiasButton);
+
+    yPos += 40;
+
+    // Texture quality
+    const textureLabel = new UIText('texture-label', 'Texture Quality:', {
+      fontSize: 14,
+      color: '#ffffff'
+    });
+    textureLabel.position = { x: 20, y: yPos };
+    textureLabel.size = { x: 120, y: 25 };
+    this.graphicsPanel.addChild(textureLabel);
+
+    const textureButton = new UIButton('texture', this.settings.graphics.textureQuality, {
+      width: 100,
+      height: 30,
+      backgroundColor: '#4a5568',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.cycleTextureQuality());
+    textureButton.position = { x: 150, y: yPos };
+    this.graphicsPanel.addChild(textureButton);
+
+    this.component.addChild(this.graphicsPanel);
+  }
+
+  private createAudioPanel(): void {
+    this.audioPanel = new UIPanel('audio-panel', {
+      width: 560,
+      height: 480,
+      backgroundColor: '#2d3748',
+      borderColor: '#40e0ff',
+      borderWidth: 2,
+      cornerRadius: 0,
+      shadow: true,
+      opacity: 0.9
+    });
+    this.audioPanel.position = { x: 240, y: 20 };
+
+    // Title
+    const title = new UIText('audio-title', 'AUDIO SETTINGS', {
+      fontSize: 18,
+      fontFamily: 'Arial, sans-serif',
+      color: '#40e0ff',
+      textAlign: 'center',
+      bold: true
+    });
+    title.position = { x: 20, y: 15 };
+    title.size = { x: 520, y: 30 };
+    this.audioPanel.addChild(title);
+
+    let yPos = 60;
+
+    // Master volume
+    const masterLabel = new UIText('master-label', 'Master Volume:', {
+      fontSize: 14,
+      color: '#ffffff'
+    });
+    masterLabel.position = { x: 20, y: yPos };
+    masterLabel.size = { x: 150, y: 25 };
+    this.audioPanel.addChild(masterLabel);
+
+    const masterBar = new UIProgressBar('master-volume', {
+      width: 200,
+      height: 20,
+      value: this.settings.audio.masterVolume * 100,
+      maxValue: 100,
+      backgroundColor: '#4a5568',
+      fillColor: '#40e0ff',
+      borderColor: '#40e0ff',
+      borderWidth: 1,
+      showText: true
+    });
+    masterBar.position = { x: 180, y: yPos };
+    this.audioPanel.addChild(masterBar);
+    this.volumeBars.set('master', masterBar);
+
+    yPos += 35;
+
+    // Music volume
+    const musicLabel = new UIText('music-label', 'Music Volume:', {
+      fontSize: 14,
+      color: '#ffffff'
+    });
+    musicLabel.position = { x: 20, y: yPos };
+    musicLabel.size = { x: 150, y: 25 };
+    this.audioPanel.addChild(musicLabel);
+
+    const musicBar = new UIProgressBar('music-volume', {
+      width: 200,
+      height: 20,
+      value: this.settings.audio.musicVolume * 100,
+      maxValue: 100,
+      backgroundColor: '#4a5568',
+      fillColor: '#48bb78',
+      borderColor: '#48bb78',
+      borderWidth: 1,
+      showText: true
+    });
+    musicBar.position = { x: 180, y: yPos };
+    this.audioPanel.addChild(musicBar);
+    this.volumeBars.set('music', musicBar);
+
+    yPos += 35;
+
+    // SFX volume
+    const sfxLabel = new UIText('sfx-label', 'Sound Effects:', {
+      fontSize: 14,
+      color: '#ffffff'
+    });
+    sfxLabel.position = { x: 20, y: yPos };
+    sfxLabel.size = { x: 150, y: 25 };
+    this.audioPanel.addChild(sfxLabel);
+
+    const sfxBar = new UIProgressBar('sfx-volume', {
+      width: 200,
+      height: 20,
+      value: this.settings.audio.sfxVolume * 100,
+      maxValue: 100,
+      backgroundColor: '#4a5568',
+      fillColor: '#ed8936',
+      borderColor: '#ed8936',
+      borderWidth: 1,
+      showText: true
+    });
+    sfxBar.position = { x: 180, y: yPos };
+    this.audioPanel.addChild(sfxBar);
+    this.volumeBars.set('sfx', sfxBar);
+
+    yPos += 35;
+
+    // Spatial audio toggle
+    const spatialLabel = new UIText('spatial-label', 'Spatial Audio:', {
+      fontSize: 14,
+      color: '#ffffff'
+    });
+    spatialLabel.position = { x: 20, y: yPos };
+    spatialLabel.size = { x: 150, y: 25 };
+    this.audioPanel.addChild(spatialLabel);
+
+    const spatialButton = new UIButton('spatial', this.settings.audio.spatialAudio ? 'ON' : 'OFF', {
+      width: 80,
+      height: 30,
+      backgroundColor: this.settings.audio.spatialAudio ? '#48bb78' : '#e53e3e',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.toggleSpatialAudio());
+    spatialButton.position = { x: 180, y: yPos };
+    this.audioPanel.addChild(spatialButton);
+
+    this.component.addChild(this.audioPanel);
+  }
+
+  private createControlsPanel(): void {
+    this.controlsPanel = new UIPanel('controls-panel', {
+      width: 560,
+      height: 480,
+      backgroundColor: '#2d3748',
+      borderColor: '#40e0ff',
+      borderWidth: 2,
+      cornerRadius: 0,
+      shadow: true,
+      opacity: 0.9
+    });
+    this.controlsPanel.position = { x: 240, y: 20 };
+
+    // Title
+    const title = new UIText('controls-title', 'CONTROLS SETTINGS', {
+      fontSize: 18,
+      fontFamily: 'Arial, sans-serif',
+      color: '#40e0ff',
+      textAlign: 'center',
+      bold: true
+    });
+    title.position = { x: 20, y: 15 };
+    title.size = { x: 520, y: 30 };
+    this.controlsPanel.addChild(title);
+
+    let yPos = 60;
+
+    // Mouse sensitivity
+    const mouseLabel = new UIText('mouse-label', 'Mouse Sensitivity:', {
+      fontSize: 14,
+      color: '#ffffff'
+    });
+    mouseLabel.position = { x: 20, y: yPos };
+    mouseLabel.size = { x: 150, y: 25 };
+    this.controlsPanel.addChild(mouseLabel);
+
+    const mouseBar = new UIProgressBar('mouse-sensitivity', {
+      width: 200,
+      height: 20,
+      value: this.settings.controls.mouseSensitivity * 100,
+      maxValue: 200,
+      backgroundColor: '#4a5568',
+      fillColor: '#9f7aea',
+      borderColor: '#9f7aea',
+      borderWidth: 1,
+      showText: true
+    });
+    mouseBar.position = { x: 180, y: yPos };
+    this.controlsPanel.addChild(mouseBar);
+    this.volumeBars.set('mouse', mouseBar);
+
+    yPos += 35;
+
+    // Invert Y axis toggle
+    const invertLabel = new UIText('invert-label', 'Invert Y Axis:', {
+      fontSize: 14,
+      color: '#ffffff'
+    });
+    invertLabel.position = { x: 20, y: yPos };
+    invertLabel.size = { x: 150, y: 25 };
+    this.controlsPanel.addChild(invertLabel);
+
+    const invertButton = new UIButton('invert', this.settings.controls.invertY ? 'ON' : 'OFF', {
+      width: 80,
+      height: 30,
+      backgroundColor: this.settings.controls.invertY ? '#48bb78' : '#e53e3e',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.toggleInvertY());
+    invertButton.position = { x: 180, y: yPos };
+    this.controlsPanel.addChild(invertButton);
+
+    yPos += 35;
+
+    // Key bindings info
+    const keyInfo = new UIText('key-info', 'Key bindings can be customized in the main game', {
+      fontSize: 12,
+      color: '#888888'
+    });
+    keyInfo.position = { x: 20, y: yPos };
+    keyInfo.size = { x: 500, y: 20 };
+    this.controlsPanel.addChild(keyInfo);
+
+    this.component.addChild(this.controlsPanel);
+  }
+
+  private createGamePanel(): void {
+    this.gamePanel = new UIPanel('game-panel', {
+      width: 560,
+      height: 480,
+      backgroundColor: '#2d3748',
+      borderColor: '#40e0ff',
+      borderWidth: 2,
+      cornerRadius: 0,
+      shadow: true,
+      opacity: 0.9
+    });
+    this.gamePanel.position = { x: 240, y: 20 };
+
+    // Title
+    const title = new UIText('game-title', 'GAME SETTINGS', {
+      fontSize: 18,
+      fontFamily: 'Arial, sans-serif',
+      color: '#40e0ff',
+      textAlign: 'center',
+      bold: true
+    });
+    title.position = { x: 20, y: 15 };
+    title.size = { x: 520, y: 30 };
+    this.gamePanel.addChild(title);
+
+    let yPos = 60;
+
+    // Difficulty
+    const difficultyLabel = new UIText('difficulty-label', 'Difficulty:', {
+      fontSize: 14,
+      color: '#ffffff'
+    });
+    difficultyLabel.position = { x: 20, y: yPos };
+    difficultyLabel.size = { x: 120, y: 25 };
+    this.gamePanel.addChild(difficultyLabel);
+
+    const difficultyButton = new UIButton('difficulty', this.settings.game.difficulty, {
+      width: 120,
+      height: 30,
+      backgroundColor: '#4a5568',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.cycleDifficulty());
+    difficultyButton.position = { x: 150, y: yPos };
+    this.gamePanel.addChild(difficultyButton);
+
+    yPos += 40;
+
+    // Auto-save toggle
+    const autoSaveLabel = new UIText('autosave-label', 'Auto-Save:', {
+      fontSize: 14,
+      color: '#ffffff'
+    });
+    autoSaveLabel.position = { x: 20, y: yPos };
+    autoSaveLabel.size = { x: 120, y: 25 };
+    this.gamePanel.addChild(autoSaveLabel);
+
+    const autoSaveButton = new UIButton('autosave', this.settings.game.autoSave ? 'ON' : 'OFF', {
+      width: 80,
+      height: 30,
+      backgroundColor: this.settings.game.autoSave ? '#48bb78' : '#e53e3e',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.toggleAutoSave());
+    autoSaveButton.position = { x: 150, y: yPos };
+    this.gamePanel.addChild(autoSaveButton);
+
+    yPos += 40;
+
+    // Tutorial toggle
+    const tutorialLabel = new UIText('tutorial-label', 'Tutorial:', {
+      fontSize: 14,
+      color: '#ffffff'
+    });
+    tutorialLabel.position = { x: 20, y: yPos };
+    tutorialLabel.size = { x: 120, y: 25 };
+    this.gamePanel.addChild(tutorialLabel);
+
+    const tutorialButton = new UIButton('tutorial', this.settings.game.tutorialEnabled ? 'ON' : 'OFF', {
+      width: 80,
+      height: 30,
+      backgroundColor: this.settings.game.tutorialEnabled ? '#48bb78' : '#e53e3e',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.toggleTutorial());
+    tutorialButton.position = { x: 150, y: yPos };
+    this.gamePanel.addChild(tutorialButton);
+
+    yPos += 40;
+
+    // Show FPS toggle
+    const fpsLabel = new UIText('fps-label', 'Show FPS:', {
+      fontSize: 14,
+      color: '#ffffff'
+    });
+    fpsLabel.position = { x: 20, y: yPos };
+    fpsLabel.size = { x: 120, y: 25 };
+    this.gamePanel.addChild(fpsLabel);
+
+    const fpsButton = new UIButton('fps', this.settings.game.showFPS ? 'ON' : 'OFF', {
+      width: 80,
+      height: 30,
+      backgroundColor: this.settings.game.showFPS ? '#48bb78' : '#e53e3e',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.toggleShowFPS());
+    fpsButton.position = { x: 150, y: yPos };
+    this.gamePanel.addChild(fpsButton);
+
+    this.component.addChild(this.gamePanel);
+  }
+
+  private createInterfacePanel(): void {
+    this.interfacePanel = new UIPanel('interface-panel', {
+      width: 560,
+      height: 480,
+      backgroundColor: '#2d3748',
+      borderColor: '#40e0ff',
+      borderWidth: 2,
+      cornerRadius: 0,
+      shadow: true,
+      opacity: 0.9
+    });
+    this.interfacePanel.position = { x: 240, y: 20 };
+
+    // Title
+    const title = new UIText('interface-title', 'INTERFACE SETTINGS', {
+      fontSize: 18,
+      fontFamily: 'Arial, sans-serif',
+      color: '#40e0ff',
+      textAlign: 'center',
+      bold: true
+    });
+    title.position = { x: 20, y: 15 };
+    title.size = { x: 520, y: 30 };
+    this.interfacePanel.addChild(title);
+
+    let yPos = 60;
+
+    // Theme
+    const themeLabel = new UIText('theme-label', 'Theme:', {
+      fontSize: 14,
+      color: '#ffffff'
+    });
+    themeLabel.position = { x: 20, y: yPos };
+    themeLabel.size = { x: 120, y: 25 };
+    this.interfacePanel.addChild(themeLabel);
+
+    const themeButton = new UIButton('theme', this.settings.interface.theme, {
+      width: 120,
+      height: 30,
+      backgroundColor: '#4a5568',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.cycleTheme());
+    themeButton.position = { x: 150, y: yPos };
+    this.interfacePanel.addChild(themeButton);
+
+    yPos += 40;
+
+    // Font size
+    const fontLabel = new UIText('font-label', 'Font Size:', {
+      fontSize: 14,
+      color: '#ffffff'
+    });
+    fontLabel.position = { x: 20, y: yPos };
+    fontLabel.size = { x: 120, y: 25 };
+    this.interfacePanel.addChild(fontLabel);
+
+    const fontButton = new UIButton('font', this.settings.interface.fontSize, {
+      width: 120,
+      height: 30,
+      backgroundColor: '#4a5568',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.cycleFontSize());
+    fontButton.position = { x: 150, y: yPos };
+    this.interfacePanel.addChild(fontButton);
+
+    yPos += 40;
+
+    // HUD opacity
+    const hudLabel = new UIText('hud-label', 'HUD Opacity:', {
+      fontSize: 14,
+      color: '#ffffff'
+    });
+    hudLabel.position = { x: 20, y: yPos };
+    hudLabel.size = { x: 120, y: 25 };
+    this.interfacePanel.addChild(hudLabel);
+
+    const hudBar = new UIProgressBar('hud-opacity', {
+      width: 200,
+      height: 20,
+      value: this.settings.interface.hudOpacity * 100,
+      maxValue: 100,
+      backgroundColor: '#4a5568',
+      fillColor: '#40e0ff',
+      borderColor: '#40e0ff',
+      borderWidth: 1,
+      showText: true
+    });
+    hudBar.position = { x: 150, y: yPos };
+    this.interfacePanel.addChild(hudBar);
+    this.volumeBars.set('hud', hudBar);
+
+    this.component.addChild(this.interfacePanel);
+  }
+
+  // Settings manipulation methods
+  private cycleResolution(): void {
+    const resolutions = [
+      { width: 1024, height: 768 },
+      { width: 1280, height: 720 },
+      { width: 1920, height: 1080 },
+      { width: 2560, height: 1440 }
+    ];
+
+    const currentIndex = resolutions.findIndex(r => 
+      r.width === this.settings.graphics.resolution.width && 
+      r.height === this.settings.graphics.resolution.height
+    );
+
+    const nextIndex = (currentIndex + 1) % resolutions.length;
+    this.settings.graphics.resolution = resolutions[nextIndex];
+    this.settingsChanged = true;
+
+    this.updateStatusText();
+  }
+
+  private toggleFullscreen(): void {
+    this.settings.graphics.fullscreen = !this.settings.graphics.fullscreen;
+    this.settingsChanged = true;
+    this.updateToggleButton('fullscreen', this.settings.graphics.fullscreen);
+    this.updateStatusText();
+  }
+
+  private toggleVSync(): void {
+    this.settings.graphics.vsync = !this.settings.graphics.vsync;
+    this.settingsChanged = true;
+    this.updateToggleButton('vsync', this.settings.graphics.vsync);
+    this.updateStatusText();
+  }
+
+  private toggleAntialias(): void {
+    this.settings.graphics.antialias = !this.settings.graphics.antialias;
+    this.settingsChanged = true;
+    this.updateToggleButton('antialias', this.settings.graphics.antialias);
+    this.updateStatusText();
+  }
+
+  private cycleTextureQuality(): void {
+    const qualities = ['LOW', 'MEDIUM', 'HIGH'];
+    const currentIndex = qualities.indexOf(this.settings.graphics.textureQuality);
+    const nextIndex = (currentIndex + 1) % qualities.length;
+    this.settings.graphics.textureQuality = qualities[nextIndex] as any;
+    this.settingsChanged = true;
+
+    const button = this.graphicsPanel?.findChild('texture') as UIButton;
+    if (button) {
+      button.setText(this.settings.graphics.textureQuality);
+    }
+    this.updateStatusText();
+  }
+
+  private toggleSpatialAudio(): void {
+    this.settings.audio.spatialAudio = !this.settings.audio.spatialAudio;
+    this.settingsChanged = true;
+    this.updateToggleButton('spatial', this.settings.audio.spatialAudio);
+    this.updateStatusText();
+  }
+
+  private toggleInvertY(): void {
+    this.settings.controls.invertY = !this.settings.controls.invertY;
+    this.settingsChanged = true;
+    this.updateToggleButton('invert', this.settings.controls.invertY);
+    this.updateStatusText();
+  }
+
+  private cycleDifficulty(): void {
+    const difficulties = ['EASY', 'NORMAL', 'HARD', 'INSANE'];
+    const currentIndex = difficulties.indexOf(this.settings.game.difficulty);
+    const nextIndex = (currentIndex + 1) % difficulties.length;
+    this.settings.game.difficulty = difficulties[nextIndex] as any;
+    this.settingsChanged = true;
+
+    const button = this.gamePanel?.findChild('difficulty') as UIButton;
+    if (button) {
+      button.setText(this.settings.game.difficulty);
+    }
+    this.updateStatusText();
+  }
+
+  private toggleAutoSave(): void {
+    this.settings.game.autoSave = !this.settings.game.autoSave;
+    this.settingsChanged = true;
+    this.updateToggleButton('autosave', this.settings.game.autoSave);
+    this.updateStatusText();
+  }
+
+  private toggleTutorial(): void {
+    this.settings.game.tutorialEnabled = !this.settings.game.tutorialEnabled;
+    this.settingsChanged = true;
+    this.updateToggleButton('tutorial', this.settings.game.tutorialEnabled);
+    this.updateStatusText();
+  }
+
+  private toggleShowFPS(): void {
+    this.settings.game.showFPS = !this.settings.game.showFPS;
+    this.settingsChanged = true;
+    this.updateToggleButton('fps', this.settings.game.showFPS);
+    this.updateStatusText();
+  }
+
+  private cycleTheme(): void {
+    const themes = ['DEFAULT', 'DARK', 'LIGHT', 'COLORFUL'];
+    const currentIndex = themes.indexOf(this.settings.interface.theme);
+    const nextIndex = (currentIndex + 1) % themes.length;
+    this.settings.interface.theme = themes[nextIndex] as any;
+    this.settingsChanged = true;
+
+    const button = this.interfacePanel?.findChild('theme') as UIButton;
+    if (button) {
+      button.setText(this.settings.interface.theme);
+    }
+    this.updateStatusText();
+  }
+
+  private cycleFontSize(): void {
+    const sizes = ['SMALL', 'MEDIUM', 'LARGE'];
+    const currentIndex = sizes.indexOf(this.settings.interface.fontSize);
+    const nextIndex = (currentIndex + 1) % sizes.length;
+    this.settings.interface.fontSize = sizes[nextIndex] as any;
+    this.settingsChanged = true;
+
+    const button = this.interfacePanel?.findChild('font') as UIButton;
+    if (button) {
+      button.setText(this.settings.interface.fontSize);
+    }
+    this.updateStatusText();
+  }
+
+  private updateToggleButton(buttonId: string, enabled: boolean): void {
+    const button = this.findChild(`${buttonId}`) as UIButton;
+    if (button) {
+      button.setText(enabled ? 'ON' : 'OFF');
+      button.options.backgroundColor = enabled ? '#48bb78' : '#e53e3e';
+    }
+  }
+
+  private updateStatusText(): void {
+    const statusText = this.controlPanel.findChild('status') as UIText;
+    if (statusText) {
+      statusText.setText(this.settingsChanged ? 'Settings changed - not saved' : 'No changes made');
+      statusText.options.color = this.settingsChanged ? '#ecc94b' : '#888888';
+    }
+  }
+
+  // Control methods
+  private applySettings(): void {
+    // Apply settings to the game
+    console.log('Applying settings:', this.settings);
+    
+    // Mock implementation - would actually apply the settings
+    this.settingsChanged = false;
+    this.updateStatusText();
+    
+    alert('Settings applied successfully!');
+  }
+
+  private resetSettings(): void {
+    if (confirm('Reset all settings to default values?')) {
+      this.settings = this.getDefaultSettings();
+      this.settingsChanged = true;
+      
+      // Refresh current panel
+      this.loadSettingsPanel(this.activePanel);
+      this.updateStatusText();
+    }
+  }
+
+  private saveAndClose(): void {
+    // Save settings to localStorage
+    localStorage.setItem('alite-settings', JSON.stringify(this.settings));
+    
+    alert('Settings saved successfully!');
+    this.backToMainMenu();
+  }
+
+  private cancelSettings(): void {
+    if (this.settingsChanged) {
+      if (confirm('Discard unsaved changes?')) {
+        this.backToMainMenu();
+      }
+    } else {
+      this.backToMainMenu();
+    }
+  }
+
+  private backToMainMenu(): void {
+    this.navigateToScreen('main-menu');
+  }
+
+  private navigateToScreen(screenId: ScreenId): void {
+    const uiManager = UIManager.getInstance();
+    uiManager.showScreen(screenId);
+  }
+
+  // Load settings from storage
+  public loadSettings(): void {
+    const savedSettings = localStorage.getItem('alite-settings');
+    if (savedSettings) {
+      try {
+        const parsed = JSON.parse(savedSettings);
+        this.settings = { ...this.getDefaultSettings(), ...parsed };
+      } catch (error) {
+        console.error('Failed to load settings:', error);
+      }
+    }
+  }
+
+  // Save settings to storage
+  public saveSettings(): void {
+    localStorage.setItem('alite-settings', JSON.stringify(this.settings));
+  }
+
+  // Get current settings
+  public getSettings(): GameSettings {
+    return { ...this.settings };
+  }
+}

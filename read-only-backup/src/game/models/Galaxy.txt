@@ -1,0 +1,984 @@
+/**
+ * Galaxy and System classes - Procedural galaxy generation and system data
+ * Implements the procedural generation algorithms identified from the Java source.
+ */
+
+import { Vector2D, Vector3D } from '../../types/index.js';
+
+// Galaxy structure constants
+export const GALAXIES_COUNT = 8;
+export const SYSTEMS_PER_GALAXY = 256;
+export const SYLLABLE_COUNT = 32;
+
+// Economy types in the Elite universe
+export enum EconomyType {
+  AGRICULTURAL = 'Agricultural',
+  INDUSTRIAL = 'Industrial',
+  HIGH_TECH = 'High Tech',
+  MINING = 'Mining',
+  TOURISM = 'Tourism',
+  MILITARY = 'Military'
+}
+
+// Government types
+export enum GovernmentType {
+  ANARCHY = 'Anarchy',
+  FEUDAL = 'Feudal',
+  MULTI_GOVERNMENT = 'Multi-Government',
+  DICTATORSHIP = 'Dictatorship',
+  COMMUNIST = 'Communist',
+  CONFEDERATE = 'Confederate',
+  DEMOCRACY = 'Democracy',
+  CORPORATE_STATE = 'Corporate State',
+  IMPLANTED_EMPIRE = 'Implanted Empire'
+}
+
+// Tech levels (0-14 in original Elite)
+export enum TechLevel {
+  PRIMITIVE = 0,
+  LOW = 1,
+  BASIC = 2,
+  DEVELOPED = 3,
+  ADVANCED = 4,
+  HIGH = 5,
+  INDUSTRIAL = 6,
+  AGRICULTURAL = 7,
+  PROFESSIONAL = 8,
+  TECHNICAL = 9,
+  RESEARCH = 10,
+  HIGH_TECH = 11,
+  ULTRA_HIGH_TECH = 12,
+  FUTURE = 13,
+  BLEEDING_EDGE = 14
+}
+
+// Star types
+export enum StarType {
+  MAIN_SEQUENCE = 'Main Sequence',
+  WHITE_DWARF = 'White Dwarf',
+  RED_GIANT = 'Red Giant',
+  NEUTRON = 'Neutron',
+  BLACK_HOLE = 'Black Hole',
+  BINARY = 'Binary System'
+}
+
+// Docking facilities
+export interface DockingFacilities {
+  hasStation: boolean;
+  hasPlanet: boolean;
+  dockingFee: number;
+  services: string[];
+}
+
+// Market data for a system
+export interface SystemMarket {
+  goods: Map<string, SystemMarketGood>;
+  lastUpdated: number;
+  priceFluctuation: number;
+}
+
+export interface SystemMarketGood {
+  good: string;
+  quantity: number;
+  basePrice: number;
+  currentPrice: number;
+  fluctuationRange: number; // ± percentage
+}
+
+// System-specific data
+export interface SystemData {
+  id: number;
+  galaxyIndex: number;
+  name: string;
+  
+  // Position and coordinates
+  coordinates: Vector2D; // Position within galaxy
+  seed: number; // Random seed for this system
+  
+  // Star and celestial properties
+  starType: StarType;
+  starMass: number;
+  starAge: number;
+  
+  // System characteristics
+  economy: EconomyType;
+  government: GovernmentType;
+  techLevel: TechLevel;
+  population: number;
+  
+  // Description and flavor
+  description: string;
+  generalDescription: string;
+  inhabited: boolean;
+  
+  // Docking and infrastructure
+  hasDocking: boolean;
+  dockingFacilities: DockingFacilities;
+  market: SystemMarket;
+  
+  // Navigation data
+  galacticPosition: { galaxy: number; system: number };
+  nearbySystems: number[]; // IDs of neighboring systems
+  hyperspaceRoutes: number[]; // Systems reachable in one jump
+  
+  // Faction presence
+  controllingFaction?: string;
+  factionsPresent: Map<string, number>; // faction -> influence percentage
+  
+  // Environmental data
+  habitabilityScore: number;
+  riskLevel: number; // 0-100, likelihood of encounters
+  specialFeatures: string[];
+}
+
+// Galaxy data structure
+export interface Galaxy {
+  id: number;
+  name: string;
+  seed: number;
+  systems: Map<number, SystemData>;
+  totalPopulation: number;
+  controllingEmpires: Map<string, number>; // empire -> systems controlled
+  tradeRoutes: Array<{
+    from: number;
+    to: number;
+    volume: number;
+    goods: string[];
+  }>;
+}
+
+/**
+ * Seeded random number generator for procedural generation
+ */
+export class SeededRandom {
+  private seed: number;
+  private current: number;
+
+  constructor(seed: number) {
+    this.seed = seed;
+    this.current = seed;
+  }
+
+  next(): number {
+    this.current = (this.current * 1103515245 + 12345) % 2147483648;
+    return this.current;
+  }
+
+  nextFloat(): number {
+    return this.next() / 2147483648;
+  }
+
+  nextInt(min: number, max: number): number {
+    return Math.floor(this.nextFloat() * (max - min + 1)) + min;
+  }
+
+  nextBoolean(probability: number = 0.5): boolean {
+    return this.nextFloat() < probability;
+  }
+
+  nextChoice<T>(choices: T[]): T {
+    return choices[this.nextInt(0, choices.length - 1)];
+  }
+
+  setSeed(seed: number): void {
+    this.seed = seed;
+    this.current = seed;
+  }
+
+  getSeed(): number {
+    return this.seed;
+  }
+}
+
+/**
+ * Galaxy Generator - Procedural galaxy creation
+ */
+export class GalaxyGenerator {
+  private syllables: string[] = [
+    'Ar', 'Be', 'Ce', 'De', 'Er', 'Fa', 'Ga', 'Ha', 'Ir', 'Ja', 'Ka', 'La',
+    'Ma', 'Na', 'Or', 'Pa', 'Qu', 'Ra', 'Sa', 'Ta', 'Ur', 'Va', 'Wa', 'Xe',
+    'Ya', 'Ze', 'Or', 'An', 'En', 'In', 'On', 'Un'
+  ];
+
+  private specialNames: string[] = [
+    'Lave', 'Riedquat', 'Zaeal', 'Bleeape', 'Rirri', 'Qerris', 'M球菌',
+    'Ceeradi', 'Orarra', 'Inst', 'Our', 'Rusar', 'Errius', 'Cebe', 'Sosole',
+    'Veques', 'Cxeus', 'Zebes', 'Or обор', 'Orrela', 'Xi Xiger', 'Agen',
+    'Diso', 'Loras', 'Ryx', 'Betrius', 'Zedenu', 'Oresr', 'Orutte', 'Zaonce',
+    'Ortrex', 'Rasalip'
+  ];
+
+  /**
+   * Generate complete galaxy
+   */
+  generateGalaxy(galaxyIndex: number): Galaxy {
+    const seed = this.calculateGalaxySeed(galaxyIndex);
+    const random = new SeededRandom(seed);
+    
+    const galaxy: Galaxy = {
+      id: galaxyIndex,
+      name: this.generateGalaxyName(galaxyIndex),
+      seed,
+      systems: new Map(),
+      totalPopulation: 0,
+      controllingEmpires: new Map(),
+      tradeRoutes: []
+    };
+
+    // Generate systems
+    this.generateSystems(galaxy, random);
+    
+    // Calculate faction influence
+    this.calculateFactionInfluence(galaxy, random);
+    
+    // Generate trade routes
+    this.generateTradeRoutes(galaxy, random);
+    
+    // Calculate total population
+    galaxy.totalPopulation = Array.from(galaxy.systems.values())
+      .reduce((total, system) => total + system.population, 0);
+    
+    return galaxy;
+  }
+
+  /**
+   * Calculate unique seed for galaxy
+   */
+  private calculateGalaxySeed(galaxyIndex: number): number {
+    // Use galaxy index and some constant to create unique seed
+    return galaxyIndex * 1234567 + 890123;
+  }
+
+  /**
+   * Generate galaxy name
+   */
+  private generateGalaxyName(galaxyIndex: number): string {
+    const names = [
+      'Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon', 'Zeta', 'Eta', 'Theta'
+    ];
+    return names[galaxyIndex] || `Galaxy ${galaxyIndex + 1}`;
+  }
+
+  /**
+   * Generate all systems for a galaxy
+   */
+  private generateSystems(galaxy: Galaxy, random: SeededRandom): void {
+    const occupiedPositions: Vector2D[] = [];
+    
+    for (let systemIndex = 0; systemIndex < SYSTEMS_PER_GALAXY; systemIndex++) {
+      let attempts = 0;
+      let position: Vector2D;
+      
+      // Find non-overlapping position
+      do {
+        position = {
+          x: random.nextInt(-200, 200),
+          y: random.nextInt(-200, 200)
+        };
+        attempts++;
+      } while (this.isPositionOccupied(position, occupiedPositions) && attempts < 50);
+      
+      occupiedPositions.push(position);
+      
+      const system = this.generateSystem(galaxy.id, systemIndex, position, random);
+      galaxy.systems.set(systemIndex, system);
+    }
+  }
+
+  /**
+   * Check if position is too close to existing positions
+   */
+  private isPositionOccupied(position: Vector2D, occupied: Vector2D[]): boolean {
+    const minDistance = 20; // Minimum distance between systems
+    
+    for (const existing of occupied) {
+      const dx = position.x - existing.x;
+      const dy = position.y - existing.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      
+      if (distance < minDistance) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+
+  /**
+   * Generate individual system data
+   */
+  private generateSystem(
+    galaxyIndex: number,
+    systemIndex: number,
+    position: Vector2D,
+    random: SeededRandom
+  ): SystemData {
+    const seed = galaxyIndex * 1000 + systemIndex;
+    const systemRandom = new SeededRandom(seed);
+    
+    // Generate name
+    const name = this.generateSystemName(systemRandom);
+    
+    // Determine if this is a special system
+    const isSpecial = random.nextFloat() < 0.03; // 3% chance
+    const actualName = isSpecial && this.specialNames[systemIndex] 
+      ? this.specialNames[systemIndex] 
+      : name;
+    
+    // Generate star properties
+    const starType = this.generateStarType(systemRandom);
+    const starMass = systemRandom.nextFloat() * 2 + 0.5; // 0.5-2.5 solar masses
+    const starAge = systemRandom.nextInt(1000, 10000); // Million years
+    
+    // Generate system characteristics based on galaxy position and random factors
+    const economy = this.generateEconomy(systemRandom, position);
+    const government = this.generateGovernment(systemRandom, economy);
+    const techLevel = this.generateTechLevel(systemRandom, economy, government);
+    const population = this.generatePopulation(systemRandom, techLevel, starMass);
+    
+    // Determine if system has docking facilities
+    const hasDocking = population > 10000 && techLevel >= TechLevel.BASIC;
+    const dockingFacilities = this.generateDockingFacilities(hasDocking, systemRandom);
+    
+    // Generate market data
+    const market = this.generateSystemMarket(systemRandom, economy);
+    
+    // Generate descriptions
+    const description = this.generateSystemDescription(actualName, economy, government, starType);
+    const generalDescription = this.generateGeneralDescription(actualName, population, techLevel);
+    
+    // Calculate other system properties
+    const habitabilityScore = this.calculateHabitabilityScore(population, techLevel, government);
+    const riskLevel = this.calculateRiskLevel(government, techLevel, economy);
+    
+    // Generate neighboring systems and hyperspace routes
+    const nearbySystems = this.findNearbySystems(galaxyIndex, systemIndex, position);
+    const hyperspaceRoutes = this.generateHyperspaceRoutes(systemIndex, nearbySystems, systemRandom);
+    
+    // Generate special features
+    const specialFeatures = this.generateSpecialFeatures(systemRandom, starType);
+    
+    const system: SystemData = {
+      id: systemIndex,
+      galaxyIndex,
+      name: actualName,
+      coordinates: position,
+      seed,
+      starType,
+      starMass,
+      starAge,
+      economy,
+      government,
+      techLevel,
+      population,
+      description,
+      generalDescription,
+      inhabited: population > 0,
+      hasDocking,
+      dockingFacilities,
+      market,
+      galacticPosition: { galaxy: galaxyIndex, system: systemIndex },
+      nearbySystems,
+      hyperspaceRoutes,
+      factionsPresent: new Map(),
+      habitabilityScore,
+      riskLevel,
+      specialFeatures
+    };
+    
+    return system;
+  }
+
+  /**
+   * Generate system name using syllable combination
+   */
+  private generateSystemName(random: SeededRandom): string {
+    const syllableCount = random.nextInt(2, 4); // 2-3 syllables
+    let name = '';
+    
+    for (let i = 0; i < syllableCount; i++) {
+      name += random.nextChoice(this.syllables);
+    }
+    
+    // Capitalize first letter
+    return name.charAt(0).toUpperCase() + name.slice(1);
+  }
+
+  /**
+   * Generate star type
+   */
+  private generateStarType(random: SeededRandom): StarType {
+    const weights = [
+      { type: StarType.MAIN_SEQUENCE, weight: 0.7 },
+      { type: StarType.RED_GIANT, weight: 0.15 },
+      { type: StarType.WHITE_DWARF, weight: 0.08 },
+      { type: StarType.BINARY, weight: 0.05 },
+      { type: StarType.NEUTRON, weight: 0.015 },
+      { type: StarType.BLACK_HOLE, weight: 0.005 }
+    ];
+    
+    const totalWeight = weights.reduce((sum, item) => sum + item.weight, 0);
+    let randomValue = random.nextFloat() * totalWeight;
+    
+    for (const item of weights) {
+      randomValue -= item.weight;
+      if (randomValue <= 0) {
+        return item.type;
+      }
+    }
+    
+    return StarType.MAIN_SEQUENCE;
+  }
+
+  /**
+   * Generate economy type based on system properties
+   */
+  private generateEconomy(random: SeededRandom, position: Vector2D): EconomyType {
+    const weights = [
+      { type: EconomyType.AGRICULTURAL, weight: 0.25 },
+      { type: EconomyType.INDUSTRIAL, weight: 0.20 },
+      { type: EconomyType.HIGH_TECH, weight: 0.15 },
+      { type: EconomyType.MINING, weight: 0.15 },
+      { type: EconomyType.TOURISM, weight: 0.15 },
+      { type: EconomyType.MILITARY, weight: 0.10 }
+    ];
+    
+    // Modify weights based on position (galaxy center tends to have more high-tech)
+    const distanceFromCenter = Math.sqrt(position.x * position.x + position.y * position.y);
+    const centerBonus = Math.max(0, 1 - distanceFromCenter / 200);
+    
+    // Increase high-tech probability near galaxy center
+    const modifiedWeights = weights.map(item => ({
+      ...item,
+      weight: item.type === EconomyType.HIGH_TECH 
+        ? item.weight + centerBonus * 0.3 
+        : item.weight
+    }));
+    
+    const totalWeight = modifiedWeights.reduce((sum, item) => sum + item.weight, 0);
+    let randomValue = random.nextFloat() * totalWeight;
+    
+    for (const item of modifiedWeights) {
+      randomValue -= item.weight;
+      if (randomValue <= 0) {
+        return item.type;
+      }
+    }
+    
+    return EconomyType.AGRICULTURAL;
+  }
+
+  /**
+   * Generate government type
+   */
+  private generateGovernment(random: SeededRandom, economy: EconomyType): GovernmentType {
+    const economyGovernmentMap: { [key in EconomyType]: GovernmentType[] } = {
+      [EconomyType.AGRICULTURAL]: [
+        GovernmentType.DEMOCRACY,
+        GovernmentType.FEUDAL,
+        GovernmentType.CORPORATE_STATE
+      ],
+      [EconomyType.INDUSTRIAL]: [
+        GovernmentType.CORPORATE_STATE,
+        GovernmentType.DICTATORSHIP,
+        GovernmentType.DEMOCRACY
+      ],
+      [EconomyType.HIGH_TECH]: [
+        GovernmentType.DEMOCRACY,
+        GovernmentType.CORPORATE_STATE,
+        GovernmentType.CONFEDERATE
+      ],
+      [EconomyType.MINING]: [
+        GovernmentType.ANARCHY,
+        GovernmentType.FEUDAL,
+        GovernmentType.DICTATORSHIP
+      ],
+      [EconomyType.TOURISM]: [
+        GovernmentType.DEMOCRACY,
+        GovernmentType.CORPORATE_STATE
+      ],
+      [EconomyType.MILITARY]: [
+        GovernmentType.CONFEDERATE,
+        GovernmentType.DICTATORSHIP,
+        GovernmentType.IMPLANTED_EMPIRE
+      ]
+    };
+    
+    const possibleGovernments = economyGovernmentMap[economy];
+    return random.nextChoice(possibleGovernments);
+  }
+
+  /**
+   * Generate tech level
+   */
+  private generateTechLevel(random: SeededRandom, economy: EconomyType, government: GovernmentType): TechLevel {
+    // Base tech level probability
+    let baseTechLevel = 5;
+    
+    // Economy affects tech level
+    switch (economy) {
+      case EconomyType.HIGH_TECH:
+        baseTechLevel += 3;
+        break;
+      case EconomyType.INDUSTRIAL:
+        baseTechLevel += 1;
+        break;
+      case EconomyType.MINING:
+        baseTechLevel -= 1;
+        break;
+      case EconomyType.AGRICULTURAL:
+        baseTechLevel -= 2;
+        break;
+    }
+    
+    // Government affects tech level
+    switch (government) {
+      case GovernmentType.DEMOCRACY:
+      case GovernmentType.CORPORATE_STATE:
+        baseTechLevel += 1;
+        break;
+      case GovernmentType.ANARCHY:
+      case GovernmentType.FEUDAL:
+        baseTechLevel -= 2;
+        break;
+    }
+    
+    // Random variation
+    baseTechLevel += random.nextInt(-2, 2);
+    
+    // Clamp to valid range
+    return Math.max(TechLevel.PRIMITIVE, Math.min(TechLevel.BLEEDING_EDGE, baseTechLevel));
+  }
+
+  /**
+   * Generate population
+   */
+  private generatePopulation(random: SeededRandom, techLevel: TechLevel, starMass: number): number {
+    // Base population from tech level
+    let basePop = Math.pow(techLevel + 1, 2) * 10000;
+    
+    // Star mass affects habitability and thus population
+    const habitabilityBonus = starMass > 1.5 ? 0.8 : (starMass < 0.8 ? 0.5 : 1.0);
+    
+    // Random variation
+    const variation = random.nextFloat() * 0.5 + 0.75; // 0.75-1.25
+    
+    return Math.floor(basePop * habitabilityBonus * variation);
+  }
+
+  /**
+   * Generate docking facilities
+   */
+  private generateDockingFacilities(hasDocking: boolean, random: SeededRandom): DockingFacilities {
+    if (!hasDocking) {
+      return {
+        hasStation: false,
+        hasPlanet: false,
+        dockingFee: 0,
+        services: []
+      };
+    }
+    
+    const services = ['Market', 'Shipyard', 'Equipment', 'Repairs', 'Fuel'];
+    const selectedServices = services.filter(() => random.nextFloat() < 0.7);
+    
+    return {
+      hasStation: random.nextFloat() < 0.8,
+      hasPlanet: random.nextFloat() < 0.6,
+      dockingFee: random.nextInt(50, 500),
+      services: selectedServices
+    };
+  }
+
+  /**
+   * Generate system market
+   */
+  private generateSystemMarket(random: SeededRandom, economy: EconomyType): SystemMarket {
+    const market = new Map<string, SystemMarketGood>();
+    
+    // Basic goods available in all systems
+    const basicGoods = ['Food Cartridges', 'Liquor', 'Luxuries'];
+    
+    // Economy-specific goods
+    const economyGoods: { [key in EconomyType]: string[] } = {
+      [EconomyType.AGRICULTURAL]: ['Grain', 'Vegetables', 'Meat'],
+      [EconomyType.INDUSTRIAL]: ['Metals', 'Machinery', 'Chemicals'],
+      [EconomyType.HIGH_TECH]: ['Computers', 'Software', 'Robots'],
+      [EconomyType.MINING]: ['Minerals', 'Precious Stones', 'Fuel'],
+      [EconomyType.TOURISM]: ['Consumer Goods', 'Spices', 'Art'],
+      [EconomyType.MILITARY]: ['Weapons', 'Military Equipment', 'Armor']
+    };
+    
+    // Add basic goods
+    for (const good of basicGoods) {
+      const basePrice = this.getBasePrice(good);
+      const currentPrice = basePrice * (0.8 + random.nextFloat() * 0.4);
+      market.set(good, {
+        good,
+        quantity: random.nextInt(50, 500),
+        basePrice,
+        currentPrice,
+        fluctuationRange: 20
+      });
+    }
+    
+    // Add economy-specific goods
+    const economySpecificGoods = economyGoods[economy] || [];
+    for (const good of economySpecificGoods) {
+      const basePrice = this.getBasePrice(good);
+      const currentPrice = basePrice * (0.8 + random.nextFloat() * 0.4);
+      market.set(good, {
+        good,
+        quantity: random.nextInt(20, 200),
+        basePrice,
+        currentPrice,
+        fluctuationRange: 25
+      });
+    }
+    
+    return {
+      goods: market,
+      lastUpdated: Date.now(),
+      priceFluctuation: random.nextFloat() * 0.1 // 0-10% daily fluctuation
+    };
+  }
+
+  /**
+   * Get base price for a good
+   */
+  private getBasePrice(good: string): number {
+    const prices: { [key: string]: number } = {
+      'Food Cartridges': 15,
+      'Liquor': 75,
+      'Luxuries': 250,
+      'Grain': 20,
+      'Vegetables': 25,
+      'Meat': 45,
+      'Metals': 120,
+      'Machinery': 500,
+      'Chemicals': 200,
+      'Computers': 1000,
+      'Software': 800,
+      'Robots': 2000,
+      'Minerals': 80,
+      'Precious Stones': 1500,
+      'Fuel': 5,
+      'Consumer Goods': 40,
+      'Spices': 200,
+      'Art': 600,
+      'Weapons': 400,
+      'Military Equipment': 1200,
+      'Armor': 300
+    };
+    
+    return prices[good] || 100;
+  }
+
+  /**
+   * Generate system description
+   */
+  private generateSystemDescription(name: string, economy: EconomyType, government: GovernmentType, starType: StarType): string {
+    const economyDescriptions: { [key in EconomyType]: string } = {
+      [EconomyType.AGRICULTURAL]: 'a peaceful agricultural world',
+      [EconomyType.INDUSTRIAL]: 'a bustling industrial center',
+      [EconomyType.HIGH_TECH]: 'a center of advanced technology',
+      [EconomyType.MINING]: 'a harsh mining colony',
+      [EconomyType.TOURISM]: 'a popular tourist destination',
+      [EconomyType.MILITARY]: 'a heavily fortified military base'
+    };
+    
+    const starDescriptions: { [key in StarType]: string } = {
+      [StarType.MAIN_SEQUENCE]: 'orbiting a stable main sequence star',
+      [StarType.WHITE_DWARF]: 'orbiting a dying white dwarf star',
+      [StarType.RED_GIANT]: 'circling a massive red giant',
+      [StarType.NEUTRON]: 'tethered to a neutron star',
+      [StarType.BLACK_HOLE]: 'dangerously close to a black hole',
+      [StarType.BINARY]: 'part of a binary star system'
+    };
+    
+    return `${name} is ${economyDescriptions[economy]} ${starDescriptions[starType]}. The system is ruled by ${government.toLowerCase()}.`;
+  }
+
+  /**
+   * Generate general description
+   */
+  private generateGeneralDescription(name: string, population: number, techLevel: TechLevel): string {
+    const popDescription = population > 1000000 ? 'densely populated' : 
+                          population > 100000 ? 'well populated' : 
+                          population > 10000 ? 'moderately populated' : 'sparsely populated';
+    
+    const techDescription = techLevel >= TechLevel.HIGH_TECH ? 'highly advanced' :
+                           techLevel >= TechLevel.ADVANCED ? 'technologically advanced' :
+                           techLevel >= TechLevel.BASIC ? 'reasonably developed' : 'primitive';
+    
+    return `${name} is a ${popDescription}, ${techDescription} system that attracts traders and travelers from across the galaxy.`;
+  }
+
+  /**
+   * Calculate habitability score
+   */
+  private calculateHabitabilityScore(population: number, techLevel: TechLevel, government: GovernmentType): number {
+    let score = 50; // Base score
+    
+    // Population affects habitability (larger populations indicate better living conditions)
+    score += Math.log10(population + 1) * 10;
+    
+    // Tech level improves habitability
+    score += techLevel * 2;
+    
+    // Government type affects habitability
+    switch (government) {
+      case GovernmentType.DEMOCRACY:
+      case GovernmentType.CONFEDERATE:
+        score += 15;
+        break;
+      case GovernmentType.CORPORATE_STATE:
+        score += 5;
+        break;
+      case GovernmentType.DICTATORSHIP:
+        score -= 10;
+        break;
+      case GovernmentType.ANARCHY:
+        score -= 20;
+        break;
+    }
+    
+    return Math.max(0, Math.min(100, Math.round(score)));
+  }
+
+  /**
+   * Calculate risk level
+   */
+  private calculateRiskLevel(government: GovernmentType, techLevel: TechLevel, economy: EconomyType): number {
+    let risk = 20; // Base risk
+    
+    // Government affects risk
+    switch (government) {
+      case GovernmentType.ANARCHY:
+        risk += 40;
+        break;
+      case GovernmentType.FEUDAL:
+      case GovernmentType.DICTATORSHIP:
+        risk += 20;
+        break;
+      case GovernmentType.DEMOCRACY:
+      case GovernmentType.CONFEDERATE:
+        risk -= 15;
+        break;
+    }
+    
+    // Tech level affects security
+    risk -= techLevel;
+    
+    // Economy affects risk
+    if (economy === EconomyType.MINING) risk += 10;
+    if (economy === EconomyType.MILITARY) risk -= 5;
+    
+    return Math.max(0, Math.min(100, Math.round(risk)));
+  }
+
+  /**
+   * Find nearby systems for hyperspace routing
+   */
+  private findNearbySystems(galaxyIndex: number, systemIndex: number, position: Vector2D): number[] {
+    const nearby: number[] = [];
+    // This would need access to all systems in the galaxy to calculate properly
+    // For now, return some reasonable nearby systems
+    const maxRange = 4; // Systems within 4 slots
+    
+    for (let i = Math.max(0, systemIndex - maxRange); i <= Math.min(SYSTEMS_PER_GALAXY - 1, systemIndex + maxRange); i++) {
+      if (i !== systemIndex) {
+        nearby.push(i);
+      }
+    }
+    
+    return nearby.slice(0, 8); // Limit to 8 nearby systems
+  }
+
+  /**
+   * Generate hyperspace routes
+   */
+  private generateHyperspaceRoutes(systemIndex: number, nearbySystems: number[], random: SeededRandom): number[] {
+    const routes: number[] = [];
+    const routeCount = Math.min(nearbySystems.length, random.nextInt(3, 6));
+    
+    // Randomly select systems for routes
+    for (let i = 0; i < routeCount; i++) {
+      if (nearbySystems.length > 0) {
+        const index = random.nextInt(0, nearbySystems.length);
+        routes.push(nearbySystems.splice(index, 1)[0]);
+      }
+    }
+    
+    return routes;
+  }
+
+  /**
+   * Generate special features
+   */
+  private generateSpecialFeatures(random: SeededRandom, starType: StarType): string[] {
+    const features: string[] = [];
+    
+    // Star-based features
+    switch (starType) {
+      case StarType.BLACK_HOLE:
+        if (random.nextFloat() < 0.3) {
+          features.push('Temporal Distortions');
+        }
+        break;
+      case StarType.NEUTRON:
+        if (random.nextFloat() < 0.2) {
+          features.push('Pulsar Emissions');
+        }
+        break;
+      case StarType.BINARY:
+        if (random.nextFloat() < 0.4) {
+          features.push('Binary Orbit Complexity');
+        }
+        break;
+    }
+    
+    // Random environmental features
+    if (random.nextFloat() < 0.1) {
+      features.push('Asteroid Belts');
+    }
+    if (random.nextFloat() < 0.05) {
+      features.push('Ancient Ruins');
+    }
+    if (random.nextFloat() < 0.03) {
+      features.push('Unique Flora');
+    }
+    
+    return features;
+  }
+
+  /**
+   * Calculate faction influence across galaxy
+   */
+  private calculateFactionInfluence(galaxy: Galaxy, random: SeededRandom): void {
+    const majorFactions = ['Federation', 'Empire', 'Alliance', 'Independents'];
+    
+    for (const system of galaxy.systems.values()) {
+      const influenceDistribution = this.generateFactionInfluence(random, system.government);
+      
+      for (let i = 0; i < majorFactions.length; i++) {
+        const faction = majorFactions[i];
+        const influence = influenceDistribution[i];
+        
+        if (influence > 0) {
+          system.factionsPresent.set(faction, influence);
+        }
+      }
+      
+      // Set controlling faction (highest influence)
+      let maxInfluence = 0;
+      let controllingFaction = '';
+      
+      for (const [faction, influence] of system.factionsPresent.entries()) {
+        if (influence > maxInfluence) {
+          maxInfluence = influence;
+          controllingFaction = faction;
+        }
+      }
+      
+      system.controllingFaction = controllingFaction;
+    }
+  }
+
+  /**
+   * Generate faction influence distribution
+   */
+  private generateFactionInfluence(random: SeededRandom, government: GovernmentType): number[] {
+    // Base influence based on government alignment
+    let federation = 25;
+    let empire = 25;
+    let alliance = 25;
+    let independents = 25;
+    
+    // Adjust based on government
+    switch (government) {
+      case GovernmentType.DEMOCRACY:
+      case GovernmentType.CONFEDERATE:
+        federation += 15;
+        alliance += 10;
+        independents -= 5;
+        break;
+      case GovernmentType.IMPLANTED_EMPIRE:
+        empire += 25;
+        federation -= 10;
+        break;
+      case GovernmentType.ANARCHY:
+      case GovernmentType.FEUDAL:
+        independents += 20;
+        empire -= 5;
+        break;
+    }
+    
+    // Random variation
+    federation += random.nextInt(-10, 10);
+    empire += random.nextInt(-10, 10);
+    alliance += random.nextInt(-10, 10);
+    independents += random.nextInt(-10, 10);
+    
+    // Normalize to 100
+    const total = federation + empire + alliance + independents;
+    return [
+      Math.round((federation / total) * 100),
+      Math.round((empire / total) * 100),
+      Math.round((alliance / total) * 100),
+      Math.round((independents / total) * 100)
+    ];
+  }
+
+  /**
+   * Generate trade routes between systems
+   */
+  private generateTradeRoutes(galaxy: Galaxy, random: SeededRandom): void {
+    const systems = Array.from(galaxy.systems.values());
+    
+    // Generate routes based on economic complementarity
+    for (let i = 0; i < systems.length; i++) {
+      for (let j = i + 1; j < systems.length; j++) {
+        if (random.nextFloat() < 0.05) { // 5% chance of trade route
+          const route = this.createTradeRoute(systems[i], systems[j], random);
+          galaxy.tradeRoutes.push(route);
+        }
+      }
+    }
+  }
+
+  /**
+   * Create trade route between two systems
+   */
+  private createTradeRoute(system1: SystemData, system2: SystemData, random: SeededRandom) {
+    const volume = random.nextInt(100, 1000);
+    const goods: string[] = [];
+    
+    // Find complementary goods
+    for (const good of system1.market.goods.keys()) {
+      if (system2.market.goods.has(good) && random.nextFloat() < 0.3) {
+        goods.push(good);
+      }
+    }
+    
+    return {
+      from: system1.id,
+      to: system2.id,
+      volume,
+      goods
+    };
+  }
+
+  /**
+   * Generate full galaxy network
+   */
+  generateFullGalaxyNetwork(): Map<number, Galaxy> {
+    const galaxies = new Map<number, Galaxy>();
+    
+    for (let galaxyIndex = 0; galaxyIndex < GALAXIES_COUNT; galaxyIndex++) {
+      galaxies.set(galaxyIndex, this.generateGalaxy(galaxyIndex));
+    }
+    
+    return galaxies;
+  }
+}

@@ -1,0 +1,539 @@
+/**
+ * Cockpit Screen - The main gameplay screen
+ * Displays 3D space view with HUD elements and ship controls
+ */
+
+import { BaseScreen, UIManager, ScreenId } from '../ui/UIManager';
+import { UIPanel, UIButton, UIText, UIProgressBar, UIButtonOptions, UIPanelOptions } from '../ui/components/UIBasicComponents';
+import { Ship } from '../models/Ship';
+import { Commander } from '../models/Commander';
+import { Galaxy } from '../models/Galaxy';
+import { Vector2D, Vector3D } from '../../types/index';
+
+export interface CockpitData {
+  commander: Commander;
+  currentShip: Ship;
+  currentGalaxy: Galaxy;
+  currentSystem: string;
+}
+
+export class CockpitScreen extends BaseScreen {
+  private data: CockpitData;
+  private hudPanel: UIPanel;
+  private statusPanel: UIPanel;
+  private targetPanel: UIPanel;
+  private systemPanel: UIPanel;
+  private speedDisplay: UIText;
+  private shieldsDisplay: UIProgressBar;
+  private hullDisplay: UIProgressBar;
+  private energyDisplay: UIProgressBar;
+  private fuelDisplay: UIProgressBar;
+  private cargoDisplay: UIText;
+  private creditsDisplay: UIText;
+  private targetInfoDisplay: UIText;
+  private systemInfoDisplay: UIText;
+  private dockButton: UIButton;
+  private jumpButton: UIButton;
+  private hyperspaceButton: UIButton;
+  private targetInfoButton: UIButton;
+  private compassDisplay: UIPanel;
+  private messageLog: UIPanel;
+  private messageTexts: UIText[] = [];
+  private animationTime: number = 0;
+
+  constructor(data: CockpitData) {
+    const rootComponent = new UIPanel('cockpit-root', {
+      width: 800,
+      height: 600,
+      backgroundColor: '#000000',
+      borderWidth: 0,
+      shadow: false,
+      opacity: 1.0
+    });
+
+    super('cockpit', 'Cockpit', rootComponent);
+    this.data = data;
+
+    this.initializeUI();
+  }
+
+  private initializeUI(): void {
+    const root = this.component as UIPanel;
+
+    // HUD Panel (top center)
+    this.hudPanel = new UIPanel('hud', {
+      width: 300,
+      height: 80,
+      backgroundColor: 'rgba(0, 0, 0, 0.7)',
+      borderColor: '#40e0ff',
+      borderWidth: 1,
+      cornerRadius: 5,
+      shadow: true,
+      opacity: 0.9
+    });
+    this.hudPanel.position = { x: (800 - 300) / 2, y: 20 };
+
+    // Status Panel (bottom left)
+    this.statusPanel = new UIPanel('status', {
+      width: 200,
+      height: 180,
+      backgroundColor: 'rgba(0, 0, 0, 0.7)',
+      borderColor: '#40e0ff',
+      borderWidth: 1,
+      cornerRadius: 5,
+      shadow: true,
+      opacity: 0.9
+    });
+    this.statusPanel.position = { x: 20, y: 600 - 180 - 20 };
+
+    // Target Panel (top right)
+    this.targetPanel = new UIPanel('target', {
+      width: 200,
+      height: 120,
+      backgroundColor: 'rgba(0, 0, 0, 0.7)',
+      borderColor: '#ff4444',
+      borderWidth: 1,
+      cornerRadius: 5,
+      shadow: true,
+      opacity: 0.9
+    });
+    this.targetPanel.position = { x: 800 - 200 - 20, y: 20 };
+
+    // System Panel (bottom right)
+    this.systemPanel = new UIPanel('system', {
+      width: 200,
+      height: 150,
+      backgroundColor: 'rgba(0, 0, 0, 0.7)',
+      borderColor: '#40e0ff',
+      borderWidth: 1,
+      cornerRadius: 5,
+      shadow: true,
+      opacity: 0.9
+    });
+    this.systemPanel.position = { x: 800 - 200 - 20, y: 600 - 150 - 20 };
+
+    // Compass Display (center)
+    this.compassDisplay = new UIPanel('compass', {
+      width: 100,
+      height: 100,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      borderColor: '#40e0ff',
+      borderWidth: 2,
+      cornerRadius: 50,
+      shadow: false,
+      opacity: 0.8
+    });
+    this.compassDisplay.position = { x: 350, y: 250 };
+
+    // Message Log (bottom center)
+    this.messageLog = new UIPanel('message-log', {
+      width: 300,
+      height: 100,
+      backgroundColor: 'rgba(0, 0, 0, 0.8)',
+      borderColor: '#40e0ff',
+      borderWidth: 1,
+      cornerRadius: 5,
+      shadow: true,
+      opacity: 0.9
+    });
+    this.messageLog.position = { x: (800 - 300) / 2, y: 600 - 100 - 20 };
+
+    // Initialize displays
+    this.initializeDisplays();
+    this.initializeButtons();
+
+    // Add panels to root
+    root.addChild(this.hudPanel);
+    root.addChild(this.statusPanel);
+    root.addChild(this.targetPanel);
+    root.addChild(this.systemPanel);
+    root.addChild(this.compassDisplay);
+    root.addChild(this.messageLog);
+
+    // Add buttons
+    [this.dockButton, this.jumpButton, this.hyperspaceButton, this.targetInfoButton].forEach(button => {
+      if (button) root.addChild(button);
+    });
+  }
+
+  private initializeDisplays(): void {
+    // HUD Elements
+    this.speedDisplay = new UIText('speed', 'Speed: 0.0 Ls', {
+      fontSize: 16,
+      fontFamily: 'Courier New, monospace',
+      color: '#40e0ff',
+      textAlign: 'center',
+      bold: true
+    });
+    this.speedDisplay.position = { x: 50, y: 20 };
+    this.speedDisplay.size = { x: 200, y: 20 };
+    this.hudPanel.addChild(this.speedDisplay);
+
+    // Status Panel Elements
+    const labelOffset = 5;
+    const barWidth = 150;
+    const barHeight = 15;
+    let yPos = 10;
+
+    // Shields
+    this.shieldsDisplay = new UIProgressBar('shields', {
+      width: barWidth,
+      height: barHeight,
+      value: this.data.currentShip.shields,
+      maxValue: this.data.currentShip.maxShields,
+      backgroundColor: '#2d3748',
+      fillColor: '#48bb78',
+      borderColor: '#40e0ff',
+      borderWidth: 1,
+      showText: false
+    });
+    this.shieldsDisplay.position = { x: 25, y: yPos };
+    this.statusPanel.addChild(this.shieldsDisplay);
+
+    // Shields label
+    const shieldsLabel = new UIText('shields-label', 'Shields', {
+      fontSize: 12,
+      color: '#888888'
+    });
+    shieldsLabel.position = { x: 25, y: yPos - labelOffset };
+    this.statusPanel.addChild(shieldsLabel);
+
+    yPos += 25;
+
+    // Hull
+    this.hullDisplay = new UIProgressBar('hull', {
+      width: barWidth,
+      height: barHeight,
+      value: this.data.currentShip.hull,
+      maxValue: this.data.currentShip.maxHull,
+      backgroundColor: '#2d3748',
+      fillColor: '#ed8936',
+      borderColor: '#40e0ff',
+      borderWidth: 1,
+      showText: false
+    });
+    this.hullDisplay.position = { x: 25, y: yPos };
+    this.statusPanel.addChild(this.hullDisplay);
+
+    // Hull label
+    const hullLabel = new UIText('hull-label', 'Hull', {
+      fontSize: 12,
+      color: '#888888'
+    });
+    hullLabel.position = { x: 25, y: yPos - labelOffset };
+    this.statusPanel.addChild(hullLabel);
+
+    yPos += 25;
+
+    // Energy
+    this.energyDisplay = new UIProgressBar('energy', {
+      width: barWidth,
+      height: barHeight,
+      value: this.data.currentShip.energy,
+      maxValue: this.data.currentShip.maxEnergy,
+      backgroundColor: '#2d3748',
+      fillColor: '#4299e1',
+      borderColor: '#40e0ff',
+      borderWidth: 1,
+      showText: false
+    });
+    this.energyDisplay.position = { x: 25, y: yPos };
+    this.statusPanel.addChild(this.energyDisplay);
+
+    // Energy label
+    const energyLabel = new UIText('energy-label', 'Energy', {
+      fontSize: 12,
+      color: '#888888'
+    });
+    energyLabel.position = { x: 25, y: yPos - labelOffset };
+    this.statusPanel.addChild(energyLabel);
+
+    yPos += 25;
+
+    // Fuel
+    this.fuelDisplay = new UIProgressBar('fuel', {
+      width: barWidth,
+      height: barHeight,
+      value: this.data.currentShip.fuel,
+      maxValue: this.data.currentShip.maxFuel,
+      backgroundColor: '#2d3748',
+      fillColor: '#9f7aea',
+      borderColor: '#40e0ff',
+      borderWidth: 1,
+      showText: false
+    });
+    this.fuelDisplay.position = { x: 25, y: yPos };
+    this.statusPanel.addChild(this.fuelDisplay);
+
+    // Fuel label
+    const fuelLabel = new UIText('fuel-label', 'Fuel', {
+      fontSize: 12,
+      color: '#888888'
+    });
+    fuelLabel.position = { x: 25, y: yPos - labelOffset };
+    this.statusPanel.addChild(fuelLabel);
+
+    yPos += 25;
+
+    // Cargo
+    this.cargoDisplay = new UIText('cargo', `Cargo: 0/${this.data.currentShip.cargoCapacity}`, {
+      fontSize: 12,
+      color: '#cccccc'
+    });
+    this.cargoDisplay.position = { x: 25, y: yPos };
+    this.statusPanel.addChild(this.cargoDisplay);
+
+    // Credits
+    this.creditsDisplay = new UIText('credits', `Credits: ${this.data.commander.credits}`, {
+      fontSize: 14,
+      color: '#40e0ff',
+      bold: true
+    });
+    this.creditsDisplay.position = { x: 25, y: yPos + 20 };
+    this.statusPanel.addChild(this.creditsDisplay);
+
+    // Target Panel Elements
+    this.targetInfoDisplay = new UIText('target-info', 'No Target', {
+      fontSize: 12,
+      color: '#ff4444',
+      textAlign: 'center'
+    });
+    this.targetInfoDisplay.position = { x: 20, y: 20 };
+    this.targetInfoDisplay.size = { x: 160, y: 60 };
+    this.targetPanel.addChild(this.targetInfoDisplay);
+
+    // System Panel Elements
+    this.systemInfoDisplay = new UIText('system-info', `${this.data.currentSystem}`, {
+      fontSize: 14,
+      color: '#40e0ff',
+      textAlign: 'center',
+      bold: true
+    });
+    this.systemInfoDisplay.position = { x: 20, y: 20 };
+    this.systemInfoDisplay.size = { x: 160, y: 20 };
+    this.systemPanel.addChild(this.systemInfoDisplay);
+
+    // Message Log Elements
+    this.initializeMessageLog();
+  }
+
+  private initializeMessageLog(): void {
+    // Create message text slots
+    for (let i = 0; i < 4; i++) {
+      const messageText = new UIText(`message-${i}`, '', {
+        fontSize: 11,
+        color: '#cccccc'
+      });
+      messageText.position = { x: 10, y: 10 + i * 18 };
+      messageText.size = { x: 280, y: 15 };
+      this.messageLog.addChild(messageText);
+      this.messageTexts.push(messageText);
+    }
+  }
+
+  private initializeButtons(): void {
+    // Docking button (bottom left)
+    this.dockButton = new UIButton('dock', 'DOCK', {
+      width: 80,
+      height: 30,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.requestDocking());
+    this.dockButton.position = { x: 20, y: 600 - 30 - 20 };
+
+    // Jump button (bottom center)
+    this.jumpButton = new UIButton('jump', 'JUMP', {
+      width: 80,
+      height: 30,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.requestJump());
+    this.jumpButton.position = { x: (800 - 80) / 2, y: 600 - 30 - 20 };
+
+    // Hyperspace button (bottom right)
+    this.hyperspaceButton = new UIButton('hyperspace', 'HYPERSPACE', {
+      width: 100,
+      height: 30,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#9f7aea',
+      borderWidth: 1
+    }, () => this.openHyperspace());
+    this.hyperspaceButton.position = { x: 800 - 100 - 20, y: 600 - 30 - 20 };
+
+    // Target info button (top right)
+    this.targetInfoButton = new UIButton('target-info-btn', 'INFO', {
+      width: 60,
+      height: 25,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 10,
+      borderColor: '#ff4444',
+      borderWidth: 1
+    }, () => this.showTargetInfo());
+    this.targetInfoButton.position = { x: 800 - 60 - 20, y: 150 };
+  }
+
+  onEnter(): void {
+    super.onEnter();
+    this.addInitialMessages();
+  }
+
+  onExit(): void {
+    super.onExit();
+  }
+
+  onUpdate(deltaTime: number): void {
+    super.onUpdate(deltaTime);
+    this.animationTime += deltaTime;
+
+    // Update ship status displays
+    this.updateShipStatus();
+    this.updateCompass();
+    this.updateMessages(deltaTime);
+  }
+
+  private updateShipStatus(): void {
+    // Update progress bars
+    this.shieldsDisplay.setValue(this.data.currentShip.shields);
+    this.hullDisplay.setValue(this.data.currentShip.hull);
+    this.energyDisplay.setValue(this.data.currentShip.energy);
+    this.fuelDisplay.setValue(this.data.currentShip.fuel);
+
+    // Update cargo display
+    const cargoUsed = this.data.currentShip.cargo.length;
+    this.cargoDisplay.setText(`Cargo: ${cargoUsed}/${this.data.currentShip.cargoCapacity}`);
+
+    // Update credits display
+    this.creditsDisplay.setText(`Credits: ${this.data.commander.credits}`);
+
+    // Update speed display (placeholder - would integrate with physics)
+    const speed = Math.random() * 30; // Mock speed
+    this.speedDisplay.setText(`Speed: ${speed.toFixed(1)} Ls`);
+  }
+
+  private updateCompass(): void {
+    // Mock compass animation - would be updated with actual ship orientation
+    const angle = (this.animationTime * 0.001) % 360;
+    this.compassDisplay.position = { 
+      x: 350 + Math.cos(angle * Math.PI / 180) * 5, 
+      y: 250 + Math.sin(angle * Math.PI / 180) * 5 
+    };
+  }
+
+  private updateMessages(deltaTime: number): void {
+    // Update message timestamps and remove expired messages
+    // This is a placeholder implementation
+  }
+
+  private addInitialMessages(): void {
+    this.addMessage('Welcome to the cockpit');
+    this.addMessage(`Current system: ${this.data.currentSystem}`);
+    this.addMessage('Controls: WASD to move, SPACE to fire');
+  }
+
+  private addMessage(message: string): void {
+    // Shift messages down
+    for (let i = this.messageTexts.length - 1; i > 0; i--) {
+      this.messageTexts[i].setText(this.messageTexts[i - 1].getText());
+    }
+    
+    // Add new message
+    this.messageTexts[0].setText(`[${new Date().toLocaleTimeString()}] ${message}`);
+  }
+
+  private requestDocking(): void {
+    this.addMessage('Docking request sent...');
+    // This would integrate with the docking system
+    // For now, we'll just show a message
+  }
+
+  private requestJump(): void {
+    this.addMessage('Jump initiated...');
+    // This would integrate with the hyperspace jump system
+  }
+
+  private openHyperspace(): void {
+    this.addMessage('Opening hyperspace interface...');
+    // This would open the hyperspace/galaxy map
+  }
+
+  private showTargetInfo(): void {
+    this.addMessage('Target info displayed');
+    // This would show detailed target information
+  }
+
+  // Public methods for external systems to update the cockpit
+  public updateTarget(targetInfo: string): void {
+    this.targetInfoDisplay.setText(targetInfo);
+  }
+
+  public updateSystem(systemName: string): void {
+    this.systemInfoDisplay.setText(systemName);
+  }
+
+  public addSystemMessage(message: string): void {
+    this.addMessage(message);
+  }
+
+  public setTargetColor(color: 'green' | 'yellow' | 'red'): void {
+    let borderColor = '#ff4444';
+    switch (color) {
+      case 'green':
+        borderColor = '#48bb78';
+        break;
+      case 'yellow':
+        borderColor = '#ecc94b';
+        break;
+      case 'red':
+        borderColor = '#ff4444';
+        break;
+    }
+    this.targetPanel.options.borderColor = borderColor;
+  }
+
+  // Quick access key handlers
+  public handleKeyPress(key: string): boolean {
+    switch (key.toLowerCase()) {
+      case 'd':
+        this.requestDocking();
+        return true;
+      case 'j':
+        this.requestJump();
+        return true;
+      case 'h':
+        this.openHyperspace();
+        return true;
+      case 't':
+        this.showTargetInfo();
+        return true;
+      case 'm': // Map
+        this.openMap();
+        return true;
+      case 'i': // Inventory
+        this.openInventory();
+        return true;
+    }
+    return false;
+  }
+
+  private openMap(): void {
+    this.navigateToScreen('system-map');
+  }
+
+  private openInventory(): void {
+    this.navigateToScreen('inventory');
+  }
+
+  private navigateToScreen(screenId: ScreenId): void {
+    const uiManager = UIManager.getInstance();
+    uiManager.showScreen(screenId);
+  }
+}

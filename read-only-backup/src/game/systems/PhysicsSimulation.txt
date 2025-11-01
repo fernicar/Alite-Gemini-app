@@ -1,0 +1,491 @@
+/**
+ * Physics Simulation System - Newtonian physics engine for 3D space movement
+ * Implements realistic space physics including velocity, acceleration, thrust, and collision
+ */
+
+import { Vector2D, Vector3D } from '../../types/index.js';
+import { Ship } from '../models/Ship.js';
+
+/**
+ * Physics constants for space simulation
+ */
+export class PhysicsConstants {
+  static readonly G = 6.67430e-11; // Gravitational constant (m³/kg⋅s²)
+  static readonly G_SIM = 1e-8; // Simulation gravitational constant
+  static readonly SPACE_FRICTION = 0.01; // Minimal space drag
+  static readonly DEFAULT_RESTITUTION = 0.8; // Collision energy retention
+  static readonly MAX_SPEED_MULTIPLIER = 1.5; // Max speed limit factor
+  static readonly THRUST_SCALE = 1000; // Scale thrust to simulation units
+}
+
+/**
+ * Thrust vector and power distribution
+ */
+export interface ThrustVector {
+  forward: number; // 0-1, forward thrust
+  reverse: number; // 0-1, reverse thrust
+  up: number; // 0-1, upward thrust
+  down: number; // 0-1, downward thrust
+  left: number; // 0-1, left thrust
+  right: number; // 0-1, right thrust
+}
+
+/**
+ * Collision information
+ */
+export interface CollisionInfo {
+  object1Id: string;
+  object2Id: string;
+  position: Vector3D;
+  normal: Vector3D;
+  penetration: number;
+  relativeVelocity: Vector3D;
+  impactForce: number;
+}
+
+/**
+ * Physics simulation state
+ */
+export interface PhysicsState {
+  position: Vector3D;
+  velocity: Vector3D;
+  acceleration: Vector3D;
+  rotation: Vector3D;
+  angularVelocity: Vector3D;
+  mass: number;
+  drag: number;
+  thrustForce: ThrustVector;
+  isBraking: boolean;
+  maxThrust: number;
+}
+
+/**
+ * Advanced Physics Simulation Engine
+ * Implements realistic 3D space physics with thrust, braking, and collisions
+ */
+export class PhysicsSimulation {
+  private states: Map<string, PhysicsState> = new Map();
+  private collisions: CollisionInfo[] = [];
+  private gravitationalFields: Map<string, { position: Vector3D; mass: number; radius: number }> = new Map();
+  private timeStep: number = 1/60; // 60 FPS simulation
+  private speedMultiplier: number = 1.0;
+
+  constructor(timeStep: number = 1/60) {
+    this.timeStep = timeStep;
+  }
+
+  /**
+   * Initialize physics state for a ship
+   */
+  initializeShipPhysics(ship: Ship): void {
+    const state = ship.getState();
+    const specs = ship.getSpecs();
+    
+    const physicsState: PhysicsState = {
+      position: { ...state.position },
+      velocity: { ...state.velocity },
+      acceleration: { x: 0, y: 0, z: 0 },
+      rotation: { ...state.orientation },
+      angularVelocity: { x: 0, y: 0, z: 0 },
+      mass: specs.mass,
+      drag: this.calculateDrag(specs.mass, specs.class),
+      thrustForce: {
+        forward: 0, reverse: 0, up: 0, down: 0, left: 0, right: 0
+      },
+      isBraking: false,
+      maxThrust: specs.powerOutput * PhysicsConstants.THRUST_SCALE
+    };
+    
+    this.states.set(ship.getId(), physicsState);
+  }
+
+  /**
+   * Update physics simulation for all objects
+   */
+  update(deltaTime: number): void {
+    const adjustedTime = deltaTime * this.speedMultiplier;
+    
+    // Update all ship physics
+    this.updateAllPhysics(adjustedTime);
+    
+    // Apply gravitational effects
+    this.applyGravitationalEffects();
+    
+    // Resolve collisions
+    this.resolveCollisions();
+  }
+
+  /**
+   * Apply thrust to a ship
+   */
+  applyThrust(shipId: string, thrust: ThrustVector): void {
+    const state = this.states.get(shipId);
+    if (!state) return;
+    
+    // Validate thrust values (0-1 range)
+    state.thrustForce = {
+      forward: Math.max(0, Math.min(1, thrust.forward)),
+      reverse: Math.max(0, Math.min(1, thrust.reverse)),
+      up: Math.max(0, Math.min(1, thrust.up)),
+      down: Math.max(0, Math.min(1, thrust.down)),
+      left: Math.max(0, Math.min(1, thrust.left)),
+      right: Math.max(0, Math.min(1, thrust.right))
+    };
+  }
+
+  /**
+   * Enable/disable braking
+   */
+  setBraking(shipId: string, braking: boolean): void {
+    const state = this.states.get(shipId);
+    if (state) {
+      state.isBraking = braking;
+    }
+  }
+
+  /**
+   * Get current physics state for a ship
+   */
+  getPhysicsState(shipId: string): PhysicsState | null {
+    return this.states.get(shipId) || null;
+  }
+
+  /**
+   * Add gravitational field (planet, station, etc.)
+   */
+  addGravitationalField(id: string, position: Vector3D, mass: number, radius: number): void {
+    this.gravitationalFields.set(id, { position, mass, radius });
+  }
+
+  /**
+   * Remove gravitational field
+   */
+  removeGravitationalField(id: string): void {
+    this.gravitationalFields.delete(id);
+  }
+
+  /**
+   * Update physics for all ships
+   */
+  private updateAllPhysics(deltaTime: number): void {
+    for (const [shipId, state] of this.states.entries()) {
+      this.updateShipPhysics(shipId, state, deltaTime);
+    }
+  }
+
+  /**
+   * Update physics for a single ship
+   */
+  private updateShipPhysics(shipId: string, state: PhysicsState, deltaTime: number): void {
+    // Reset acceleration
+    state.acceleration = { x: 0, y: 0, z: 0 };
+    
+    // Apply thrust forces
+    this.applyThrustForces(state);
+    
+    // Apply braking
+    if (state.isBraking) {
+      this.applyBraking(state, deltaTime);
+    }
+    
+    // Apply drag
+    this.applyDrag(state, deltaTime);
+    
+    // Update velocity
+    state.velocity.x += state.acceleration.x * deltaTime;
+    state.velocity.y += state.acceleration.y * deltaTime;
+    state.velocity.z += state.acceleration.z * deltaTime;
+    
+    // Limit maximum speed
+    this.limitSpeed(state);
+    
+    // Update position
+    state.position.x += state.velocity.x * deltaTime;
+    state.position.y += state.velocity.y * deltaTime;
+    state.position.z += state.velocity.z * deltaTime;
+  }
+
+  /**
+   * Apply thrust forces based on input
+   */
+  private applyThrustForces(state: PhysicsState): void {
+    const thrustMagnitude = state.maxThrust;
+    
+    // Forward thrust (along ship's nose)
+    if (state.thrustForce.forward > 0) {
+      state.acceleration.x += (state.thrustForce.forward * thrustMagnitude) / state.mass;
+    }
+    
+    // Reverse thrust
+    if (state.thrustForce.reverse > 0) {
+      state.acceleration.x -= (state.thrustForce.reverse * thrustMagnitude) / state.mass;
+    }
+    
+    // Vertical thrust (up/down)
+    if (state.thrustForce.up > 0) {
+      state.acceleration.z += (state.thrustForce.up * thrustMagnitude) / state.mass;
+    }
+    if (state.thrustForce.down > 0) {
+      state.acceleration.z -= (state.thrustForce.down * thrustMagnitude) / state.mass;
+    }
+    
+    // Lateral thrust (left/right)
+    if (state.thrustForce.left > 0) {
+      state.acceleration.y += (state.thrustForce.left * thrustMagnitude) / state.mass;
+    }
+    if (state.thrustForce.right > 0) {
+      state.acceleration.y -= (state.thrustForce.right * thrustMagnitude) / state.mass;
+    }
+  }
+
+  /**
+   * Apply braking force
+   */
+  private applyBraking(state: PhysicsState, deltaTime: number): void {
+    const speed = this.getVectorMagnitude(state.velocity);
+    if (speed > 0.1) {
+      const brakingForce = Math.min(speed * 2, 10); // Adaptive braking
+      const brakeVector = this.normalizeVector(state.velocity);
+      
+      state.acceleration.x -= brakeVector.x * brakingForce;
+      state.acceleration.y -= brakeVector.y * brakingForce;
+      state.acceleration.z -= brakeVector.z * brakingForce;
+    }
+  }
+
+  /**
+   * Apply minimal space drag
+   */
+  private applyDrag(state: PhysicsState, deltaTime: number): void {
+    const dragForce = state.drag * this.getVectorMagnitude(state.velocity);
+    const dragVector = this.normalizeVector(state.velocity);
+    
+    state.acceleration.x -= dragVector.x * dragForce;
+    state.acceleration.y -= dragVector.y * dragForce;
+    state.acceleration.z -= dragVector.z * dragForce;
+  }
+
+  /**
+   * Limit maximum speed
+   */
+  private limitSpeed(state: PhysicsState): void {
+    const speed = this.getVectorMagnitude(state.velocity);
+    const maxSpeed = state.maxThrust * PhysicsConstants.MAX_SPEED_MULTIPLIER;
+    
+    if (speed > maxSpeed) {
+      const normalized = this.normalizeVector(state.velocity);
+      state.velocity.x = normalized.x * maxSpeed;
+      state.velocity.y = normalized.y * maxSpeed;
+      state.velocity.z = normalized.z * maxSpeed;
+    }
+  }
+
+  /**
+   * Apply gravitational effects from all fields
+   */
+  private applyGravitationalEffects(): void {
+    for (const [shipId, state] of this.states.entries()) {
+      let totalGravityX = 0, totalGravityY = 0, totalGravityZ = 0;
+      
+      for (const [fieldId, field] of this.gravitationalFields.entries()) {
+        const distance = this.calculateDistance(state.position, field.position);
+        
+        // Only apply gravity within field radius
+        if (distance <= field.radius && distance > 0) {
+          const gravityForce = (PhysicsConstants.G_SIM * field.mass) / (distance * distance);
+          const direction = this.normalizeVector({
+            x: field.position.x - state.position.x,
+            y: field.position.y - state.position.y,
+            z: field.position.z - state.position.z
+          });
+          
+          totalGravityX += direction.x * gravityForce;
+          totalGravityY += direction.y * gravityForce;
+          totalGravityZ += direction.z * gravityForce;
+        }
+      }
+      
+      // Apply total gravitational acceleration
+      state.acceleration.x += totalGravityX;
+      state.acceleration.y += totalGravityY;
+      state.acceleration.z += totalGravityZ;
+    }
+  }
+
+  /**
+   * Resolve collisions between ships
+   */
+  private resolveCollisions(): void {
+    this.collisions = [];
+    const shipStates = Array.from(this.states.entries());
+    
+    // Check all pairs of ships for collisions
+    for (let i = 0; i < shipStates.length; i++) {
+      for (let j = i + 1; j < shipStates.length; j++) {
+        const [id1, state1] = shipStates[i];
+        const [id2, state2] = shipStates[j];
+        
+        const collision = this.checkCollision(id1, state1, id2, state2);
+        if (collision) {
+          this.collisions.push(collision);
+          this.resolveCollision(collision);
+        }
+      }
+    }
+  }
+
+  /**
+   * Check if two ships are colliding
+   */
+  private checkCollision(id1: string, state1: PhysicsState, id2: string, state2: PhysicsState): CollisionInfo | null {
+    const distance = this.calculateDistance(state1.position, state2.position);
+    const collisionThreshold = 50; // Ships must be within 50 units to collide
+    
+    if (distance <= collisionThreshold) {
+      const normal = this.normalizeVector({
+        x: state1.position.x - state2.position.x,
+        y: state1.position.y - state2.position.y,
+        z: state1.position.z - state2.position.z
+      });
+      
+      const penetration = collisionThreshold - distance;
+      const relativeVelocity = {
+        x: state1.velocity.x - state2.velocity.x,
+        y: state1.velocity.y - state2.velocity.y,
+        z: state1.velocity.z - state2.velocity.z
+      };
+      
+      const impactForce = this.getVectorMagnitude(relativeVelocity) * 
+                         (state1.mass * state2.mass) / (state1.mass + state2.mass);
+      
+      return {
+        object1Id: id1,
+        object2Id: id2,
+        position: this.midpoint(state1.position, state2.position),
+        normal,
+        penetration,
+        relativeVelocity,
+        impactForce
+      };
+    }
+    
+    return null;
+  }
+
+  /**
+   * Resolve collision using elastic collision physics
+   */
+  private resolveCollision(collision: CollisionInfo): void {
+    const state1 = this.states.get(collision.object1Id);
+    const state2 = this.states.get(collision.object2Id);
+    
+    if (!state1 || !state2) return;
+    
+    // Separate the ships
+    const separationForce = collision.penetration * 0.5;
+    state1.position.x += collision.normal.x * separationForce;
+    state1.position.y += collision.normal.y * separationForce;
+    state1.position.z += collision.normal.z * separationForce;
+    
+    state2.position.x -= collision.normal.x * separationForce;
+    state2.position.y -= collision.normal.y * separationForce;
+    state2.position.z -= collision.normal.z * separationForce;
+    
+    // Calculate new velocities using elastic collision
+    const restitution = PhysicsConstants.DEFAULT_RESTITUTION;
+    const totalMass = state1.mass + state2.mass;
+    
+    const velocityAlongNormal = collision.relativeVelocity.x * collision.normal.x +
+                               collision.relativeVelocity.y * collision.normal.y +
+                               collision.relativeVelocity.z * collision.normal.z;
+    
+    if (velocityAlongNormal > 0) return; // Objects are separating
+    
+    const impulse = -(1 + restitution) * velocityAlongNormal / totalMass;
+    
+    // Apply impulse
+    state1.velocity.x += collision.normal.x * impulse * state2.mass;
+    state1.velocity.y += collision.normal.y * impulse * state2.mass;
+    state1.velocity.z += collision.normal.z * impulse * state2.mass;
+    
+    state2.velocity.x -= collision.normal.x * impulse * state1.mass;
+    state2.velocity.y -= collision.normal.y * impulse * state1.mass;
+    state2.velocity.z -= collision.normal.z * impulse * state1.mass;
+  }
+
+  /**
+   * Calculate drag coefficient based on ship mass and class
+   */
+  private calculateDrag(mass: number, shipClass: string): number {
+    const baseDrag = 0.001;
+    const massFactor = mass / 100;
+    const classFactor = shipClass === 'Large' ? 1.5 : shipClass === 'Medium' ? 1.0 : 0.7;
+    
+    return baseDrag * massFactor * classFactor;
+  }
+
+  // Vector utility functions
+  private getVectorMagnitude(vector: Vector3D): number {
+    return Math.sqrt(vector.x * vector.x + vector.y * vector.y + vector.z * vector.z);
+  }
+
+  private normalizeVector(vector: Vector3D): Vector3D {
+    const magnitude = this.getVectorMagnitude(vector);
+    if (magnitude === 0) return { x: 0, y: 0, z: 0 };
+    
+    return {
+      x: vector.x / magnitude,
+      y: vector.y / magnitude,
+      z: vector.z / magnitude
+    };
+  }
+
+  private calculateDistance(pos1: Vector3D, pos2: Vector3D): number {
+    const dx = pos1.x - pos2.x;
+    const dy = pos1.y - pos2.y;
+    const dz = pos1.z - pos2.z;
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  private midpoint(pos1: Vector3D, pos2: Vector3D): Vector3D {
+    return {
+      x: (pos1.x + pos2.x) / 2,
+      y: (pos1.y + pos2.y) / 2,
+      z: (pos1.z + pos2.z) / 2
+    };
+  }
+
+  /**
+   * Get all current collisions
+   */
+  getCollisions(): CollisionInfo[] {
+    return [...this.collisions];
+  }
+
+  /**
+   * Set simulation speed multiplier
+   */
+  setSpeedMultiplier(multiplier: number): void {
+    this.speedMultiplier = Math.max(0.1, Math.min(10.0, multiplier));
+  }
+
+  /**
+   * Clean up physics state for destroyed ships
+   */
+  removeShip(shipId: string): void {
+    this.states.delete(shipId);
+  }
+
+  /**
+   * Get simulation statistics
+   */
+  getStatistics(): object {
+    return {
+      activeShips: this.states.size,
+      gravitationalFields: this.gravitationalFields.size,
+      collisionsLastFrame: this.collisions.length,
+      timeStep: this.timeStep,
+      speedMultiplier: this.speedMultiplier
+    };
+  }
+}

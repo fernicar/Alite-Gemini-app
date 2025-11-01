@@ -1,0 +1,554 @@
+/**
+ * ScreenCoordinator - Central manager for all game screens
+ * Handles screen initialization, navigation, and data management
+ */
+
+import { UIManager, ScreenId } from '../ui/UIManager';
+import { MainMenuScreen } from './MainMenuScreen';
+import { CockpitScreen } from './CockpitScreen';
+import { GalaxyMapScreen } from './GalaxyMapScreen';
+import { SystemMapScreen } from './SystemMapScreen';
+import { MarketScreen } from './MarketScreen';
+import { SettingsScreen } from './SettingsScreen';
+import { HelpScreen } from './HelpScreen';
+import { Ship } from '../models/Ship';
+import { Commander } from '../models/Commander';
+import { Galaxy } from '../models/Galaxy';
+import { System } from '../models/Galaxy';
+import { Market } from '../models/Market';
+import { Logger } from '../../core/utils/Logging';
+
+export interface GameContext {
+  commander: Commander;
+  currentShip: Ship;
+  currentGalaxy: Galaxy;
+  currentSystem: string;
+  currentStation?: string;
+  gameTime: number;
+  isGamePaused: boolean;
+}
+
+export class ScreenCoordinator {
+  private static instance: ScreenCoordinator;
+  private uiManager: UIManager;
+  private logger: Logger;
+  private gameContext: GameContext;
+  private isInitialized: boolean = false;
+
+  private constructor() {
+    this.uiManager = UIManager.getInstance();
+    this.logger = Logger.getInstance();
+    this.gameContext = this.createDefaultGameContext();
+  }
+
+  public static getInstance(): ScreenCoordinator {
+    if (!ScreenCoordinator.instance) {
+      ScreenCoordinator.instance = new ScreenCoordinator();
+    }
+    return ScreenCoordinator.instance;
+  }
+
+  private createDefaultGameContext(): GameContext {
+    // Create default game context for testing
+    const commander = new Commander('Test Commander', 0, 0, 0, 0, 0, 0);
+    const currentShip = new Ship('Cobra Mk III');
+    const currentGalaxy = new Galaxy('Milky Way', 0);
+    
+    return {
+      commander,
+      currentShip,
+      currentGalaxy,
+      currentSystem: 'Lave',
+      gameTime: Date.now(),
+      isGamePaused: false
+    };
+  }
+
+  public initialize(canvas: HTMLCanvasElement): void {
+    if (this.isInitialized) {
+      this.logger.warn('ScreenCoordinator already initialized');
+      return;
+    }
+
+    this.logger.info('Initializing ScreenCoordinator...');
+
+    // Initialize UI manager
+    this.uiManager.initialize(canvas);
+
+    // Create and register all screens
+    this.createAllScreens();
+
+    // Load saved game data if available
+    this.loadGameData();
+
+    this.isInitialized = true;
+    this.logger.info('ScreenCoordinator initialized successfully');
+  }
+
+  private createAllScreens(): void {
+    // Main Menu Screen
+    const mainMenuScreen = new MainMenuScreen();
+    this.uiManager.registerScreen(mainMenuScreen);
+
+    // Cockpit Screen (needs game context data)
+    const cockpitScreen = this.createCockpitScreen();
+    this.uiManager.registerScreen(cockpitScreen);
+
+    // Galaxy Map Screen
+    const galaxyMapScreen = this.createGalaxyMapScreen();
+    this.uiManager.registerScreen(galaxyMapScreen);
+
+    // System Map Screen
+    const systemMapScreen = this.createSystemMapScreen();
+    this.uiManager.registerScreen(systemMapScreen);
+
+    // Market Screen
+    const marketScreen = this.createMarketScreen();
+    this.uiManager.registerScreen(marketScreen);
+
+    // Settings Screen
+    const settingsScreen = new SettingsScreen();
+    this.uiManager.registerScreen(settingsScreen);
+
+    // Help Screen
+    const helpScreen = new HelpScreen();
+    this.uiManager.registerScreen(helpScreen);
+
+    // Add other screens as needed
+    this.createAdditionalScreens();
+
+    this.logger.debug('All screens created and registered');
+  }
+
+  private createCockpitScreen(): CockpitScreen {
+    const cockpitData = {
+      commander: this.gameContext.commander,
+      currentShip: this.gameContext.currentShip,
+      currentGalaxy: this.gameContext.currentGalaxy,
+      currentSystem: this.gameContext.currentSystem
+    };
+    return new CockpitScreen(cockpitData);
+  }
+
+  private createGalaxyMapScreen(): GalaxyMapScreen {
+    const galaxyMapData = {
+      galaxy: this.gameContext.currentGalaxy,
+      currentSystem: this.gameContext.currentSystem,
+      availableSystems: this.gameContext.currentGalaxy.systems,
+      playerPosition: { x: 0, y: 0 }
+    };
+    return new GalaxyMapScreen(galaxyMapData);
+  }
+
+  private createSystemMapScreen(): SystemMapScreen {
+    const systemMapData = {
+      system: this.getCurrentSystem(),
+      systemName: this.gameContext.currentSystem,
+      playerPosition: { x: 0, y: 0 },
+      visibleObjects: this.generateSystemObjects()
+    };
+    return new SystemMapScreen(systemMapData);
+  }
+
+  private createMarketScreen(): MarketScreen {
+    const marketData = {
+      market: this.createMockMarket(),
+      commander: this.gameContext.commander,
+      systemName: this.gameContext.currentSystem,
+      stationName: this.gameContext.currentStation || 'Orbital Station'
+    };
+    return new MarketScreen(marketData);
+  }
+
+  private createAdditionalScreens(): void {
+    // TODO: Create additional screens as needed
+    // - DockedScreen
+    // - ShipyardScreen
+    // - EquipmentStoreScreen
+    // - InventoryScreen
+    // - TradeHistoryScreen
+    // - CommanderStatusScreen
+    // - ShipLoadoutScreen
+    // - EncyclopediaScreen
+    // - AchievementsScreen
+    // - HelpScreen
+    // - ControlsScreen
+    // - GraphicsAudioScreen
+    // - SaveLoadScreen
+    // - DataExportScreen
+
+    this.logger.debug('Additional screens placeholder created');
+  }
+
+  private getCurrentSystem(): System {
+    // Find the current system in the galaxy
+    const system = this.gameContext.currentGalaxy.systems.find(s => s.name === this.gameContext.currentSystem);
+    if (system) {
+      return system;
+    }
+
+    // Create a mock system if not found
+    return {
+      name: this.gameContext.currentSystem,
+      description: 'A trading system',
+      economy: 'Average',
+      government: 'Democracy',
+      population: 1000000,
+      productivity: 100,
+      radius: 100,
+      position: { x: 0, y: 0, z: 0 },
+      stations: ['Orbital Station'],
+      planets: [],
+      specialCargo: []
+    };
+  }
+
+  private generateSystemObjects(): any[] {
+    // Generate mock objects for the system map
+    return [
+      {
+        id: 'station-1',
+        name: 'Orbital Station',
+        type: 'station',
+        position: { x: 50, y: 20 },
+        radius: 15,
+        description: 'Main trading station',
+        government: this.getCurrentSystem().government,
+        economy: this.getCurrentSystem().economy
+      },
+      {
+        id: 'planet-1',
+        name: 'Main Planet',
+        type: 'planet',
+        position: { x: -100, y: -80 },
+        radius: 40,
+        description: 'Primary inhabited world',
+        population: '1M'
+      },
+      {
+        id: 'nav-1',
+        name: 'Navigation Beacon',
+        type: 'nav-beacon',
+        position: { x: 0, y: 0 },
+        radius: 5,
+        description: 'System navigation point'
+      },
+      {
+        id: 'anomaly-1',
+        name: 'Asteroid Field',
+        type: 'anomaly',
+        position: { x: 120, y: -50 },
+        radius: 25,
+        description: 'Dense asteroid cluster'
+      },
+      {
+        id: 'ship-1',
+        name: 'Trader Vessel',
+        type: 'ship',
+        position: { x: 80, y: 60 },
+        radius: 8,
+        description: 'Civilian trading ship'
+      }
+    ];
+  }
+
+  private createMockMarket(): Market {
+    // Create a mock market for testing
+    const market = new Market(this.gameContext.currentSystem);
+    
+    // Add some mock commodities with prices
+    const mockCommodities = [
+      { name: 'Food Cartridges', price: 12, quantity: 42 },
+      { name: 'Liquor', price: 95, quantity: 8 },
+      { name: 'Luxury Goods', price: 420, quantity: 15 },
+      { name: 'Computers', price: 340, quantity: 23 }
+    ];
+
+    mockCommodities.forEach(commodity => {
+      // This would use the actual Market class methods
+      console.log(`Mock commodity: ${commodity.name} - ${commodity.price} Cr - ${commodity.quantity} units`);
+    });
+
+    return market;
+  }
+
+  private loadGameData(): void {
+    try {
+      const savedGame = localStorage.getItem('alite-save-game');
+      if (savedGame) {
+        const parsed = JSON.parse(savedGame);
+        this.gameContext = { ...this.gameContext, ...parsed };
+        this.logger.info('Game data loaded from save file');
+      }
+    } catch (error) {
+      this.logger.error('Failed to load game data:', error);
+    }
+  }
+
+  public showScreen(screenId: ScreenId): void {
+    if (!this.isInitialized) {
+      this.logger.error('ScreenCoordinator not initialized');
+      return;
+    }
+
+    this.logger.debug(`Showing screen: ${screenId}`);
+    this.uiManager.showScreen(screenId);
+  }
+
+  public hideScreen(screenId: ScreenId): void {
+    if (!this.isInitialized) {
+      return;
+    }
+
+    this.uiManager.hideScreen(screenId);
+  }
+
+  public update(deltaTime: number): void {
+    if (!this.isInitialized) {
+      return;
+    }
+
+    // Update UI manager and all screens
+    this.uiManager.update(deltaTime);
+
+    // Update game context time
+    if (!this.gameContext.isGamePaused) {
+      this.gameContext.gameTime += deltaTime;
+    }
+  }
+
+  public render(ctx: CanvasRenderingContext2D): void {
+    if (!this.isInitialized) {
+      return;
+    }
+
+    this.uiManager.render(ctx);
+  }
+
+  // Screen navigation methods
+  public startNewGame(): void {
+    this.logger.info('Starting new game...');
+    
+    // Reset game context
+    this.gameContext = this.createDefaultGameContext();
+    
+    // Show cockpit as starting screen
+    this.showScreen('cockpit');
+  }
+
+  public continueGame(): void {
+    this.logger.info('Continuing saved game...');
+    
+    // Load game data and show cockpit
+    this.loadGameData();
+    this.showScreen('cockpit');
+  }
+
+  public returnToCockpit(): void {
+    this.showScreen('cockpit');
+  }
+
+  public openGalaxyMap(): void {
+    // Update galaxy map data
+    const galaxyMapScreen = this.uiManager.getCurrentScreen();
+    if (galaxyMapScreen && galaxyMapScreen.id === 'galaxy-map') {
+      // Update existing screen
+      // This would require additional methods on the screen
+    }
+    
+    this.showScreen('galaxy-map');
+  }
+
+  public openSystemMap(): void {
+    this.showScreen('system-map');
+  }
+
+  public openMarket(): void {
+    this.showScreen('market');
+  }
+
+  public openSettings(): void {
+    // Load current settings before showing
+    const settingsScreen = this.uiManager.getCurrentScreen() as SettingsScreen;
+    if (settingsScreen && settingsScreen.id === 'settings') {
+      settingsScreen.loadSettings();
+    }
+    
+    this.showScreen('settings');
+  }
+
+  public saveGame(): boolean {
+    try {
+      const gameData = {
+        commander: this.gameContext.commander,
+        currentShip: this.gameContext.currentShip,
+        currentGalaxy: this.gameContext.currentGalaxy,
+        currentSystem: this.gameContext.currentSystem,
+        gameTime: this.gameContext.gameTime,
+        timestamp: Date.now()
+      };
+
+      localStorage.setItem('alite-save-game', JSON.stringify(gameData));
+      this.logger.info('Game saved successfully');
+      return true;
+    } catch (error) {
+      this.logger.error('Failed to save game:', error);
+      return false;
+    }
+  }
+
+  public loadGame(): boolean {
+    try {
+      const savedGame = localStorage.getItem('alite-save-game');
+      if (!savedGame) {
+        this.logger.warn('No save game found');
+        return false;
+      }
+
+      const parsed = JSON.parse(savedGame);
+      this.gameContext = { ...this.gameContext, ...parsed };
+      
+      // Update all screens with new data
+      this.refreshAllScreens();
+      
+      this.logger.info('Game loaded successfully');
+      return true;
+    } catch (error) {
+      this.logger.error('Failed to load game:', error);
+      return false;
+    }
+  }
+
+  private refreshAllScreens(): void {
+    // Remove all screens and recreate them with new data
+    this.uiManager.hideAllScreens();
+    this.createAllScreens();
+  }
+
+  // Input handling
+  public handleMouseDown(x: number, y: number): boolean {
+    if (!this.isInitialized) {
+      return false;
+    }
+    return this.uiManager.handleMouseDown(x, y);
+  }
+
+  public handleMouseUp(x: number, y: number): boolean {
+    if (!this.isInitialized) {
+      return false;
+    }
+    return this.uiManager.handleMouseUp(x, y);
+  }
+
+  public handleMouseMove(x: number, y: number): boolean {
+    if (!this.isInitialized) {
+      return false;
+    }
+    return this.uiManager.handleMouseMove(x, y);
+  }
+
+  public handleKeyDown(key: string): boolean {
+    if (!this.isInitialized) {
+      return false;
+    }
+
+    // Handle global shortcuts
+    if (key === 'F1') {
+      this.openSettings();
+      return true;
+    }
+    
+    if (key === 'F2') {
+      this.openSystemMap();
+      return true;
+    }
+
+    if (key === 'F3') {
+      this.openGalaxyMap();
+      return true;
+    }
+
+    if (key === 'Escape') {
+      const currentScreen = this.uiManager.getCurrentScreen();
+      if (currentScreen && currentScreen.id !== 'main-menu') {
+        this.returnToCockpit();
+        return true;
+      }
+    }
+
+    // Pass to UI manager for screen-specific handling
+    return this.uiManager.handleKeyDown(key);
+  }
+
+  public handleKeyUp(key: string): boolean {
+    if (!this.isInitialized) {
+      return false;
+    }
+    return this.uiManager.handleKeyUp(key);
+  }
+
+  // Game state management
+  public pauseGame(): void {
+    this.gameContext.isGamePaused = true;
+    this.logger.debug('Game paused');
+  }
+
+  public resumeGame(): void {
+    this.gameContext.isGamePaused = false;
+    this.logger.debug('Game resumed');
+  }
+
+  public isGamePaused(): boolean {
+    return this.gameContext.isGamePaused;
+  }
+
+  public getGameContext(): GameContext {
+    return { ...this.gameContext };
+  }
+
+  public updateGameContext(updates: Partial<GameContext>): void {
+    this.gameContext = { ...this.gameContext, ...updates };
+  }
+
+  // Screen information
+  public getCurrentScreenId(): ScreenId | undefined {
+    const currentScreen = this.uiManager.getCurrentScreen();
+    return currentScreen?.id as ScreenId;
+  }
+
+  public isScreenVisible(screenId: ScreenId): boolean {
+    return this.uiManager.isScreenVisible(screenId);
+  }
+
+  // Utility methods
+  public isInitialized(): boolean {
+    return this.isInitialized;
+  }
+
+  public destroy(): void {
+    if (!this.isInitialized) {
+      return;
+    }
+
+    // Save current game state
+    this.saveGame();
+
+    // Destroy UI manager
+    this.uiManager.destroy();
+
+    // Reset state
+    this.isInitialized = false;
+
+    this.logger.info('ScreenCoordinator destroyed');
+  }
+
+  // Debug methods
+  public getDebugInfo(): any {
+    return {
+      isInitialized: this.isInitialized,
+      currentScreen: this.getCurrentScreenId(),
+      gameContext: this.gameContext,
+      uiManagerInitialized: (this.uiManager as any).isInitialized
+    };
+  }
+}

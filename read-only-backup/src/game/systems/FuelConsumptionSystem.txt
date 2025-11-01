@@ -1,0 +1,506 @@
+/**
+ * Fuel Consumption System - Tracks and calculates fuel usage for ships
+ * Handles engine fuel consumption, jump fuel costs, and fuel scooping
+ */
+
+import { Ship } from '../models/Ship.js';
+import { Vector3D } from '../../types/index.js';
+
+/**
+ * Fuel consumption events for tracking and logging
+ */
+export interface FuelEvent {
+  shipId: string;
+  timestamp: number;
+  type: 'THRUST' | 'JUMP' | 'REFUEL' | 'SCOOP' | 'DEPLETE';
+  amount: number; // Fuel gained/lost
+  reason: string;
+  position?: Vector3D;
+}
+
+/**
+ * Fuel consumption rates for different operations
+ */
+export interface FuelRates {
+  forwardThrust: number; // Fuel/second at full forward thrust
+  reverseThrust: number; // Fuel/second at full reverse thrust
+  verticalThrust: number; // Fuel/second for up/down thrust
+  lateralThrust: number; // Fuel/second for left/right thrust
+  idleConsumption: number; // Fuel/second when engines idle
+  lifeSupport: number; // Fuel/second for life support
+  systemsPower: number; // Fuel/second for ship systems
+}
+
+/**
+ * Fuel system status
+ */
+export interface FuelSystemStatus {
+  currentFuel: number;
+  maxFuel: number;
+  fuelPercentage: number;
+  consumptionRate: number; // Current fuel consumption per second
+  fuelEfficiency: number; // 0-1, affected by ship condition
+  estimatedRange: number; // Distance ship can travel with current fuel
+  timeUntilDepletion: number; // Time until fuel runs out (seconds)
+}
+
+/**
+ * Fuel consumption configuration
+ */
+export interface FuelConfig {
+  thrustFuelMultiplier: number; // Global thrust fuel consumption multiplier
+  enableFuelScooping: boolean; // Allow fuel scooping from stars
+  minFuelReserve: number; // Minimum fuel to keep in reserve (percentage)
+  emergencyPowerThreshold: number; // Percentage when emergency protocols activate
+  realisticConsumption: boolean; // Use realistic vs simplified fuel model
+}
+
+/**
+ * Advanced Fuel Consumption System
+ * Handles all aspects of ship fuel management including consumption, scooping, and conservation
+ */
+export class FuelConsumptionSystem {
+  private shipFuelRates: Map<string, FuelRates> = new Map();
+  private fuelEvents: FuelEvent[] = [];
+  private fuelHistory: Map<string, { timestamp: number; fuel: number }[]> = new Map();
+  private config: FuelConfig;
+  private maxHistoryEntries: number = 1000;
+  private scoopRange: number = 100; // Distance from star for fuel scooping
+
+  constructor(config: Partial<FuelConfig> = {}) {
+    this.config = {
+      thrustFuelMultiplier: 1.0,
+      enableFuelScooping: true,
+      minFuelReserve: 0.1, // 10% reserve
+      emergencyPowerThreshold: 0.05, // 5% emergency threshold
+      realisticConsumption: true,
+      ...config
+    };
+  }
+
+  /**
+   * Initialize fuel tracking for a ship
+   */
+  initializeShipFuel(ship: Ship): void {
+    const specs = ship.getSpecs();
+    const state = ship.getState();
+    
+    const fuelRates = this.calculateFuelRates(specs);
+    this.shipFuelRates.set(ship.getId(), fuelRates);
+    
+    // Initialize fuel history
+    if (!this.fuelHistory.has(ship.getId())) {
+      this.fuelHistory.set(ship.getId(), []);
+    }
+    
+    // Log initial fuel state
+    this.logFuelEvent(ship.getId(), {
+      shipId: ship.getId(),
+      timestamp: Date.now(),
+      type: 'REFUEL',
+      amount: state.fuelLevel,
+      reason: 'Initial fuel load',
+      position: { ...state.position }
+    });
+  }
+
+  /**
+   * Update fuel consumption for all ships
+   */
+  update(deltaTime: number, ship: Ship, thrustVector: { forward: number; reverse: number; up: number; down: number; left: number; right: number }): FuelSystemStatus {
+    const shipId = ship.getId();
+    const state = ship.getState();
+    const rates = this.shipFuelRates.get(shipId);
+    
+    if (!rates) {
+      this.initializeShipFuel(ship);
+    }
+    
+    const currentRates = this.shipFuelRates.get(shipId)!;
+    
+    // Calculate fuel consumption rate
+    const consumptionRate = this.calculateCurrentConsumptionRate(currentRates, thrustVector, ship.getCondition());
+    
+    // Apply consumption
+    const fuelConsumed = consumptionRate * deltaTime * this.config.thrustFuelMultiplier;
+    const newFuelLevel = Math.max(0, state.fuelLevel - fuelConsumed);
+    
+    // Update ship fuel
+    state.fuelLevel = newFuelLevel;
+    
+    // Log fuel consumption if significant
+    if (fuelConsumed > 0.001) { // Only log if consumption is meaningful
+      this.logFuelEvent(shipId, {
+        shipId,
+        timestamp: Date.now(),
+        type: 'THRUST',
+        amount: -fuelConsumed,
+        reason: 'Engine thrust consumption',
+        position: { ...state.position }
+      });
+    }
+    
+    // Update fuel history
+    this.updateFuelHistory(shipId, newFuelLevel);
+    
+    // Check for emergency conditions
+    if (this.isEmergencyCondition(newFuelLevel, state.fuelCapacity)) {
+      this.handleEmergencyCondition(ship);
+    }
+    
+    // Return current status
+    return this.getFuelStatus(ship);
+  }
+
+  /**
+   * Execute hyperspace jump and calculate fuel cost
+   */
+  executeJump(ship: Ship, distance: number): { success: boolean; fuelUsed: number; newFuelLevel: number } {
+    const shipId = ship.getId();
+    const state = ship.getState();
+    
+    // Calculate jump fuel cost
+    const fuelCost = this.calculateJumpFuelCost(distance, ship);
+    
+    if (state.fuelLevel < fuelCost) {
+      return {
+        success: false,
+        fuelUsed: 0,
+        newFuelLevel: state.fuelLevel
+      };
+    }
+    
+    // Execute jump
+    state.fuelLevel -= fuelCost;
+    
+    // Log jump event
+    this.logFuelEvent(shipId, {
+      shipId,
+      timestamp: Date.now(),
+      type: 'JUMP',
+      amount: -fuelCost,
+      reason: `Hyperspace jump ${distance.toFixed(1)}ly`,
+      position: { ...state.position }
+    });
+    
+    // Update fuel history
+    this.updateFuelHistory(shipId, state.fuelLevel);
+    
+    return {
+      success: true,
+      fuelUsed: fuelCost,
+      newFuelLevel: state.fuelLevel
+    };
+  }
+
+  /**
+   * Refuel ship from external source
+   */
+  refuel(ship: Ship, amount: number): number {
+    const state = ship.getState();
+    const spaceAvailable = state.fuelCapacity - state.fuelLevel;
+    const actualRefuel = Math.min(amount, spaceAvailable);
+    
+    state.fuelLevel += actualRefuel;
+    
+    // Log refuel event
+    this.logFuelEvent(ship.getId(), {
+      shipId: ship.getId(),
+      timestamp: Date.now(),
+      type: 'REFUEL',
+      amount: actualRefuel,
+      reason: 'Manual refueling',
+      position: { ...state.position }
+    });
+    
+    // Update fuel history
+    this.updateFuelHistory(ship.getId(), state.fuelLevel);
+    
+    return actualRefuel;
+  }
+
+  /**
+   * Attempt fuel scooping from a stellar object
+   */
+  scoopFuel(ship: Ship, starPosition: Vector3D, scoopRate: number): number {
+    if (!this.config.enableFuelScooping) return 0;
+    
+    const state = ship.getState();
+    const shipPosition = state.position;
+    const distance = this.calculateDistance(shipPosition, starPosition);
+    
+    // Check if in scooping range
+    if (distance > this.scoopRange) return 0;
+    
+    // Check if fuel tank is not full
+    if (state.fuelLevel >= state.fuelCapacity) return 0;
+    
+    // Calculate scooping efficiency based on distance
+    const scoopEfficiency = Math.max(0.1, 1.0 - (distance / this.scoopRange) * 0.5);
+    const actualScoopRate = scoopRate * scoopEfficiency;
+    
+    const maxScoopable = Math.min(actualScoopRate, state.fuelCapacity - state.fuelLevel);
+    const scoopedFuel = maxScoopable * (1 + Math.random() * 0.1); // Add some randomness
+    
+    state.fuelLevel += scoopedFuel;
+    
+    // Log scooping event
+    this.logFuelEvent(ship.getId(), {
+      shipId: ship.getId(),
+      timestamp: Date.now(),
+      type: 'SCOOP',
+      amount: scoopedFuel,
+      reason: `Fuel scooping from star (${distance.toFixed(0)}u)`,
+      position: { ...state.position }
+    });
+    
+    // Update fuel history
+    this.updateFuelHistory(ship.getId(), state.fuelLevel);
+    
+    return scoopedFuel;
+  }
+
+  /**
+   * Get current fuel system status
+   */
+  getFuelStatus(ship: Ship): FuelSystemStatus {
+    const state = ship.getState();
+    const rates = this.shipFuelRates.get(ship.getId());
+    
+    const consumptionRate = rates ? this.calculateCurrentConsumptionRate(rates, {
+      forward: 0, reverse: 0, up: 0, down: 0, left: 0, right: 0
+    }, ship.getCondition()) : 0;
+    
+    const fuelPercentage = state.fuelLevel / state.fuelCapacity;
+    const fuelEfficiency = ship.getCondition() / 100;
+    const currentSpeed = this.calculateCurrentSpeed(state.velocity);
+    const estimatedRange = this.estimateRange(currentSpeed, consumptionRate, state.fuelLevel);
+    const timeUntilDepletion = consumptionRate > 0 ? state.fuelLevel / consumptionRate : Infinity;
+    
+    return {
+      currentFuel: state.fuelLevel,
+      maxFuel: state.fuelCapacity,
+      fuelPercentage,
+      consumptionRate,
+      fuelEfficiency,
+      estimatedRange,
+      timeUntilDepletion
+    };
+  }
+
+  /**
+   * Get fuel consumption history for a ship
+   */
+  getFuelHistory(shipId: string, timeRange?: { start: number; end: number }): { timestamp: number; fuel: number }[] {
+    const history = this.fuelHistory.get(shipId) || [];
+    
+    if (!timeRange) return [...history];
+    
+    return history.filter(entry => 
+      entry.timestamp >= timeRange.start && entry.timestamp <= timeRange.end
+    );
+  }
+
+  /**
+   * Get recent fuel events
+   */
+  getFuelEvents(shipId?: string, limit: number = 50): FuelEvent[] {
+    let events = this.fuelEvents;
+    
+    if (shipId) {
+      events = events.filter(event => event.shipId === shipId);
+    }
+    
+    return events.slice(-limit).reverse(); // Most recent first
+  }
+
+  /**
+   * Calculate fuel rates based on ship specifications
+   */
+  private calculateFuelRates(specs: any): FuelRates {
+    // Base consumption rates (fuel per second)
+    const baseForwardThrust = 0.8 / specs.speed; // More efficient at higher speeds
+    const baseReverseThrust = baseForwardThrust * 1.3; // Reverse less efficient
+    const baseVerticalThrust = baseForwardThrust * 0.7; // Vertical thrusters more efficient
+    const baseLateralThrust = baseVerticalThrust * 0.8;
+    const baseIdleConsumption = specs.powerOutput * 0.01; // 1% of power for idle
+    const baseLifeSupport = 0.02; // Fixed life support consumption
+    const baseSystemsPower = specs.powerOutput * 0.05; // 5% for ship systems
+    
+    return {
+      forwardThrust: baseForwardThrust,
+      reverseThrust: baseReverseThrust,
+      verticalThrust: baseVerticalThrust,
+      lateralThrust: baseLateralThrust,
+      idleConsumption: baseIdleConsumption,
+      lifeSupport: baseLifeSupport,
+      systemsPower: baseSystemsPower
+    };
+  }
+
+  /**
+   * Calculate current fuel consumption rate based on thrust input
+   */
+  private calculateCurrentConsumptionRate(rates: FuelRates, thrustVector: any, shipCondition: number): number {
+    const conditionFactor = shipCondition / 100;
+    
+    if (!this.config.realisticConsumption) {
+      // Simplified consumption model
+      const totalThrust = Math.abs(thrustVector.forward) + Math.abs(thrustVector.reverse) + 
+                         Math.abs(thrustVector.up) + Math.abs(thrustVector.down) + 
+                         Math.abs(thrustVector.left) + Math.abs(thrustVector.right);
+      return totalThrust * rates.forwardThrust * conditionFactor;
+    }
+    
+    // Realistic consumption model
+    let consumption = rates.idleConsumption + rates.lifeSupport + rates.systemsPower;
+    
+    // Add thrust consumption
+    consumption += Math.abs(thrustVector.forward) * rates.forwardThrust;
+    consumption += Math.abs(thrustVector.reverse) * rates.reverseThrust;
+    consumption += (Math.abs(thrustVector.up) + Math.abs(thrustVector.down)) * rates.verticalThrust;
+    consumption += (Math.abs(thrustVector.left) + Math.abs(thrustVector.right)) * rates.lateralThrust;
+    
+    return consumption * conditionFactor;
+  }
+
+  /**
+   * Calculate jump fuel cost
+   */
+  private calculateJumpFuelCost(distance: number, ship: Ship): number {
+    const specs = ship.getSpecs();
+    
+    // Base jump fuel cost formula (similar to original Elite)
+    const baseCost = 2; // Minimum fuel cost
+    const distanceCost = distance * distance * 0.05; // Quadratic scaling
+    const massPenalty = specs.mass / 1000; // Heavier ships use more fuel
+    const efficiencyFactor = ship.getState().fsdIntegrity / 100; // FSD condition affects efficiency
+    
+    const totalCost = (baseCost + distanceCost + massPenalty) / efficiencyFactor;
+    
+    return Math.ceil(totalCost);
+  }
+
+  /**
+   * Log fuel event for tracking and analysis
+   */
+  private logFuelEvent(shipId: string, event: FuelEvent): void {
+    this.fuelEvents.push({
+      ...event,
+      timestamp: Date.now()
+    });
+    
+    // Maintain reasonable event log size
+    if (this.fuelEvents.length > this.maxHistoryEntries) {
+      this.fuelEvents = this.fuelEvents.slice(-this.maxHistoryEntries);
+    }
+  }
+
+  /**
+   * Update fuel history for trend analysis
+   */
+  private updateFuelHistory(shipId: string, fuelLevel: number): void {
+    const history = this.fuelHistory.get(shipId) || [];
+    
+    history.push({
+      timestamp: Date.now(),
+      fuel: fuelLevel
+    });
+    
+    // Maintain history size
+    if (history.length > this.maxHistoryEntries) {
+      history.splice(0, history.length - this.maxHistoryEntries);
+    }
+    
+    this.fuelHistory.set(shipId, history);
+  }
+
+  /**
+   * Check if ship is in emergency fuel condition
+   */
+  private isEmergencyCondition(fuel: number, capacity: number): boolean {
+    const percentage = fuel / capacity;
+    return percentage <= this.config.emergencyPowerThreshold;
+  }
+
+  /**
+   * Handle emergency fuel condition
+   */
+  private handleEmergencyCondition(ship: Ship): void {
+    const state = ship.getState();
+    
+    // Log emergency event
+    this.logFuelEvent(ship.getId(), {
+      shipId: ship.getId(),
+      timestamp: Date.now(),
+      type: 'DEPLETE',
+      amount: -state.fuelLevel,
+      reason: 'EMERGENCY: Fuel depletion detected',
+      position: { ...state.position }
+    });
+  }
+
+  /**
+   * Calculate current ship speed
+   */
+  private calculateCurrentSpeed(velocity: Vector3D): number {
+    return Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y + velocity.z * velocity.z);
+  }
+
+  /**
+   * Estimate maximum range with current fuel
+   */
+  private estimateRange(currentSpeed: number, consumptionRate: number, fuelRemaining: number): number {
+    if (consumptionRate <= 0 || currentSpeed <= 0) return 0;
+    
+    const hoursRemaining = fuelRemaining / consumptionRate / 3600; // Convert seconds to hours
+    return currentSpeed * hoursRemaining;
+  }
+
+  /**
+   * Calculate distance between two positions
+   */
+  private calculateDistance(pos1: Vector3D, pos2: Vector3D): number {
+    const dx = pos1.x - pos2.x;
+    const dy = pos1.y - pos2.y;
+    const dz = pos1.z - pos2.z;
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  /**
+   * Get fuel system configuration
+   */
+  getConfig(): FuelConfig {
+    return { ...this.config };
+  }
+
+  /**
+   * Update fuel system configuration
+   */
+  updateConfig(newConfig: Partial<FuelConfig>): void {
+    this.config = { ...this.config, ...newConfig };
+  }
+
+  /**
+   * Get fuel system statistics
+   */
+  getStatistics(): object {
+    return {
+      trackedShips: this.shipFuelRates.size,
+      totalFuelEvents: this.fuelEvents.length,
+      config: this.config,
+      fuelHistoryEntries: Array.from(this.fuelHistory.values()).reduce((sum, history) => sum + history.length, 0)
+    };
+  }
+
+  /**
+   * Clean up fuel data for destroyed ships
+   */
+  removeShip(shipId: string): void {
+    this.shipFuelRates.delete(shipId);
+    this.fuelHistory.delete(shipId);
+    
+    // Clean up fuel events for this ship
+    this.fuelEvents = this.fuelEvents.filter(event => event.shipId !== shipId);
+  }
+}

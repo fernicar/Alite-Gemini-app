@@ -1,0 +1,5 @@
+{
+  "name": "Alite",
+  "description": "I would like to remind you that:\n1. DON'T MODIFY `read-only-backup/` is read-only, and contains all the code from the 7-phase conversion from java to typescript code.\n2. `read-only-backup/TINS_project_files/source_java.txt` contains the genesis source code from where the 7-phase was inspired, whenever you find problems with the 7-phase typescript implementation, you can check the genesis of the main working java source code to clear your doubts.\n3. `read-only-backup/TINS_project_files/README.md` is the spec derived from the java source code to implement in typescript.\n4. if the app is waiting for 3d, image or sound assets, you can use any 3d shape, one shape for each placeholder, one image generation for each placeholder, and if you can, a sound for each placeholder, with a list for a task to replace each one on the path listed in it.\n\nif you understand that then continue with what you were doing",
+  "requestFramePermissions": []
+}

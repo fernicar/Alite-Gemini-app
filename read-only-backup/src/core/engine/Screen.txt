@@ -1,0 +1,391 @@
+import { Game } from './Game';
+import { Rectangle, Vector2D, GameEvent, ScreenType } from '@types/index';
+
+/**
+ * Base class for all game screens
+ */
+export abstract class Screen {
+  protected game: Game;
+  protected canvas: HTMLCanvasElement;
+  protected ctx: CanvasRenderingContext2D;
+  protected viewport: Rectangle;
+  protected isActive: boolean = false;
+  protected backgroundColor: string = '#000011';
+
+  constructor(game: Game) {
+    this.game = game;
+    this.canvas = this.game.getCanvas();
+    this.ctx = this.game.getContext();
+    this.viewport = {
+      x: 0,
+      y: 0,
+      width: this.canvas.width,
+      height: this.canvas.height
+    };
+  }
+
+  /**
+   * Called when screen becomes active
+   */
+  public abstract enter(data?: any): void;
+
+  /**
+   * Called when screen becomes inactive
+   */
+  public abstract exit(): void;
+
+  /**
+   * Update screen logic
+   */
+  public abstract update(deltaTime: number): void;
+
+  /**
+   * Render screen content
+   */
+  public abstract render(ctx: CanvasRenderingContext2D): void;
+
+  /**
+   * Handle screen resize
+   */
+  public resize(width: number, height: number): void {
+    this.viewport.width = width;
+    this.viewport.height = height;
+  }
+
+  /**
+   * Handle mouse down event
+   */
+  public onMouseDown(x: number, y: number, button: number): void {
+    // Override in subclasses
+  }
+
+  /**
+   * Handle mouse up event
+   */
+  public onMouseUp(x: number, y: number, button: number): void {
+    // Override in subclasses
+  }
+
+  /**
+   * Handle mouse move event
+   */
+  public onMouseMove(x: number, y: number): void {
+    // Override in subclasses
+  }
+
+  /**
+   * Handle key down event
+   */
+  public onKeyDown(key: string): void {
+    // Override in subclasses
+  }
+
+  /**
+   * Handle key up event
+   */
+  public onKeyUp(key: string): void {
+    // Override in subclasses
+  }
+
+  /**
+   * Handle touch start event
+   */
+  public onTouchStart(x: number, y: number, touchId: number): void {
+    // Override in subclasses
+  }
+
+  /**
+   * Handle touch move event
+   */
+  public onTouchMove(x: number, y: number, touchId: number): void {
+    // Override in subclasses
+  }
+
+  /**
+   * Handle touch end event
+   */
+  public onTouchEnd(touchId: number): void {
+    // Override in subclasses
+  }
+
+  /**
+   * Check if point is within screen bounds
+   */
+  protected isPointInBounds(x: number, y: number): boolean {
+    return x >= this.viewport.x && 
+           x <= this.viewport.x + this.viewport.width &&
+           y >= this.viewport.y && 
+           y <= this.viewport.y + this.viewport.height;
+  }
+
+  /**
+   * Convert screen coordinates to game world coordinates
+   */
+  protected screenToWorld(x: number, y: number): Vector2D {
+    return {
+      x: x - this.viewport.x,
+      y: y - this.viewport.y
+    };
+  }
+
+  /**
+   * Convert game world coordinates to screen coordinates
+   */
+  protected worldToScreen(x: number, y: number): Vector2D {
+    return {
+      x: x + this.viewport.x,
+      y: y + this.viewport.y
+    };
+  }
+
+  /**
+   * Clear screen with background color
+   */
+  protected clear(): void {
+    this.ctx.fillStyle = this.backgroundColor;
+    this.ctx.fillRect(
+      this.viewport.x, 
+      this.viewport.y, 
+      this.viewport.width, 
+      this.viewport.height
+    );
+  }
+
+  /**
+   * Set active state
+   */
+  public setActive(active: boolean): void {
+    this.isActive = active;
+  }
+
+  /**
+   * Check if screen is active
+   */
+  public getIsActive(): boolean {
+    return this.isActive;
+  }
+}
+
+/**
+ * Menu screen base class with common menu functionality
+ */
+export abstract class MenuScreen extends Screen {
+  protected menuItems: MenuItem[] = [];
+  protected selectedIndex: number = 0;
+  protected title: string = '';
+  protected showFPS: boolean = false;
+
+  constructor(game: Game) {
+    super(game);
+  }
+
+  public enter(data?: any): void {
+    super.enter(data);
+    this.setupMenuItems();
+    this.selectedIndex = 0;
+  }
+
+  public update(deltaTime: number): void {
+    this.handleInput();
+  }
+
+  public render(ctx: CanvasRenderingContext2D): void {
+    this.clear();
+    
+    // Draw title
+    if (this.title) {
+      ctx.fillStyle = '#40e0ff';
+      ctx.font = 'bold 48px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText(this.title, ctx.canvas.width / 2, 100);
+    }
+
+    // Draw menu items
+    this.drawMenuItems(ctx);
+
+    // Draw FPS if enabled
+    if (this.showFPS) {
+      this.drawFPS(ctx);
+    }
+  }
+
+  public onKeyDown(key: string): void {
+    switch (key) {
+      case 'ArrowUp':
+        this.moveSelection(-1);
+        break;
+      case 'ArrowDown':
+        this.moveSelection(1);
+        break;
+      case 'Enter':
+      case ' ':
+        this.selectCurrentItem();
+        break;
+      case 'Escape':
+        this.handleEscape();
+        break;
+    }
+  }
+
+  public onMouseDown(x: number, y: number, button: number): void {
+    // Check if click is on a menu item
+    const clickedIndex = this.getMenuItemAt(x, y);
+    if (clickedIndex !== -1) {
+      this.selectedIndex = clickedIndex;
+      this.selectCurrentItem();
+    }
+  }
+
+  /**
+   * Setup menu items - override in subclasses
+   */
+  protected abstract setupMenuItems(): void;
+
+  /**
+   * Handle menu item selection - override in subclasses
+   */
+  protected abstract selectMenuItem(index: number): void;
+
+  private setupMenuItem(menuItem: MenuItem): void {
+    menuItem.callback = menuItem.callback || (() => {});
+    menuItem.enabled = menuItem.enabled !== false;
+    menuItem.visible = menuItem.visible !== false;
+  }
+
+  private drawMenuItems(ctx: CanvasRenderingContext2D): void {
+    const startX = ctx.canvas.width / 2;
+    let startY = 200;
+    const lineHeight = 60;
+
+    ctx.font = '32px Arial';
+    ctx.textAlign = 'center';
+
+    this.menuItems.forEach((item, index) => {
+      if (!item.visible) return;
+
+      const y = startY + (index * lineHeight);
+      
+      // Highlight selected item
+      if (index === this.selectedIndex) {
+        ctx.fillStyle = '#ffff00';
+        ctx.fillText('> ', startX - 60, y);
+      }
+
+      // Draw item text
+      ctx.fillStyle = item.enabled ? '#ffffff' : '#666666';
+      ctx.fillText(item.text, startX, y);
+    });
+  }
+
+  private drawFPS(ctx: CanvasRenderingContext2D): void {
+    const metrics = this.game.getPerformanceMetrics();
+    ctx.font = '16px monospace';
+    ctx.fillStyle = '#00ff00';
+    ctx.textAlign = 'right';
+    ctx.fillText(`FPS: ${metrics.fps}`, ctx.canvas.width - 20, 30);
+    ctx.fillText(`Frame: ${metrics.avgFrameTime.toFixed(1)}ms`, ctx.canvas.width - 20, 50);
+  }
+
+  private moveSelection(direction: number): void {
+    do {
+      this.selectedIndex = (this.selectedIndex + direction + this.menuItems.length) % this.menuItems.length;
+    } while (!this.menuItems[this.selectedIndex].enabled || !this.menuItems[this.selectedIndex].visible);
+  }
+
+  private selectCurrentItem(): void {
+    const item = this.menuItems[this.selectedIndex];
+    if (item && item.enabled) {
+      this.selectMenuItem(this.selectedIndex);
+    }
+  }
+
+  private getMenuItemAt(x: number, y: number): number {
+    const startX = this.canvas.width / 2;
+    let startY = 200;
+    const lineHeight = 60;
+
+    for (let index = 0; index < this.menuItems.length; index++) {
+      const item = this.menuItems[index];
+      if (!item.visible) continue;
+
+      const itemY = startY + (index * lineHeight);
+      
+      if (x >= startX - 60 && x <= startX + 60 &&
+          y >= itemY - 20 && y <= itemY + 20) {
+        return index;
+      }
+    }
+    return -1;
+  }
+
+  private handleEscape(): void {
+    // Default escape behavior - go back to previous screen
+    // Override in subclasses for specific behavior
+  }
+
+  protected addMenuItem(text: string, callback: () => void, enabled: boolean = true): void {
+    this.menuItems.push({
+      text,
+      callback,
+      enabled,
+      visible: true
+    });
+  }
+}
+
+/**
+ * 3D game screen base class
+ */
+export abstract class GameScreen extends Screen {
+  protected cameraPosition: Vector3D = { x: 0, y: 0, z: 0 };
+  protected cameraRotation: Vector3D = { x: 0, y: 0, z: 0 };
+  protected zoomLevel: number = 1.0;
+
+  constructor(game: Game) {
+    super(game);
+    this.backgroundColor = '#000000';
+  }
+
+  public abstract update(deltaTime: number): void;
+  public abstract render(ctx: CanvasRenderingContext2D): void;
+}
+
+/**
+ * Full screen interface for dialogs and overlays
+ */
+export abstract class FullScreenInterface extends Screen {
+  protected overlayAlpha: number = 0.8;
+  protected isModal: boolean = false;
+
+  constructor(game: Game) {
+    super(game);
+  }
+
+  public render(ctx: CanvasRenderingContext2D): void {
+    // Draw overlay
+    ctx.fillStyle = `rgba(0, 0, 0, ${this.overlayAlpha})`;
+    ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+    // Draw content
+    this.renderContent(ctx);
+  }
+
+  /**
+   * Render the screen content - override in subclasses
+   */
+  protected abstract renderContent(ctx: CanvasRenderingContext2D): void;
+}
+
+// Types
+interface MenuItem {
+  text: string;
+  callback: () => void;
+  enabled: boolean;
+  visible: boolean;
+}
+
+interface Vector3D {
+  x: number;
+  y: number;
+  z: number;
+}

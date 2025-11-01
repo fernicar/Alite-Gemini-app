@@ -1,0 +1,594 @@
+/**
+ * Procedural Generation Coordinator
+ * Integrates all procedural generation systems for complete galaxy creation
+ */
+
+import { GalaxyRandom } from './SeededRandomGenerator.js';
+import { NameGenerator } from './NameGenerator.js';
+import { PlanetGenerator, StationGenerator } from './PlanetStationGenerator.js';
+import { TradeRouteGenerator } from './TradeRouteGenerator.js';
+import { AdvancedMarketPricing } from './AdvancedMarketPricing.js';
+
+import { 
+  EconomyType, 
+  GovernmentType, 
+  TechLevel, 
+  StarType, 
+  Vector2D 
+} from '../models/Galaxy.js';
+
+/**
+ * Enhanced galaxy generation result
+ */
+export interface EnhancedGalaxyData {
+  // Basic galaxy info
+  galaxyIndex: number;
+  name: string;
+  seed: number;
+  totalSystems: number;
+  
+  // Generated systems with enhanced data
+  systems: EnhancedSystemData[];
+  
+  // Trade routes connecting systems
+  tradeRoutes: any[];
+  
+  // Global market data for galactic coordination
+  globalMarketData: any;
+  
+  // Generation statistics
+  generationStats: {
+    totalGenerationTime: number;
+    systemsGenerated: number;
+    planetsGenerated: number;
+    stationsGenerated: number;
+    tradeRoutesGenerated: number;
+    averageSystemPopulation: number;
+    economyDistribution: Record<EconomyType, number>;
+    governmentDistribution: Record<GovernmentType, number>;
+    techLevelDistribution: Record<TechLevel, number>;
+  };
+}
+
+/**
+ * Enhanced system data with procedural content
+ */
+export interface EnhancedSystemData {
+  // Basic system information
+  id: number;
+  name: string;
+  coordinates: Vector2D;
+  seed: number;
+  
+  // Star and celestial data
+  starType: StarType;
+  starMass: number;
+  starAge: number; // millions of years
+  starColor: string;
+  
+  // System characteristics
+  economyType: EconomyType;
+  governmentType: GovernmentType;
+  techLevel: number;
+  population: number;
+  taxLevel: number;
+  
+  // Generated celestial bodies
+  planets: any[]; // PlanetData[]
+  stations: any[]; // StationData[]
+  
+  // Market and economic data
+  market: any; // MarketData with enhanced pricing
+  economicIndicators: any;
+  tradeConnections: string[]; // Connected system names
+  
+  // Special features
+  description: string;
+  specialFeatures: string[];
+  hiddenFeatures: string[];
+  
+  // Generation metadata
+  generationTime: number;
+  proceduralQuality: number; // 0-100
+}
+
+/**
+ * Main procedural generation coordinator
+ */
+export class ProceduralGenerationCoordinator {
+  private nameGenerator: NameGenerator;
+  private planetGenerator: PlanetGenerator;
+  private stationGenerator: StationGenerator;
+  private tradeRouteGenerator: TradeRouteGenerator;
+  private marketPricing: AdvancedMarketPricing;
+  private random: GalaxyRandom;
+  
+  constructor(seed: number | string) {
+    this.random = new GalaxyRandom(seed);
+    this.nameGenerator = new NameGenerator(seed);
+    this.planetGenerator = new PlanetGenerator(seed);
+    this.stationGenerator = new StationGenerator(seed);
+    this.tradeRouteGenerator = new TradeRouteGenerator(seed);
+    this.marketPricing = new AdvancedMarketPricing(seed);
+  }
+
+  /**
+   * Generate complete enhanced galaxy
+   */
+  async generateEnhancedGalaxy(galaxyIndex: number): Promise<EnhancedGalaxyData> {
+    const startTime = Date.now();
+    
+    // Initialize galaxy base
+    const galaxySeed = this.createGalaxySeed(galaxyIndex);
+    const galaxyRandom = new GalaxyRandom(galaxySeed);
+    const galaxyName = `Galaxy ${galaxyIndex + 1}`;
+    
+    console.log(`🚀 Starting generation of ${galaxyName}...`);
+    
+    // Generate all systems
+    const systems: EnhancedSystemData[] = [];
+    for (let systemIndex = 0; systemIndex < 256; systemIndex++) {
+      const system = await this.generateEnhancedSystem(galaxyIndex, systemIndex, galaxyRandom);
+      systems.push(system);
+      
+      // Progress reporting
+      if (systemIndex % 32 === 0) {
+        console.log(`📍 Generated ${systemIndex + 1}/256 systems in ${galaxyName}`);
+      }
+    }
+    
+    console.log(`🏗️ Generating trade routes for ${galaxyName}...`);
+    
+    // Generate trade routes
+    const tradeRoutes = this.tradeRouteGenerator.generateTradeRoutes(
+      systems.map(s => ({
+        name: s.name,
+        economyType: s.economyType,
+        governmentType: s.governmentType,
+        techLevel: s.techLevel,
+        population: s.population,
+        position: s.coordinates
+      }))
+    );
+    
+    // Connect systems through trade routes
+    this.connectSystemsWithTradeRoutes(systems, tradeRoutes);
+    
+    // Calculate generation statistics
+    const stats = this.calculateGenerationStatistics(systems, tradeRoutes);
+    
+    const totalGenerationTime = Date.now() - startTime;
+    
+    const enhancedGalaxy: EnhancedGalaxyData = {
+      galaxyIndex,
+      name: galaxyName,
+      seed: galaxySeed,
+      totalSystems: systems.length,
+      systems,
+      tradeRoutes,
+      globalMarketData: this.marketPricing['globalMarketData'],
+      generationStats: {
+        totalGenerationTime,
+        systemsGenerated: systems.length,
+        planetsGenerated: systems.reduce((sum, s) => sum + s.planets.length, 0),
+        stationsGenerated: systems.reduce((sum, s) => sum + s.stations.length, 0),
+        tradeRoutesGenerated: tradeRoutes.length,
+        averageSystemPopulation: stats.averagePopulation,
+        economyDistribution: stats.economyDistribution,
+        governmentDistribution: stats.governmentDistribution,
+        techLevelDistribution: stats.techLevelDistribution
+      }
+    };
+    
+    console.log(`✅ Completed generation of ${galaxyName} in ${totalGenerationTime}ms`);
+    console.log(`   - ${stats.planetsGenerated} planets`);
+    console.log(`   - ${stats.stationsGenerated} stations`);
+    console.log(`   - ${tradeRoutes.length} trade routes`);
+    
+    return enhancedGalaxy;
+  }
+
+  /**
+   * Generate individual enhanced system
+   */
+  private async generateEnhancedSystem(
+    galaxyIndex: number, 
+    systemIndex: number, 
+    galaxyRandom: GalaxyRandom
+  ): Promise<EnhancedSystemData> {
+    const startTime = Date.now();
+    const systemSeed = this.createSystemSeed(galaxyIndex, systemIndex);
+    const systemRandom = new GalaxyRandom(systemSeed);
+    
+    // Generate basic system properties
+    const economyType = this.selectEconomyType(systemRandom, galaxyIndex, systemIndex);
+    const governmentType = this.selectGovernmentType(systemRandom, economyType, galaxyIndex);
+    const techLevel = this.calculateTechLevel(systemRandom, galaxyIndex, systemIndex, economyType);
+    const population = this.calculatePopulation(systemRandom, techLevel, economyType);
+    
+    // Generate star characteristics
+    const starType = this.selectStarType(systemRandom, galaxyIndex);
+    const starMass = this.calculateStarMass(systemRandom, starType);
+    const starAge = this.calculateStarAge(systemRandom, starType);
+    const starColor = this.getStarColor(starType);
+    
+    // Generate celestial bodies
+    const planets = this.planetGenerator.generatePlanets(
+      starType, economyType, techLevel, population
+    );
+    
+    const stations = this.stationGenerator.generateStations(
+      planets, economyType, governmentType, techLevel, population
+    );
+    
+    // Generate system name
+    const isSpecialSystem = this.isSpecialSystem(systemIndex);
+    const systemName = this.nameGenerator.generateSystemName(
+      galaxyIndex, systemIndex, isSpecialSystem
+    );
+    
+    // Calculate position
+    const coordinates = this.calculateSystemPosition(systemRandom, systemIndex);
+    
+    // Generate enhanced market data
+    const marketData = await this.generateEnhancedMarket(
+      systemName, economyType, governmentType, techLevel, population
+    );
+    
+    // Calculate economic indicators
+    const economicIndicators = this.generateEconomicIndicators(systemRandom, economyType, techLevel);
+    
+    // Generate description and features
+    const description = this.nameGenerator.generateSystemDescription(
+      systemName, economyType, governmentType, techLevel
+    );
+    
+    const specialFeatures = this.generateSpecialFeatures(systemRandom, economyType, governmentType, population);
+    const hiddenFeatures = this.generateHiddenFeatures(systemRandom, population);
+    
+    const generationTime = Date.now() - startTime;
+    const proceduralQuality = this.calculateProceduralQuality(economyType, governmentType, techLevel, population);
+    
+    return {
+      id: systemIndex,
+      name: systemName,
+      coordinates,
+      seed: systemSeed,
+      starType,
+      starMass,
+      starAge,
+      starColor,
+      economyType,
+      governmentType,
+      techLevel,
+      population,
+      taxLevel: this.calculateTaxLevel(governmentType, techLevel),
+      planets,
+      stations,
+      market: marketData,
+      economicIndicators,
+      tradeConnections: [],
+      description,
+      specialFeatures,
+      hiddenFeatures,
+      generationTime,
+      proceduralQuality
+    };
+  }
+
+  /**
+   * Generate enhanced market data with advanced pricing
+   */
+  private async generateEnhancedMarket(
+    systemName: string,
+    economyType: EconomyType,
+    governmentType: GovernmentType,
+    techLevel: number,
+    population: number
+  ): Promise<any> {
+    // This would integrate with the Market.ts class
+    // For now, return enhanced market configuration
+    return {
+      name: `${systemName} Market`,
+      economyType,
+      governmentType,
+      techLevel,
+      population,
+      basePrices: {}, // Would be filled with actual good prices
+      availability: {}, // Would be filled with availability data
+      lastUpdated: Date.now()
+    };
+  }
+
+  // Helper methods for system generation
+
+  private createGalaxySeed(galaxyIndex: number): number {
+    return (galaxyIndex * 0x41C64E6D + 0x3039) & 0xFFFFFFFF;
+  }
+
+  private createSystemSeed(galaxyIndex: number, systemIndex: number): number {
+    return ((galaxyIndex * 256 + systemIndex) * 0x41C64E6D + 0x3039) & 0xFFFFFFFF;
+  }
+
+  private selectEconomyType(random: GalaxyRandom, galaxyIndex: number, systemIndex: number): EconomyType {
+    // Weighted selection based on galaxy position and randomness
+    const economies = Object.values(EconomyType);
+    return random.choice(economies);
+  }
+
+  private selectGovernmentType(random: GalaxyRandom, economyType: EconomyType, galaxyIndex: number): GovernmentType {
+    const governments = Object.values(GovernmentType);
+    return random.choice(governments);
+  }
+
+  private calculateTechLevel(random: GalaxyRandom, galaxyIndex: number, systemIndex: number, economyType: EconomyType): number {
+    // Tech level based on various factors
+    let baseLevel = random.nextInt(1, 14);
+    
+    // Economy affects tech level
+    switch (economyType) {
+      case EconomyType.HIGH_TECH:
+        baseLevel += random.nextInt(0, 3);
+        break;
+      case EconomyType.AGRICULTURAL:
+        baseLevel -= random.nextInt(0, 2);
+        break;
+    }
+    
+    return Math.max(1, Math.min(14, baseLevel));
+  }
+
+  private calculatePopulation(random: GalaxyRandom, techLevel: number, economyType: EconomyType): number {
+    const basePopulation = Math.pow(10, random.next() * 7); // 10^0 to 10^7
+    
+    // Tech level multiplier
+    const techMultiplier = 1 + (techLevel * 0.1);
+    
+    // Economy multiplier
+    const economyMultipliers: Record<EconomyType, number> = {
+      [EconomyType.AGRICULTURAL]: 2.0,
+      [EconomyType.INDUSTRIAL]: 1.5,
+      [EconomyType.HIGH_TECH]: 1.2,
+      [EconomyType.MINING]: 0.8,
+      [EconomyType.TOURISM]: 1.3,
+      [EconomyType.MILITARY]: 0.7
+    };
+    
+    const economyMultiplier = economyMultipliers[economyType] || 1.0;
+    
+    return Math.floor(basePopulation * techMultiplier * economyMultiplier);
+  }
+
+  private selectStarType(random: GalaxyRandom, galaxyIndex: number): StarType {
+    const starTypes = Object.values(StarType);
+    // Weight different star types
+    const weightedTypes = [
+      { type: StarType.MAIN_SEQUENCE, weight: 70 },
+      { type: StarType.RED_GIANT, weight: 15 },
+      { type: StarType.WHITE_DWARF, weight: 8 },
+      { type: StarType.NEUTRON, weight: 3 },
+      { type: StarType.BLACK_HOLE, weight: 2 },
+      { type: StarType.BINARY, weight: 2 }
+    ];
+    
+    return random.weightedChoice(weightedTypes);
+  }
+
+  private calculateStarMass(random: GalaxyRandom, starType: StarType): number {
+    const massRanges: Record<StarType, { min: number; max: number }> = {
+      [StarType.MAIN_SEQUENCE]: { min: 0.1, max: 2.0 },
+      [StarType.RED_GIANT]: { min: 0.8, max: 8.0 },
+      [StarType.WHITE_DWARF]: { min: 0.5, max: 1.4 },
+      [StarType.NEUTRON]: { min: 1.4, max: 2.0 },
+      [StarType.BLACK_HOLE]: { min: 3.0, max: 20.0 },
+      [StarType.BINARY]: { min: 0.5, max: 3.0 }
+    };
+    
+    const range = massRanges[starType];
+    return range.min + random.next() * (range.max - range.min);
+  }
+
+  private calculateStarAge(random: GalaxyRandom, starType: StarType): number {
+    const ageRanges: Record<StarType, { min: number; max: number }> = {
+      [StarType.MAIN_SEQUENCE]: { min: 100, max: 10000 },
+      [StarType.RED_GIANT]: { min: 5000, max: 12000 },
+      [StarType.WHITE_DWARF]: { min: 8000, max: 15000 },
+      [StarType.NEUTRON]: { min: 10000, max: 15000 },
+      [StarType.BLACK_HOLE]: { min: 12000, max: 15000 },
+      [StarType.BINARY]: { min: 1000, max: 8000 }
+    };
+    
+    const range = ageRanges[starType];
+    return Math.floor(range.min + random.next() * (range.max - range.min));
+  }
+
+  private getStarColor(starType: StarType): string {
+    const colors: Record<StarType, string> = {
+      [StarType.MAIN_SEQUENCE]: 'Yellow-White',
+      [StarType.RED_GIANT]: 'Red',
+      [StarType.WHITE_DWARF]: 'White',
+      [StarType.NEUTRON]: 'Blue-White',
+      [StarType.BLACK_HOLE]: 'Black',
+      [StarType.BINARY]: 'Variable'
+    };
+    
+    return colors[starType] || 'Unknown';
+  }
+
+  private isSpecialSystem(systemIndex: number): boolean {
+    const specialIndices = [0, 7, 17, 30, 45, 62, 80, 99, 119, 140, 162, 185, 209, 234, 250, 255];
+    return specialIndices.includes(systemIndex);
+  }
+
+  private calculateSystemPosition(random: GalaxyRandom, systemIndex: number): Vector2D {
+    // Generate position using the galaxy layout algorithm
+    const angle = (systemIndex / 256) * Math.PI * 2;
+    const radius = Math.sqrt(systemIndex / 256) * 500; // Spiral-like distribution
+    
+    return {
+      x: Math.cos(angle) * radius + random.next() * 50 - 25,
+      y: Math.sin(angle) * radius + random.next() * 50 - 25
+    };
+  }
+
+  private generateEconomicIndicators(random: GalaxyRandom, economyType: EconomyType, techLevel: number): any {
+    return {
+      growthRate: random.nextGaussian(0, 0.1),
+      inflationRate: Math.max(0, random.nextGaussian(0.05, 0.03)),
+      tradeVolume: random.next() + 0.5,
+      politicalStability: random.nextInt(30, 90),
+      resourceAbundance: random.nextInt(20, 80),
+      demandIndex: 0.8 + random.next() * 0.4,
+      supplyIndex: 0.8 + random.next() * 0.4
+    };
+  }
+
+  private generateSpecialFeatures(random: GalaxyRandom, economyType: EconomyType, governmentType: GovernmentType, population: number): string[] {
+    const features: string[] = [];
+    
+    // Economy-based features
+    switch (economyType) {
+      case EconomyType.HIGH_TECH:
+        if (random.next() < 0.3) features.push('Research Institute');
+        if (random.next() < 0.2) features.push('Advanced Manufacturing');
+        break;
+      case EconomyType.TOURISM:
+        if (random.next() < 0.4) features.push('Resort Complex');
+        if (random.next() < 0.3) features.push('Scenic Attractions');
+        break;
+      case EconomyType.MINING:
+        if (random.next() < 0.3) features.push('Rich Mineral Deposits');
+        if (random.next() < 0.2) features.push('Refinery Complex');
+        break;
+    }
+    
+    // Population-based features
+    if (population > 1000000 && random.next() < 0.2) {
+      features.push('Major Population Center');
+    }
+    
+    if (population > 10000000 && random.next() < 0.1) {
+      features.push('Planetary Capital');
+    }
+    
+    return features;
+  }
+
+  private generateHiddenFeatures(random: GalaxyRandom, population: number): string[] {
+    const features: string[] = [];
+    
+    // Rare features
+    if (random.next() < 0.01) features.push('Ancient Alien Ruins');
+    if (random.next() < 0.005) features.push('Wormhole Nexus');
+    if (random.next() < 0.02) features.push('Hidden Pirate Base');
+    if (random.next() < 0.015) features.push('Secret Research Facility');
+    
+    return features;
+  }
+
+  private calculateTaxLevel(governmentType: GovernmentType, techLevel: number): number {
+    const baseTaxRates: Record<GovernmentType, number> = {
+      [GovernmentType.ANARCHY]: 0,
+      [GovernmentType.FEUDAL]: 0.15,
+      [GovernmentType.MULTI_GOVERNMENT]: 0.10,
+      [GovernmentType.DICTATORSHIP]: 0.25,
+      [GovernmentType.COMMUNIST]: 0.20,
+      [GovernmentType.CONFEDERATE]: 0.12,
+      [GovernmentType.DEMOCRACY]: 0.08,
+      [GovernmentType.CORPORATE_STATE]: 0.18,
+      [GovernmentType.IMPLANTED_EMPIRE]: 0.22
+    };
+    
+    const baseRate = baseTaxRates[governmentType] || 0.1;
+    const techAdjustment = (techLevel - 7) * 0.005; // Higher tech = slightly higher taxes
+    
+    return Math.max(0, Math.min(0.35, baseRate + techAdjustment));
+  }
+
+  private calculateProceduralQuality(economyType: EconomyType, governmentType: GovernmentType, techLevel: number, population: number): number {
+    let quality = 50; // Base quality
+    
+    // Economy contributes to quality
+    switch (economyType) {
+      case EconomyType.HIGH_TECH:
+        quality += 20;
+        break;
+      case EconomyType.TOURISM:
+        quality += 15;
+        break;
+      case EconomyType.INDUSTRIAL:
+        quality += 10;
+        break;
+    }
+    
+    // Government contributes to quality
+    switch (governmentType) {
+      case GovernmentType.DEMOCRACY:
+        quality += 15;
+        break;
+      case GovernmentType.CONFEDERATE:
+        quality += 10;
+        break;
+      case GovernmentType.ANARCHY:
+        quality -= 20;
+        break;
+    }
+    
+    // Population contributes to quality
+    if (population > 1000000) quality += 10;
+    if (population > 10000000) quality += 10;
+    
+    return Math.max(0, Math.min(100, quality));
+  }
+
+  /**
+   * Connect systems with trade routes
+   */
+  private connectSystemsWithTradeRoutes(systems: EnhancedSystemData[], tradeRoutes: any[]): void {
+    for (const route of tradeRoutes) {
+      const startSystem = systems.find(s => s.name === route.startSystem);
+      const endSystem = systems.find(s => s.name === route.endSystem);
+      
+      if (startSystem) startSystem.tradeConnections.push(endSystem.name);
+      if (endSystem) endSystem.tradeConnections.push(startSystem.name);
+    }
+  }
+
+  /**
+   * Calculate generation statistics
+   */
+  private calculateGenerationStatistics(systems: EnhancedSystemData[], tradeRoutes: any[]): any {
+    const stats = {
+      planetsGenerated: 0,
+      stationsGenerated: 0,
+      averagePopulation: 0,
+      economyDistribution: {} as Record<EconomyType, number>,
+      governmentDistribution: {} as Record<GovernmentType, number>,
+      techLevelDistribution: {} as Record<TechLevel, number>
+    };
+    
+    let totalPopulation = 0;
+    
+    for (const system of systems) {
+      stats.planetsGenerated += system.planets.length;
+      stats.stationsGenerated += system.stations.length;
+      totalPopulation += system.population;
+      
+      // Count economies
+      stats.economyDistribution[system.economyType] = 
+        (stats.economyDistribution[system.economyType] || 0) + 1;
+      
+      // Count governments
+      stats.governmentDistribution[system.governmentType] = 
+        (stats.governmentDistribution[system.governmentType] || 0) + 1;
+      
+      // Count tech levels
+      stats.techLevelDistribution[system.techLevel] = 
+        (stats.techLevelDistribution[system.techLevel] || 0) + 1;
+    }
+    
+    stats.averagePopulation = totalPopulation / systems.length;
+    
+    return stats;
+  }
+}

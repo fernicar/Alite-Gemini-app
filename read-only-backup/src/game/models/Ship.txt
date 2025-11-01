@@ -1,0 +1,1089 @@
+/**
+ * Ship class - Ship statistics, equipment, and loadout management
+ * Handles all aspects of ship configuration, stats, and modifications.
+ */
+
+import { Vector2D, Vector3D } from '../../types/index.js';
+
+// Ship types in the Elite universe
+export enum ShipType {
+  // Starting ships
+  COBRA_MK3 = 'Cobra Mk III',
+  ASP_EXPLORER = 'Asp Explorer',
+  
+  // Small craft
+  VIPER = 'Viper',
+  ADDER = 'Adder',
+  MAMBA = 'Mamba',
+  
+  // Medium ships
+  KRAIT = 'Krait',
+  FEDERAL_FIGHTER = 'Federal Fighter',
+  ANACONDA = 'Anaconda',
+  
+  // Large ships
+  CORVETTE = 'Corvette',
+  FEDERAL_CRUISER = 'Federal Cruiser',
+  COTTER = 'Cotter',
+  
+  // Trade ships
+  HAULER = 'Hauler',
+  BULK_CARRIER = 'Bulk Carrier',
+  IMPERIAL_CUTTER = 'Imperial Cutter'
+}
+
+// Equipment slots for different ship types
+export enum EquipmentSlot {
+  HARDPOINT_1 = 'HARDPOINT_1',
+  HARDPOINT_2 = 'HARDPOINT_2',
+  HARDPOINT_3 = 'HARDPOINT_3',
+  HARDPOINT_4 = 'HARDPOINT_4',
+  UTILITY_MOUNT_1 = 'UTILITY_MOUNT_1',
+  UTILITY_MOUNT_2 = 'UTILITY_MOUNT_2',
+  ARMOUR = 'ARMOUR',
+  POWER_PLANT = 'POWER_PLANT',
+  THRUSTERS = 'THRUSTERS',
+  POWER_DISTRIBUTOR = 'POWER_DISTRIBUTOR',
+  POWER_PLANT_BOOSTER = 'POWER_PLANT_BOOSTER',
+  FSD = 'FSD',
+  FSD_BOOSTER = 'FSD_BOOSTER',
+  LIFE_SUPPORT = 'LIFE_SUPPORT',
+  POWER_MANAGEMENT = 'POWER_MANAGEMENT',
+  BULKHEADS = 'BULKHEADS',
+  FUEL_TANK = 'FUEL_TANK',
+  FUEL_SCOOPS = 'FUEL_SCOOPS',
+  REFINERY = 'REFINERY',
+  FSD_INTERDICTOR = 'FSD_INTERDICTOR',
+  CARGO_RACKS = 'CARGO_RACKS'
+}
+
+// Equipment categories
+export enum EquipmentCategory {
+  WEAPON = 'WEAPON',
+  UTILITY = 'UTILITY',
+  CORE = 'CORE',
+  ARMOUR = 'ARMOUR'
+}
+
+// Weapon types
+export enum WeaponType {
+  LASER = 'LASER',
+  BALLISTICS = 'BALLISTICS',
+  MISSILES = 'MISSILES',
+  MINES = 'MINES'
+}
+
+// Equipment item definition
+export interface EquipmentItem {
+  id: string;
+  name: string;
+  category: EquipmentCategory;
+  slot: EquipmentSlot[];
+  type?: WeaponType;
+  stats: {
+    power: number; // Power draw
+    energy: number; // Energy consumption
+    range?: number; // Weapon range
+    damage?: number; // Weapon damage
+    rate?: number; // Fire rate
+    cargoSpace?: number; // Space required
+    mass?: number; // Weight
+    integrity?: number; // Durability
+  };
+  price: number;
+  description: string;
+}
+
+// Ship specifications
+export interface ShipSpecs {
+  // Basic stats
+  length: number;
+  width: number;
+  height: number;
+  mass: number;
+  
+  // Crew and capacity
+  crewMin: number;
+  crewMax: number;
+  passengerCapacity: number;
+  
+  // Performance
+  speed: number; // m/s
+  acceleration: number; // m/s²
+  maxSpeed: number; // m/s
+  jumpRange: number; // ly
+  
+  // Combat
+  hullStrength: number;
+  shieldStrength: number;
+  shieldRecharge: number; // shield/s
+  
+  // Power and fuel
+  powerOutput: number; // MW
+  fuelCapacity: number; // t
+  fuelScoopRate: number; // t/s
+  
+  // Cargo and storage
+  cargoCapacity: number; // t
+  maxJumpRange: number; // ly with FSD booster
+  
+  // Hardpoints and utility
+  maxHardpoints: number;
+  maxUtilityMounts: number;
+  
+  // Cost and availability
+  basePrice: number;
+  manufacturer: string;
+  class: 'Small' | 'Medium' | 'Large';
+}
+
+// Ship state
+export interface ShipState {
+  hullIntegrity: number; // 0-100
+  shieldIntegrity: number; // 0-100
+  fuelLevel: number; // t
+  fuelCapacity: number; // t
+  
+  // System integrity (0-100)
+  powerPlantIntegrity: number;
+  thrustersIntegrity: number;
+  fsdIntegrity: number;
+  lifeSupportIntegrity: number;
+  powerDistributorIntegrity: number;
+  
+  // Cargo state
+  cargoUsed: number;
+  cargoCapacity: number;
+  cargo: Map<string, number>; // good -> quantity
+  
+  // Power management
+  powerAssigned: Map<EquipmentSlot, number>; // Power distribution
+  
+  // Position and velocity
+  position: Vector3D;
+  velocity: Vector3D;
+  orientation: Vector3D; // rotation
+  
+  // System statuses
+  systemsOnline: Set<string>;
+  damagedSystems: Set<string>;
+  offlineSystems: Set<string>;
+}
+
+/**
+ * Ship class - Comprehensive ship management and configuration
+ */
+export class Ship {
+  private id: string;
+  private type: ShipType;
+  private name: string;
+  private specs: ShipSpecs;
+  private state: ShipState;
+  private equipment: Map<EquipmentSlot, string>; // slot -> equipment ID
+  private availableEquipment: EquipmentItem[];
+  private ownerId: string; // Commander who owns this ship
+  private location: string; // Where ship is located (station/planet name)
+  private condition: number; // Overall condition 0-100
+  private modifications: Map<string, number>; // Modification -> level (0-5)
+  
+  // Performance tracking
+  private flightTime: number;
+  private combatTime: number;
+  private jumpCount: number;
+  private cargoTrips: number;
+  
+  // Acquisition info
+  private acquiredDate: number;
+  private purchasePrice: number;
+  private insurancePaid: number;
+
+  constructor(
+    type: ShipType,
+    name: string,
+    ownerId: string,
+    location: string = 'Lave Station',
+    condition: number = 100
+  ) {
+    this.id = this.generateShipId();
+    this.type = type;
+    this.name = name;
+    this.ownerId = ownerId;
+    this.location = location;
+    this.condition = condition;
+    this.acquiredDate = Date.now();
+    
+    // Initialize specifications and state
+    this.specs = this.generateShipSpecs(type);
+    this.state = this.generateInitialState();
+    this.equipment = new Map();
+    this.availableEquipment = this.initializeDefaultEquipment();
+    this.modifications = new Map();
+    
+    // Performance tracking
+    this.flightTime = 0;
+    this.combatTime = 0;
+    this.jumpCount = 0;
+    this.cargoTrips = 0;
+    
+    // Default equipment setup
+    this.setupDefaultLoadout();
+  }
+
+  /**
+   * Generate unique ship ID
+   */
+  private generateShipId(): string {
+    return 'ship_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
+  }
+
+  /**
+   * Generate ship specifications based on type
+   */
+  private generateShipSpecs(type: ShipType): ShipSpecs {
+    const specDatabase: { [key in ShipType]: ShipSpecs } = {
+      [ShipType.COBRA_MK3]: {
+        length: 27,
+        width: 22,
+        height: 8,
+        mass: 120,
+        crewMin: 1,
+        crewMax: 4,
+        passengerCapacity: 0,
+        speed: 180,
+        acceleration: 4.2,
+        maxSpeed: 300,
+        jumpRange: 7,
+        hullStrength: 100,
+        shieldStrength: 100,
+        shieldRecharge: 2.5,
+        powerOutput: 6.0,
+        fuelCapacity: 20,
+        fuelScoopRate: 0.5,
+        cargoCapacity: 20,
+        maxJumpRange: 7.25,
+        maxHardpoints: 2,
+        maxUtilityMounts: 2,
+        basePrice: 250000,
+        manufacturer: 'Faulkner',
+        class: 'Medium'
+      },
+      [ShipType.ASP_EXPLORER]: {
+        length: 37,
+        width: 29,
+        height: 10,
+        mass: 180,
+        crewMin: 1,
+        crewMax: 5,
+        passengerCapacity: 0,
+        speed: 170,
+        acceleration: 3.8,
+        maxSpeed: 280,
+        jumpRange: 25,
+        hullStrength: 100,
+        shieldStrength: 100,
+        shieldRecharge: 2.0,
+        powerOutput: 7.5,
+        fuelCapacity: 16,
+        fuelScoopRate: 0.4,
+        cargoCapacity: 16,
+        maxJumpRange: 27.5,
+        maxHardpoints: 2,
+        maxUtilityMounts: 4,
+        basePrice: 450000,
+        manufacturer: 'Lakon',
+        class: 'Medium'
+      },
+      [ShipType.VIPER]: {
+        length: 20,
+        width: 15,
+        height: 6,
+        mass: 80,
+        crewMin: 1,
+        crewMax: 1,
+        passengerCapacity: 0,
+        speed: 220,
+        acceleration: 5.2,
+        maxSpeed: 350,
+        jumpRange: 5,
+        hullStrength: 80,
+        shieldStrength: 80,
+        shieldRecharge: 3.0,
+        powerOutput: 4.0,
+        fuelCapacity: 16,
+        fuelScoopRate: 0.3,
+        cargoCapacity: 6,
+        maxJumpRange: 5.5,
+        maxHardpoints: 2,
+        maxUtilityMounts: 2,
+        basePrice: 180000,
+        manufacturer: 'Faulkner',
+        class: 'Small'
+      },
+      [ShipType.ADDER]: {
+        length: 24,
+        width: 20,
+        height: 7,
+        mass: 100,
+        crewMin: 1,
+        crewMax: 3,
+        passengerCapacity: 0,
+        speed: 190,
+        acceleration: 4.0,
+        maxSpeed: 320,
+        jumpRange: 6,
+        hullStrength: 90,
+        shieldStrength: 90,
+        shieldRecharge: 2.8,
+        powerOutput: 5.0,
+        fuelCapacity: 16,
+        fuelScoopRate: 0.4,
+        cargoCapacity: 8,
+        maxJumpRange: 6.5,
+        maxHardpoints: 2,
+        maxUtilityMounts: 2,
+        basePrice: 320000,
+        manufacturer: 'Faulkner',
+        class: 'Medium'
+      },
+      [ShipType.MAMBA]: {
+        length: 35,
+        width: 25,
+        height: 9,
+        mass: 150,
+        crewMin: 1,
+        crewMax: 2,
+        passengerCapacity: 0,
+        speed: 200,
+        acceleration: 4.8,
+        maxSpeed: 380,
+        jumpRange: 8,
+        hullStrength: 110,
+        shieldStrength: 110,
+        shieldRecharge: 2.2,
+        powerOutput: 6.5,
+        fuelCapacity: 20,
+        fuelScoopRate: 0.5,
+        cargoCapacity: 12,
+        maxJumpRange: 9.0,
+        maxHardpoints: 2,
+        maxUtilityMounts: 2,
+        basePrice: 550000,
+        manufacturer: 'Mamba Industries',
+        class: 'Medium'
+      },
+      [ShipType.KRAIT]: {
+        length: 32,
+        width: 26,
+        height: 8,
+        mass: 140,
+        crewMin: 1,
+        crewMax: 4,
+        passengerCapacity: 0,
+        speed: 185,
+        acceleration: 4.1,
+        maxSpeed: 310,
+        jumpRange: 10,
+        hullStrength: 105,
+        shieldStrength: 105,
+        shieldRecharge: 2.4,
+        powerOutput: 6.0,
+        fuelCapacity: 18,
+        fuelScoopRate: 0.45,
+        cargoCapacity: 14,
+        maxJumpRange: 12.0,
+        maxHardpoints: 2,
+        maxUtilityMounts: 3,
+        basePrice: 380000,
+        manufacturer: 'Morrison',
+        class: 'Medium'
+      },
+      [ShipType.FEDERAL_FIGHTER]: {
+        length: 22,
+        width: 18,
+        height: 7,
+        mass: 95,
+        crewMin: 1,
+        crewMax: 2,
+        passengerCapacity: 0,
+        speed: 210,
+        acceleration: 4.9,
+        maxSpeed: 340,
+        jumpRange: 6,
+        hullStrength: 95,
+        shieldStrength: 95,
+        shieldRecharge: 2.7,
+        powerOutput: 5.5,
+        fuelCapacity: 20,
+        fuelScoopRate: 0.5,
+        cargoCapacity: 10,
+        maxJumpRange: 6.5,
+        maxHardpoints: 2,
+        maxUtilityMounts: 2,
+        basePrice: 450000,
+        manufacturer: 'Faulkner',
+        class: 'Medium'
+      },
+      [ShipType.ANACONDA]: {
+        length: 152,
+        width: 62,
+        height: 28,
+        mass: 400,
+        crewMin: 8,
+        crewMax: 64,
+        passengerCapacity: 18,
+        speed: 120,
+        acceleration: 2.2,
+        maxSpeed: 220,
+        jumpRange: 30,
+        hullStrength: 200,
+        shieldStrength: 200,
+        shieldRecharge: 1.5,
+        powerOutput: 15.0,
+        fuelCapacity: 512,
+        fuelScoopRate: 2.5,
+        cargoCapacity: 286,
+        maxJumpRange: 45.0,
+        maxHardpoints: 8,
+        maxUtilityMounts: 8,
+        basePrice: 64000000,
+        manufacturer: 'Faulkner',
+        class: 'Large'
+      },
+      [ShipType.CORVETTE]: {
+        length: 107,
+        width: 49,
+        height: 24,
+        mass: 350,
+        crewMin: 4,
+        crewMax: 26,
+        passengerCapacity: 8,
+        speed: 130,
+        acceleration: 2.5,
+        maxSpeed: 240,
+        jumpRange: 25,
+        hullStrength: 250,
+        shieldStrength: 250,
+        shieldRecharge: 1.8,
+        powerOutput: 12.0,
+        fuelCapacity: 512,
+        fuelScoopRate: 2.0,
+        cargoCapacity: 184,
+        maxJumpRange: 37.5,
+        maxHardpoints: 6,
+        maxUtilityMounts: 6,
+        basePrice: 60000000,
+        manufacturer: 'Faulkner',
+        class: 'Large'
+      },
+      [ShipType.FEDERAL_CRUISER]: {
+        length: 125,
+        width: 52,
+        height: 25,
+        mass: 380,
+        crewMin: 5,
+        crewMax: 28,
+        passengerCapacity: 10,
+        speed: 125,
+        acceleration: 2.3,
+        maxSpeed: 230,
+        jumpRange: 28,
+        hullStrength: 220,
+        shieldStrength: 220,
+        shieldRecharge: 1.6,
+        powerOutput: 13.0,
+        fuelCapacity: 512,
+        fuelScoopRate: 2.2,
+        cargoCapacity: 196,
+        maxJumpRange: 42.0,
+        maxHardpoints: 8,
+        maxUtilityMounts: 8,
+        basePrice: 65000000,
+        manufacturer: 'Faulkner',
+        class: 'Large'
+      },
+      [ShipType.COTTER]: {
+        length: 89,
+        width: 42,
+        height: 21,
+        mass: 300,
+        crewMin: 3,
+        crewMax: 20,
+        passengerCapacity: 6,
+        speed: 135,
+        acceleration: 2.8,
+        maxSpeed: 250,
+        jumpRange: 20,
+        hullStrength: 180,
+        shieldStrength: 180,
+        shieldRecharge: 2.0,
+        powerOutput: 10.0,
+        fuelCapacity: 384,
+        fuelScoopRate: 1.8,
+        cargoCapacity: 166,
+        maxJumpRange: 30.0,
+        maxHardpoints: 4,
+        maxUtilityMounts: 4,
+        basePrice: 35000000,
+        manufacturer: 'Faulkner',
+        class: 'Large'
+      },
+      [ShipType.HAULER]: {
+        length: 19,
+        width: 16,
+        height: 5,
+        mass: 45,
+        crewMin: 1,
+        crewMax: 2,
+        passengerCapacity: 0,
+        speed: 150,
+        acceleration: 3.0,
+        maxSpeed: 220,
+        jumpRange: 3,
+        hullStrength: 60,
+        shieldStrength: 60,
+        shieldRecharge: 1.5,
+        powerOutput: 3.0,
+        fuelCapacity: 8,
+        fuelScoopRate: 0.2,
+        cargoCapacity: 12,
+        maxJumpRange: 3.25,
+        maxHardpoints: 0,
+        maxUtilityMounts: 2,
+        basePrice: 52000,
+        manufacturer: 'Faulkner',
+        class: 'Small'
+      },
+      [ShipType.BULK_CARRIER]: {
+        length: 75,
+        width: 35,
+        height: 18,
+        mass: 250,
+        crewMin: 3,
+        crewMax: 12,
+        passengerCapacity: 0,
+        speed: 100,
+        acceleration: 1.8,
+        maxSpeed: 180,
+        jumpRange: 12,
+        hullStrength: 150,
+        shieldStrength: 150,
+        shieldRecharge: 1.2,
+        powerOutput: 8.0,
+        fuelCapacity: 256,
+        fuelScoopRate: 1.5,
+        cargoCapacity: 280,
+        maxJumpRange: 18.0,
+        maxHardpoints: 2,
+        maxUtilityMounts: 2,
+        basePrice: 25000000,
+        manufacturer: 'Faulkner',
+        class: 'Large'
+      },
+      [ShipType.IMPERIAL_CUTTER]: {
+        length: 152,
+        width: 67,
+        height: 30,
+        mass: 420,
+        crewMin: 8,
+        crewMax: 64,
+        passengerCapacity: 20,
+        speed: 115,
+        acceleration: 2.0,
+        maxSpeed: 215,
+        jumpRange: 35,
+        hullStrength: 220,
+        shieldStrength: 220,
+        shieldRecharge: 1.4,
+        powerOutput: 16.0,
+        fuelCapacity: 512,
+        fuelScoopRate: 2.8,
+        cargoCapacity: 404,
+        maxJumpRange: 52.5,
+        maxHardpoints: 8,
+        maxUtilityMounts: 8,
+        basePrice: 70000000,
+        manufacturer: 'Imperial',
+        class: 'Large'
+      }
+    };
+
+    return specDatabase[type] || specDatabase[ShipType.COBRA_MK3];
+  }
+
+  /**
+   * Generate initial ship state
+   */
+  private generateInitialState(): ShipState {
+    return {
+      hullIntegrity: 100,
+      shieldIntegrity: 100,
+      fuelLevel: this.specs.fuelCapacity,
+      fuelCapacity: this.specs.fuelCapacity,
+      powerPlantIntegrity: 100,
+      thrustersIntegrity: 100,
+      fsdIntegrity: 100,
+      lifeSupportIntegrity: 100,
+      powerDistributorIntegrity: 100,
+      cargoUsed: 0,
+      cargoCapacity: this.specs.cargoCapacity,
+      cargo: new Map(),
+      powerAssigned: new Map(),
+      position: { x: 0, y: 0, z: 0 },
+      velocity: { x: 0, y: 0, z: 0 },
+      orientation: { x: 0, y: 0, z: 0 },
+      systemsOnline: new Set(['powerPlant', 'thrusters', 'fsd', 'lifeSupport', 'sensors']),
+      damagedSystems: new Set(),
+      offlineSystems: new Set()
+    };
+  }
+
+  /**
+   * Initialize default equipment for the ship
+   */
+  private initializeDefaultEquipment(): EquipmentItem[] {
+    return [
+      {
+        id: 'pulse_laser',
+        name: 'Pulse Laser',
+        category: EquipmentCategory.WEAPON,
+        slot: [EquipmentSlot.HARDPOINT_1, EquipmentSlot.HARDPOINT_2],
+        type: WeaponType.LASER,
+        stats: { power: 0.6, energy: 1.2, range: 1500, damage: 5, rate: 6 },
+        price: 5000,
+        description: 'Standard military pulse laser'
+      },
+      {
+        id: 'fuel_scoops',
+        name: 'Fuel Scoops',
+        category: EquipmentCategory.UTILITY,
+        slot: [EquipmentSlot.FUEL_SCOOPS],
+        stats: { power: 0, energy: 0 },
+        price: 1000,
+        description: 'Allows fuel collection from stars'
+      }
+    ];
+  }
+
+  /**
+   * Setup default loadout for the ship
+   */
+  private setupDefaultLoadout(): void {
+    // Install default equipment
+    this.installEquipment(EquipmentSlot.HARDPOINT_1, 'pulse_laser');
+    if (this.specs.maxHardpoints >= 2) {
+      this.installEquipment(EquipmentSlot.HARDPOINT_2, 'pulse_laser');
+    }
+    this.installEquipment(EquipmentSlot.FUEL_SCOOPS, 'fuel_scoops');
+  }
+
+  // Basic getters
+  getId(): string { return this.id; }
+  getType(): ShipType { return this.type; }
+  getName(): string { return this.name; }
+  getOwnerId(): string { return this.ownerId; }
+  getLocation(): string { return this.location; }
+  getSpecs(): ShipSpecs { return { ...this.specs }; }
+  getState(): ShipState { return JSON.parse(JSON.stringify(this.state)); }
+  getCondition(): number { return this.condition; }
+
+  /**
+   * Check if equipment can be installed in specified slot
+   */
+  canInstallEquipment(slot: EquipmentSlot, equipmentId: string): boolean {
+    const equipment = this.availableEquipment.find(eq => eq.id === equipmentId);
+    if (!equipment) return false;
+
+    // Check if equipment supports this slot
+    if (!equipment.slot.includes(slot)) return false;
+
+    // Check if slot is already occupied
+    if (this.equipment.has(slot)) return false;
+
+    // Check capacity limits
+    if (this.isHardpointSlot(slot) && this.getInstalledHardpointCount() >= this.specs.maxHardpoints) {
+      return false;
+    }
+
+    if (this.isUtilitySlot(slot) && this.getInstalledUtilityCount() >= this.specs.maxUtilityMounts) {
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Install equipment in specified slot
+   */
+  installEquipment(slot: EquipmentSlot, equipmentId: string): boolean {
+    if (!this.canInstallEquipment(slot, equipmentId)) {
+      return false;
+    }
+
+    const equipment = this.availableEquipment.find(eq => eq.id === equipmentId);
+    if (!equipment) return false;
+
+    this.equipment.set(slot, equipmentId);
+    this.updateShipCondition();
+    return true;
+  }
+
+  /**
+   * Remove equipment from slot
+   */
+  removeEquipment(slot: EquipmentSlot): string | null {
+    const equipmentId = this.equipment.get(slot);
+    if (equipmentId) {
+      this.equipment.delete(slot);
+      this.updateShipCondition();
+      return equipmentId;
+    }
+    return null;
+  }
+
+  /**
+   * Get installed equipment IDs
+   */
+  getInstalledEquipment(): Map<EquipmentSlot, string> {
+    return new Map(this.equipment);
+  }
+
+  /**
+   * Get equipment details for a specific slot
+   */
+  getEquipmentInSlot(slot: EquipmentSlot): EquipmentItem | null {
+    const equipmentId = this.equipment.get(slot);
+    if (!equipmentId) return null;
+    
+    return this.availableEquipment.find(eq => eq.id === equipmentId) || null;
+  }
+
+  /**
+   * Check if slot is a hardpoint
+   */
+  private isHardpointSlot(slot: EquipmentSlot): boolean {
+    return slot.startsWith('HARDPOINT_');
+  }
+
+  /**
+   * Check if slot is a utility mount
+   */
+  private isUtilitySlot(slot: EquipmentSlot): boolean {
+    return slot.startsWith('UTILITY_MOUNT_');
+  }
+
+  /**
+   * Get number of installed hardpoints
+   */
+  private getInstalledHardpointCount(): number {
+    return Array.from(this.equipment.keys()).filter(slot => this.isHardpointSlot(slot)).length;
+  }
+
+  /**
+   * Get number of installed utility mounts
+   */
+  private getInstalledUtilityCount(): number {
+    return Array.from(this.equipment.keys()).filter(slot => this.isUtilitySlot(slot)).length;
+  }
+
+  /**
+   * Update ship condition based on installed equipment
+   */
+  private updateShipCondition(): void {
+    // Calculate condition based on system integrity
+    const systems = [
+      this.state.powerPlantIntegrity,
+      this.state.thrustersIntegrity,
+      this.state.fsdIntegrity,
+      this.state.lifeSupportIntegrity,
+      this.state.powerDistributorIntegrity
+    ];
+    
+    this.condition = systems.reduce((sum, integrity) => sum + integrity, 0) / systems.length;
+  }
+
+  /**
+   * Add cargo to ship
+   */
+  addCargo(good: string, quantity: number): boolean {
+    if (this.state.cargoUsed + quantity > this.state.cargoCapacity) {
+      return false; // Not enough space
+    }
+
+    const currentQuantity = this.state.cargo.get(good) || 0;
+    this.state.cargo.set(good, currentQuantity + quantity);
+    this.state.cargoUsed += quantity;
+    return true;
+  }
+
+  /**
+   * Remove cargo from ship
+   */
+  removeCargo(good: string, quantity: number): boolean {
+    const currentQuantity = this.state.cargo.get(good) || 0;
+    if (currentQuantity < quantity) return false;
+
+    const remaining = currentQuantity - quantity;
+    if (remaining === 0) {
+      this.state.cargo.delete(good);
+    } else {
+      this.state.cargo.set(good, remaining);
+    }
+    
+    this.state.cargoUsed -= quantity;
+    return true;
+  }
+
+  /**
+   * Calculate jump fuel cost
+   */
+  calculateJumpFuelCost(distance: number): number {
+    const baseCost = 2; // Base fuel cost
+    const distanceCost = distance * distance * 0.05; // Quadratic scaling
+    const fuelUse = baseCost + distanceCost;
+    
+    return Math.ceil(fuelUse);
+  }
+
+  /**
+   * Check if ship can make jump
+   */
+  canMakeJump(distance: number): boolean {
+    const fuelCost = this.calculateJumpFuelCost(distance);
+    return this.state.fuelLevel >= fuelCost;
+  }
+
+  /**
+   * Execute jump
+   */
+  executeJump(distance: number): boolean {
+    if (!this.canMakeJump(distance)) return false;
+
+    const fuelCost = this.calculateJumpFuelCost(distance);
+    this.state.fuelLevel -= fuelCost;
+    this.jumpCount++;
+    
+    return true;
+  }
+
+  /**
+   * Refuel ship
+   */
+  refuel(amount: number): number {
+    const spaceAvailable = this.state.fuelCapacity - this.state.fuelLevel;
+    const fuelAdded = Math.min(amount, spaceAvailable);
+    this.state.fuelLevel += fuelAdded;
+    return fuelAdded;
+  }
+
+  /**
+   * Take damage to hull or shield
+   */
+  takeDamage(amount: number, damageType: 'hull' | 'shield' = 'hull'): void {
+    if (damageType === 'shield' && this.state.shieldIntegrity > 0) {
+      this.state.shieldIntegrity = Math.max(0, this.state.shieldIntegrity - amount);
+      
+      if (this.state.shieldIntegrity === 0) {
+        // Shields down, damage transfers to hull
+        const overflowDamage = amount - (amount * 0.3); // Some spillover
+        if (overflowDamage > 0) {
+          this.takeDamage(overflowDamage, 'hull');
+        }
+      }
+    } else {
+      this.state.hullIntegrity = Math.max(0, this.state.hullIntegrity - amount);
+      
+      // Update overall condition
+      this.condition = Math.max(0, this.condition - (amount * 0.5));
+    }
+  }
+
+  /**
+   * Repair ship systems
+   */
+  repair(amount: number, system?: string): number {
+    let repairAmount = 0;
+    
+    if (system) {
+      // Repair specific system
+      switch (system) {
+        case 'hull':
+          const hullSpace = 100 - this.state.hullIntegrity;
+          repairAmount = Math.min(amount, hullSpace);
+          this.state.hullIntegrity += repairAmount;
+          break;
+        case 'shield':
+          const shieldSpace = 100 - this.state.shieldIntegrity;
+          repairAmount = Math.min(amount, shieldSpace);
+          this.state.shieldIntegrity += repairAmount;
+          break;
+        case 'powerPlant':
+          const ppSpace = 100 - this.state.powerPlantIntegrity;
+          repairAmount = Math.min(amount, ppSpace);
+          this.state.powerPlantIntegrity += repairAmount;
+          break;
+        // Add other systems as needed
+      }
+    } else {
+      // Repair all systems
+      repairAmount = Math.min(amount, 100 - this.state.hullIntegrity);
+      this.state.hullIntegrity += repairAmount;
+    }
+    
+    this.updateShipCondition();
+    return repairAmount;
+  }
+
+  /**
+   * Get available equipment
+   */
+  getAvailableEquipment(): EquipmentItem[] {
+    return [...this.availableEquipment];
+  }
+
+  /**
+   * Add new equipment to ship's inventory
+   */
+  addEquipment(equipment: EquipmentItem): void {
+    this.availableEquipment.push(equipment);
+  }
+
+  /**
+   * Get ship performance summary
+   */
+  getPerformanceSummary(): object {
+    return {
+      maxSpeed: this.specs.speed * (this.condition / 100),
+      acceleration: this.specs.acceleration * (this.condition / 100),
+      jumpRange: this.specs.jumpRange * (this.state.fsdIntegrity / 100),
+      effectiveShield: this.state.shieldIntegrity,
+      effectiveHull: this.state.hullIntegrity,
+      cargoSpace: `${this.state.cargoUsed}/${this.state.cargoCapacity}`,
+      fuelLevel: `${this.state.fuelLevel}/${this.state.fuelCapacity}`,
+      equipmentInstalled: this.equipment.size,
+      condition: Math.round(this.condition)
+    };
+  }
+
+  /**
+   * Transfer ship to new location
+   */
+  transferToLocation(newLocation: string): void {
+    this.location = newLocation;
+  }
+
+  /**
+   * Update ship position and velocity
+   */
+  updatePosition(deltaTime: number): void {
+    // Simple movement update - would be more complex in actual implementation
+    this.state.position.x += this.state.velocity.x * deltaTime;
+    this.state.position.y += this.state.velocity.y * deltaTime;
+    this.state.position.z += this.state.velocity.z * deltaTime;
+  }
+
+  /**
+   * Get total value of ship including cargo and equipment
+   */
+  getTotalValue(): number {
+    let value = this.specs.basePrice;
+    
+    // Add equipment value
+    for (const equipmentId of this.equipment.values()) {
+      const equipment = this.availableEquipment.find(eq => eq.id === equipmentId);
+      if (equipment) {
+        value += equipment.price;
+      }
+    }
+    
+    // Add cargo value (simplified)
+    for (const [good, quantity] of this.state.cargo.entries()) {
+      value += quantity * 50; // Average price estimate
+    }
+    
+    return Math.floor(value * (this.condition / 100));
+  }
+
+  /**
+   * Serialize ship data for saving
+   */
+  serialize(): object {
+    return {
+      id: this.id,
+      type: this.type,
+      name: this.name,
+      ownerId: this.ownerId,
+      location: this.location,
+      condition: this.condition,
+      acquiredDate: this.acquiredDate,
+      purchasePrice: this.purchasePrice,
+      insurancePaid: this.insurancePaid,
+      specs: this.specs,
+      state: {
+        ...this.state,
+        cargo: Array.from(this.state.cargo.entries()),
+        powerAssigned: Array.from(this.state.powerAssigned.entries()),
+        systemsOnline: Array.from(this.state.systemsOnline),
+        damagedSystems: Array.from(this.state.damagedSystems),
+        offlineSystems: Array.from(this.state.offlineSystems)
+      },
+      equipment: Array.from(this.equipment.entries()),
+      availableEquipment: this.availableEquipment,
+      modifications: Array.from(this.modifications.entries()),
+      flightTime: this.flightTime,
+      combatTime: this.combatTime,
+      jumpCount: this.jumpCount,
+      cargoTrips: this.cargoTrips
+    };
+  }
+
+  /**
+   * Deserialize ship data from save
+   */
+  static deserialize(data: any): Ship {
+    const ship = new Ship(data.type, data.name, data.ownerId, data.location, data.condition);
+    
+    ship.id = data.id;
+    ship.acquiredDate = data.acquiredDate;
+    ship.purchasePrice = data.purchasePrice;
+    ship.insurancePaid = data.insurancePaid;
+    ship.specs = data.specs;
+    
+    // Restore state
+    ship.state = {
+      ...data.state,
+      cargo: new Map(data.state.cargo || []),
+      powerAssigned: new Map(data.state.powerAssigned || []),
+      systemsOnline: new Set(data.state.systemsOnline || []),
+      damagedSystems: new Set(data.state.damagedSystems || []),
+      offlineSystems: new Set(data.state.offlineSystems || [])
+    };
+    
+    ship.equipment = new Map(data.equipment || []);
+    ship.availableEquipment = data.availableEquipment || [];
+    ship.modifications = new Map(data.modifications || []);
+    ship.flightTime = data.flightTime || 0;
+    ship.combatTime = data.combatTime || 0;
+    ship.jumpCount = data.jumpCount || 0;
+    ship.cargoTrips = data.cargoTrips || 0;
+    
+    return ship;
+  }
+
+  /**
+   * Get debug information
+   */
+  getDebugInfo(): object {
+    return {
+      type: this.type,
+      name: this.name,
+      location: this.location,
+      condition: `${Math.round(this.condition)}%`,
+      hull: `${Math.round(this.state.hullIntegrity)}%`,
+      shield: `${Math.round(this.state.shieldIntegrity)}%`,
+      fuel: `${Math.round(this.state.fuelLevel)}/${this.state.fuelCapacity}`,
+      cargo: `${this.state.cargoUsed}/${this.state.cargoCapacity}`,
+      equipment: this.equipment.size,
+      value: this.getTotalValue()
+    };
+  }
+}

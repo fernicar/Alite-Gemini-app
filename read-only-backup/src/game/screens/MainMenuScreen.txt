@@ -1,0 +1,339 @@
+/**
+ * Main Menu Screen - The primary entry point for the game
+ * Provides access to all major game functions
+ */
+
+import { BaseScreen, UIManager, ScreenId } from '../ui/UIManager';
+import { UIPanel, UIButton, UIText, UIButtonOptions, UIPanelOptions } from '../ui/components/UIBasicComponents';
+import { Vector2D } from '../../types/index';
+
+export class MainMenuScreen extends BaseScreen {
+  private backgroundPanel: UIPanel;
+  private titleText: UIText;
+  private subtitleText: UIText;
+  private menuButtons: UIButton[] = [];
+  private gameVersionText: UIText;
+  private copyrightText: UIText;
+  private animationOffset: number = 0;
+
+  constructor() {
+    const rootComponent = new UIPanel('main-menu-root', {
+      width: 800,
+      height: 600,
+      backgroundColor: 'rgba(0, 0, 0, 0.95)',
+      borderColor: '#40e0ff',
+      borderWidth: 2,
+      cornerRadius: 10,
+      shadow: true,
+      opacity: 1.0
+    });
+
+    super('main-menu', 'Main Menu', rootComponent);
+
+    // Initialize UI elements
+    this.initializeUI();
+  }
+
+  private initializeUI(): void {
+    const root = this.component as UIPanel;
+
+    // Background panel with space theme
+    this.backgroundPanel = new UIPanel('background', {
+      width: root.size.x,
+      height: root.size.y,
+      backgroundColor: 'rgba(26, 32, 44, 0.9)',
+      borderWidth: 0,
+      shadow: false,
+      opacity: 1.0
+    });
+
+    // Game title
+    this.titleText = new UIText('title', 'ALITE', {
+      fontSize: 72,
+      fontFamily: 'Arial Black, sans-serif',
+      color: '#40e0ff',
+      textAlign: 'center',
+      bold: true
+    });
+    this.titleText.position = { x: root.size.x / 2 - 200, y: 80 };
+    this.titleText.size = { x: 400, y: 100 };
+
+    // Subtitle
+    this.subtitleText = new UIText('subtitle', 'Space Trading & Combat', {
+      fontSize: 24,
+      fontFamily: 'Arial, sans-serif',
+      color: '#80d4ff',
+      textAlign: 'center'
+    });
+    this.subtitleText.position = { x: root.size.x / 2 - 150, y: 180 };
+    this.subtitleText.size = { x: 300, y: 40 };
+
+    // Create menu buttons
+    this.createMenuButtons();
+
+    // Game version
+    this.gameVersionText = new UIText('version', 'Version 1.0.0', {
+      fontSize: 14,
+      fontFamily: 'Arial, sans-serif',
+      color: '#888888',
+      textAlign: 'center'
+    });
+    this.gameVersionText.position = { x: root.size.x / 2 - 60, y: root.size.y - 50 };
+    this.gameVersionText.size = { x: 120, y: 20 };
+
+    // Copyright
+    this.copyrightText = new UIText('copyright', '© 2025 MiniMax Agent', {
+      fontSize: 12,
+      fontFamily: 'Arial, sans-serif',
+      color: '#666666',
+      textAlign: 'center'
+    });
+    this.copyrightText.position = { x: root.size.x / 2 - 80, y: root.size.y - 30 };
+    this.copyrightText.size = { x: 160, y: 20 };
+
+    // Add all elements to root
+    root.addChild(this.backgroundPanel);
+    root.addChild(this.titleText);
+    root.addChild(this.subtitleText);
+    this.menuButtons.forEach(button => root.addChild(button));
+    root.addChild(this.gameVersionText);
+    root.addChild(this.copyrightText);
+
+    // Center the root component
+    root.position = { x: (800 - root.size.x) / 2, y: (600 - root.size.y) / 2 };
+  }
+
+  private createMenuButtons(): void {
+    const buttonWidth = 250;
+    const buttonHeight = 50;
+    const buttonSpacing = 15;
+    const startX = (800 - buttonWidth) / 2;
+    const startY = 250;
+
+    // New Game button
+    const newGameButton = this.createMenuButton(
+      'new-game',
+      'NEW GAME',
+      startX,
+      startY,
+      () => this.startNewGame()
+    );
+
+    // Continue Game button
+    const continueButton = this.createMenuButton(
+      'continue',
+      'CONTINUE',
+      startX,
+      startY + buttonHeight + buttonSpacing,
+      () => this.continueGame(),
+      false // Initially disabled until save system is implemented
+    );
+
+    // Load Game button
+    const loadButton = this.createMenuButton(
+      'load-game',
+      'LOAD GAME',
+      startX,
+      startY + (buttonHeight + buttonSpacing) * 2,
+      () => this.loadGame()
+    );
+
+    // Settings button
+    const settingsButton = this.createMenuButton(
+      'settings',
+      'SETTINGS',
+      startX,
+      startY + (buttonHeight + buttonSpacing) * 3,
+      () => this.openSettings()
+    );
+
+    // Help button
+    const helpButton = this.createMenuButton(
+      'help',
+      'HELP',
+      startX,
+      startY + (buttonHeight + buttonSpacing) * 4,
+      () => this.openHelp()
+    );
+
+    // Quit button (only for desktop)
+    if (!this.isMobile()) {
+      const quitButton = this.createMenuButton(
+        'quit',
+        'QUIT',
+        startX,
+        startY + (buttonHeight + buttonSpacing) * 5,
+        () => this.quitGame()
+      );
+      this.menuButtons.push(quitButton);
+    }
+
+    this.menuButtons.push(
+      newGameButton,
+      continueButton,
+      loadButton,
+      settingsButton,
+      helpButton
+    );
+  }
+
+  private createMenuButton(id: string, text: string, x: number, y: number, onClick: () => void, enabled: boolean = true): UIButton {
+    const buttonOptions: UIButtonOptions = {
+      text,
+      width: 250,
+      height: 50,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 18,
+      borderColor: '#40e0ff',
+      borderWidth: 2,
+      cornerRadius: 8,
+      padding: 15
+    };
+
+    const button = new UIButton(id, text, buttonOptions, onClick);
+    button.position = { x, y };
+    button.size = { x: 250, y: 50 };
+    button.isEnabled = enabled;
+
+    // Add hover effects
+    button.setOnClick(onClick);
+
+    return button;
+  }
+
+  onEnter(): void {
+    super.onEnter();
+    
+    // Reset animation
+    this.animationOffset = 0;
+    
+    // Show welcome message if first time
+    this.checkFirstTimeExperience();
+  }
+
+  onExit(): void {
+    super.onExit();
+  }
+
+  onUpdate(deltaTime: number): void {
+    super.onUpdate(deltaTime);
+
+    // Animate title
+    this.animationOffset += deltaTime * 0.002;
+    const titleY = 80 + Math.sin(this.animationOffset) * 2;
+    this.titleText.position.y = titleY;
+
+    // Animate subtitle
+    const subtitleY = 180 + Math.cos(this.animationOffset * 1.5) * 1;
+    this.subtitleText.position.y = subtitleY;
+
+    // Animate menu buttons with staggered entrance
+    const currentTime = Date.now();
+    this.menuButtons.forEach((button, index) => {
+      if (button.isVisible) {
+        const delay = index * 0.1;
+        const elapsed = (currentTime - this.enterTime) / 1000 - delay;
+        
+        if (elapsed > 0) {
+          const targetY = this.getButtonTargetY(index);
+          const currentY = button.position.y;
+          const newY = currentY + (targetY - currentY) * Math.min(1, elapsed * 2);
+          button.position.y = newY;
+        }
+      }
+    });
+  }
+
+  private getButtonTargetY(index: number): number {
+    const buttonHeight = 50;
+    const buttonSpacing = 15;
+    const startY = 250;
+    return startY + (buttonHeight + buttonSpacing) * index;
+  }
+
+  private get enterTime(): number {
+    return (this as any)._enterTime || Date.now();
+  }
+
+  private set enterTime(time: number) {
+    (this as any)._enterTime = time;
+  }
+
+  onShow(): void {
+    super.onShow();
+    this.enterTime = Date.now();
+  }
+
+  private startNewGame(): void {
+    this.createNewCommander().then(() => {
+      this.navigateToScreen('cockpit');
+    });
+  }
+
+  private continueGame(): void {
+    // Implementation would load the last saved game
+    this.navigateToScreen('cockpit');
+  }
+
+  private loadGame(): void {
+    this.navigateToScreen('save-load');
+  }
+
+  private openSettings(): void {
+    this.navigateToScreen('settings');
+  }
+
+  private openHelp(): void {
+    this.navigateToScreen('help');
+  }
+
+  private quitGame(): void {
+    if (confirm('Are you sure you want to quit?')) {
+      // In a web environment, we can't actually quit
+      // This would be handled differently in different environments
+      alert('Quit functionality depends on the platform. In web browsers, this would close the game window.');
+    }
+  }
+
+  private async createNewCommander(): Promise<void> {
+    // This would open a commander creation dialog
+    // For now, we'll create a default commander
+    console.log('Creating new commander...');
+    
+    // TODO: Implement commander creation interface
+    // This would involve:
+    // - Name input
+    // - Starting system selection
+    // - Starting ship selection
+    // - Initial credits allocation
+  }
+
+  private checkFirstTimeExperience(): void {
+    // Check if this is the first time the user is playing
+    // Show welcome tutorial or skip options
+    const hasPlayedBefore = localStorage.getItem('alite-has-played');
+    
+    if (!hasPlayedBefore) {
+      // Show first-time welcome message
+      setTimeout(() => {
+        if (confirm('Welcome to Alite! Would you like to see the tutorial?')) {
+          this.openHelp();
+        } else {
+          // Mark as played and continue
+          localStorage.setItem('alite-has-played', 'true');
+        }
+      }, 1000);
+    }
+  }
+
+  private navigateToScreen(screenId: ScreenId): void {
+    const uiManager = UIManager.getInstance();
+    uiManager.showScreen(screenId);
+  }
+
+  private isMobile(): boolean {
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+           window.innerWidth <= 768;
+  }
+}

@@ -1,0 +1,412 @@
+/**
+ * Weapon System - Comprehensive weapon management and combat mechanics
+ * Handles all weapon types including lasers, ballistics, missiles, and mines
+ */
+
+import { Vector3D } from '../../types/index.js';
+import { WeaponType, EquipmentItem } from '../models/Ship.js';
+import { ProjectileSystem } from './ProjectileSystem.js';
+import { EnergyManagementSystem } from './EnergyManagementSystem.js';
+
+export interface Weapon {
+  id: string;
+  name: string;
+  type: WeaponType;
+  position: Vector3D; // Mount position on ship
+  specifications: WeaponSpecs;
+  isOnline: boolean;
+  cooldown: number;
+  heatLevel: number; // 0-100
+  energyCost: number;
+  damage: number;
+  range: number;
+  fireRate: number; // Shots per second
+  projectileSpeed: number;
+  accuracy: number; // 0-1 (1.0 = perfect)
+}
+
+export interface WeaponSpecs {
+  damage: number;
+  range: number;
+  fireRate: number;
+  energyPerShot: number;
+  heatGenerated: number;
+  cooldownTime: number; // Seconds between shots
+  projectileSpeed: number;
+  accuracy: number;
+  ammunition?: AmmoSpecs;
+  specialEffects?: string[];
+}
+
+export interface AmmoSpecs {
+  type: 'energy' | 'kinetic' | 'guided' | 'area';
+  capacity: number;
+  reloadTime: number;
+  autoReload: boolean;
+}
+
+export interface WeaponFireResult {
+  success: boolean;
+  projectileId?: string;
+  reason?: string;
+  heatGenerated: number;
+  energyUsed: number;
+}
+
+export interface WeaponTarget {
+  id: string;
+  position: Vector3D;
+  velocity: Vector3D;
+  size: number; // Hitbox size
+  type: string; // Ship type for targeting logic
+}
+
+/**
+ * Advanced Weapon System for Elite-style combat
+ */
+export class WeaponSystem {
+  private projectiles: ProjectileSystem;
+  private energy: EnergyManagementSystem;
+  private weapons: Map<string, Weapon>;
+  private weaponCounter: number = 0;
+
+  constructor(projectiles: ProjectileSystem, energy: EnergyManagementSystem) {
+    this.projectiles = projectiles;
+    this.energy = energy;
+    this.weapons = new Map();
+  }
+
+  /**
+   * Install a weapon on the ship
+   */
+  installWeapon(equipment: EquipmentItem, position: Vector3D): string {
+    const weaponId = `weapon_${++this.weaponCounter}`;
+    
+    const weapon: Weapon = {
+      id: weaponId,
+      name: equipment.name,
+      type: equipment.type || WeaponType.LASER,
+      position,
+      specifications: this.convertEquipmentToSpecs(equipment),
+      isOnline: true,
+      cooldown: 0,
+      heatLevel: 0,
+      energyCost: equipment.stats.energy || 0,
+      damage: equipment.stats.damage || 0,
+      range: equipment.stats.range || 0,
+      fireRate: equipment.stats.rate || 0,
+      projectileSpeed: equipment.stats.range || 300,
+      accuracy: 0.95
+    };
+
+    this.weapons.set(weaponId, weapon);
+    return weaponId;
+  }
+
+  /**
+   * Fire a weapon at a target
+   */
+  fireWeapon(weaponId: string, target: WeaponTarget): WeaponFireResult {
+    const weapon = this.weapons.get(weaponId);
+    if (!weapon) {
+      return { success: false, reason: 'Weapon not found', heatGenerated: 0, energyUsed: 0 };
+    }
+
+    if (!weapon.isOnline) {
+      return { success: false, reason: 'Weapon offline', heatGenerated: 0, energyUsed: 0 };
+    }
+
+    if (weapon.cooldown > 0) {
+      return { success: false, reason: 'Weapon cooling down', heatGenerated: 0, energyUsed: 0 };
+    }
+
+    // Check energy requirements
+    if (!this.energy.canDrainPower(weapon.energyCost)) {
+      return { success: false, reason: 'Insufficient power', heatGenerated: 0, energyUsed: 0 };
+    }
+
+    // Check heat levels
+    if (weapon.heatLevel > 90) {
+      return { success: false, reason: 'Weapon overheating', heatGenerated: 0, energyUsed: 0 };
+    }
+
+    // Calculate shot accuracy and spread
+    const accuracyBonus = this.calculateAccuracyBonus(target);
+    const effectiveAccuracy = weapon.accuracy * accuracyBonus;
+    
+    // Add random spread based on weapon type and conditions
+    const spread = this.calculateSpread(weapon);
+    const finalAccuracy = Math.max(0.1, effectiveAccuracy - spread);
+
+    // Check if shot hits based on distance and accuracy
+    const distance = this.calculateDistance(weapon.position, target.position);
+    if (distance > weapon.range) {
+      return { success: false, reason: 'Target out of range', heatGenerated: 0, energyUsed: 0 };
+    }
+
+    // Calculate hit probability based on distance and accuracy
+    const distancePenalty = Math.max(0, (distance / weapon.range) * 0.3);
+    const hitProbability = Math.max(0.1, finalAccuracy - distancePenalty);
+
+    if (Math.random() > hitProbability) {
+      // Shot misses - still consumes resources
+      this.consumeResources(weapon);
+      this.addHeat(weapon, weapon.specifications.heatGenerated * 0.3);
+      return { 
+        success: false, 
+        reason: 'Missed target', 
+        heatGenerated: weapon.specifications.heatGenerated * 0.3, 
+        energyUsed: weapon.energyCost 
+      };
+    }
+
+    // Create projectile
+    const projectileId = this.projectiles.createProjectile({
+      weaponId,
+      position: weapon.position,
+      target: target,
+      damage: weapon.damage,
+      speed: weapon.projectileSpeed,
+      type: weapon.type,
+      ownerId: 'player' // Will be set by calling code
+    });
+
+    // Consume resources
+    this.consumeResources(weapon);
+    this.addHeat(weapon, weapon.specifications.heatGenerated);
+
+    return {
+      success: true,
+      projectileId,
+      heatGenerated: weapon.specifications.heatGenerated,
+      energyUsed: weapon.energyCost
+    };
+  }
+
+  /**
+   * Update weapon systems (called every frame)
+   */
+  update(deltaTime: number): void {
+    this.weapons.forEach(weapon => {
+      // Update cooldown
+      if (weapon.cooldown > 0) {
+        weapon.cooldown = Math.max(0, weapon.cooldown - deltaTime);
+      }
+
+      // Cool down weapon
+      if (weapon.heatLevel > 0) {
+        const coolingRate = this.calculateCoolingRate(weapon);
+        weapon.heatLevel = Math.max(0, weapon.heatLevel - (coolingRate * deltaTime));
+      }
+
+      // Check for overheating shutdown
+      if (weapon.heatLevel > 95 && weapon.isOnline) {
+        weapon.isOnline = false;
+        // Automatic restart after cooldown
+        setTimeout(() => {
+          if (weapon.heatLevel < 50) {
+            weapon.isOnline = true;
+          }
+        }, 5000);
+      }
+    });
+  }
+
+  /**
+   * Get all installed weapons
+   */
+  getWeapons(): Weapon[] {
+    return Array.from(this.weapons.values());
+  }
+
+  /**
+   * Get weapon by ID
+   */
+  getWeapon(weaponId: string): Weapon | undefined {
+    return this.weapons.get(weaponId);
+  }
+
+  /**
+   * Toggle weapon online/offline status
+   */
+  toggleWeapon(weaponId: string): boolean {
+    const weapon = this.weapons.get(weaponId);
+    if (weapon) {
+      weapon.isOnline = !weapon.isOnline;
+      return weapon.isOnline;
+    }
+    return false;
+  }
+
+  /**
+   * Get weapon heat levels
+   */
+  getHeatLevels(): Map<string, number> {
+    const heatLevels = new Map<string, number>();
+    this.weapons.forEach((weapon, id) => {
+      heatLevels.set(id, weapon.heatLevel);
+    });
+    return heatLevels;
+  }
+
+  /**
+   * Calculate optimal weapon for target distance
+   */
+  getOptimalWeapons(targetDistance: number, targetSize: number): Weapon[] {
+    const weapons = Array.from(this.weapons.values())
+      .filter(w => w.isOnline && w.cooldown <= 0 && w.heatLevel < 90)
+      .filter(w => targetDistance <= w.range * 1.2) // 20% range tolerance
+      .map(w => ({
+        weapon: w,
+        score: this.calculateWeaponScore(w, targetDistance, targetSize)
+      }))
+      .filter(result => result.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map(result => result.weapon);
+
+    return weapons;
+  }
+
+  /**
+   * Convert equipment item to weapon specifications
+   */
+  private convertEquipmentToSpecs(equipment: EquipmentItem): WeaponSpecs {
+    return {
+      damage: equipment.stats.damage || 10,
+      range: equipment.stats.range || 500,
+      fireRate: equipment.stats.rate || 1.0,
+      energyPerShot: equipment.stats.energy || 5,
+      heatGenerated: (equipment.stats.energy || 5) * 2,
+      cooldownTime: 1.0 / (equipment.stats.rate || 1.0),
+      projectileSpeed: equipment.stats.range || 300,
+      accuracy: 0.95,
+      ammunition: equipment.type === WeaponType.BALLISTICS ? {
+        type: 'kinetic',
+        capacity: 100,
+        reloadTime: 3.0,
+        autoReload: true
+      } : undefined
+    };
+  }
+
+  /**
+   * Calculate accuracy bonus based on weapon type and target
+   */
+  private calculateAccuracyBonus(target: WeaponTarget): number {
+    let bonus = 1.0;
+    
+    // Smaller targets are harder to hit
+    if (target.size < 10) bonus *= 0.8;
+    else if (target.size < 20) bonus *= 0.9;
+    else if (target.size > 50) bonus *= 1.1;
+
+    return bonus;
+  }
+
+  /**
+   * Calculate weapon spread (randomness)
+   */
+  private calculateSpread(weapon: Weapon): number {
+    let spread = 0;
+    
+    // Base spread varies by weapon type
+    switch (weapon.type) {
+      case WeaponType.LASER:
+        spread = 0.01; // Very accurate
+        break;
+      case WeaponType.BALLISTICS:
+        spread = 0.05; // More spread
+        break;
+      case WeaponType.MISSILES:
+        spread = 0.1; // Guided but can miss
+        break;
+      case WeaponType.MINES:
+        spread = 0; // Position-based
+        break;
+    }
+
+    // Heat affects accuracy
+    if (weapon.heatLevel > 50) {
+      spread += (weapon.heatLevel - 50) * 0.002;
+    }
+
+    // Movement affects accuracy
+    spread += Math.random() * 0.02; // Random variation
+
+    return Math.min(0.3, spread);
+  }
+
+  /**
+   * Calculate distance between two points
+   */
+  private calculateDistance(pos1: Vector3D, pos2: Vector3D): number {
+    const dx = pos2.x - pos1.x;
+    const dy = pos2.y - pos1.y;
+    const dz = pos2.z - pos1.z;
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  /**
+   * Consume energy and ammo for firing
+   */
+  private consumeResources(weapon: Weapon): void {
+    this.energy.drainPower(weapon.energyCost);
+    weapon.cooldown = weapon.specifications.cooldownTime;
+  }
+
+  /**
+   * Add heat to weapon
+   */
+  private addHeat(weapon: Weapon, heat: number): void {
+    weapon.heatLevel = Math.min(100, weapon.heatLevel + heat);
+  }
+
+  /**
+   * Calculate weapon cooling rate
+   */
+  private calculateCoolingRate(weapon: Weapon): number {
+    let baseRate = 10; // Base cooling rate
+    
+    // Heat sinks improve cooling
+    if (weapon.heatLevel > 70) {
+      baseRate *= 1.5;
+    }
+    
+    // Weapons cool down faster when not firing
+    baseRate *= 2;
+    
+    return baseRate;
+  }
+
+  /**
+   * Calculate weapon effectiveness score
+   */
+  private calculateWeaponScore(weapon: Weapon, distance: number, targetSize: number): number {
+    let score = 1.0;
+    
+    // Distance scoring
+    const distanceRatio = distance / weapon.range;
+    if (distanceRatio <= 0.3) score *= 1.2; // Close range bonus
+    else if (distanceRatio <= 0.6) score *= 1.1;
+    else if (distanceRatio >= 0.9) score *= 0.8; // Long range penalty
+    
+    // Weapon type effectiveness
+    switch (weapon.type) {
+      case WeaponType.LASER:
+        score *= 1.0; // Baseline
+        break;
+      case WeaponType.MISSILES:
+        if (targetSize > 30) score *= 1.3; // Good against large targets
+        break;
+      case WeaponType.BALLISTICS:
+        if (distance < 200) score *= 1.2; // Short range weapon
+        break;
+    }
+    
+    // Weapon condition
+    if (weapon.heatLevel > 70) score *= 0.7;
+    if (weapon.cooldown > 0) score *= 0.5;
+    
+    return score;
+  }
+}

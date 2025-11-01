@@ -1,0 +1,530 @@
+/**
+ * Gravitational Field System - Handles gravitational effects from celestial bodies
+ * Calculates and applies gravitational forces to ships and objects in space
+ */
+
+import { Vector3D } from '../../types/index.js';
+
+/**
+ * Celestial body types that generate gravitational fields
+ */
+export enum CelestialBodyType {
+  PLANET = 'PLANET',
+  STAR = 'STAR',
+  STATION = 'STATION',
+  ASTEROID = 'ASTEROID',
+  BLACK_HOLE = 'BLACK_HOLE',
+  GAS_GIANT = 'GAS_GIANT'
+}
+
+/**
+ * Gravitational field properties
+ */
+export interface GravitationalField {
+  id: string;
+  type: CelestialBodyType;
+  position: Vector3D;
+  mass: number; // Gravitational mass
+  radius: number; // Physical radius of the body
+  gravityRadius: number; // Effective gravitational influence radius
+  density: number; // Average density (affects surface gravity)
+  surfaceGravity: number; // Surface gravity acceleration
+  escapeVelocity: number; // Velocity needed to escape gravitational field
+  name: string;
+  description: string;
+  
+  // Special properties
+  tidalForces: boolean; // Enable tidal force calculations
+  magneticField: number; // Magnetic field strength (affects systems)
+  radiationLevel: number; // 0-1, radiation intensity
+  isHabitable: boolean; // Can support life
+  hasAtmosphere: boolean; // Has significant atmosphere
+}
+
+/**
+ * Gravitational force calculation result
+ */
+export interface GravitationalForce {
+  fieldId: string;
+  position: Vector3D;
+  force: Vector3D; // Gravitational force vector
+  acceleration: Vector3D; // Gravitational acceleration
+  distance: number; // Distance from field center
+  tidalForce: number; // Tidal force magnitude
+  potentialEnergy: number; // Gravitational potential energy
+  escapeVelocity: number; // Local escape velocity
+}
+
+/**
+ * Gravitational event for logging
+ */
+export interface GravitationalEvent {
+  fieldId: string;
+  timestamp: number;
+  type: 'ENTRY' | 'EXIT' | 'GRAVITY_BOOST' | 'GRAVITY_SLINGSHOT' | 'TIDAL_DAMAGE' | 'ESCAPE_ATTEMPT';
+  shipId?: string;
+  position: Vector3D;
+  force: Vector3D;
+  description: string;
+}
+
+/**
+ * Ship gravitational interaction data
+ */
+export interface ShipGravityInteraction {
+  shipId: string;
+  fieldsInRange: GravitationalForce[];
+  totalForce: Vector3D;
+  totalAcceleration: Vector3D;
+  inStrongGravity: boolean; // Strong gravitational effects detected
+  escapeTrajectory: boolean; // Ship has escape trajectory
+  tidalRisk: number; // Risk of tidal damage (0-1)
+}
+
+/**
+ * Advanced Gravitational Field System
+ * Simulates realistic gravitational physics for space navigation and orbital mechanics
+ */
+export class GravitationalFieldSystem {
+  private fields: Map<string, GravitationalField> = new Map();
+  private shipInteractions: Map<string, ShipGravityInteraction> = new Map();
+  private gravitationalEvents: GravitationalEvent[] = new Map();
+  private maxEvents: number = 1000;
+  private lastUpdate: number = 0;
+
+  constructor() {
+    this.initializeDefaultFields();
+  }
+
+  /**
+   * Initialize default gravitational fields in a system
+   */
+  initializeSystemFields(systemId: number, systemData: any): void {
+    // Create central star
+    this.createStar(systemId, 'Central Star', {
+      position: { x: 0, y: 0, z: 0 },
+      mass: 1.989e30 * (0.8 + Math.random() * 0.4), // 0.8-1.2 solar masses
+      radius: 696340 * (0.9 + Math.random() * 0.2), // Solar radius variation
+      type: Math.random() > 0.7 ? CelestialBodyType.STAR : CelestialBodyType.GAS_GIANT
+    });
+
+    // Create 1-4 planets
+    const planetCount = 1 + Math.floor(Math.random() * 4);
+    for (let i = 0; i < planetCount; i++) {
+      const distance = 10000 + (i * 5000) + (Math.random() * 2000); // Planets spaced 10,000+ units apart
+      const angle = Math.random() * Math.PI * 2;
+      const position = {
+        x: Math.cos(angle) * distance,
+        y: Math.sin(angle) * distance,
+        z: (Math.random() - 0.5) * 1000 // Slight orbital inclination
+      };
+
+      this.createPlanet(systemId, `Planet ${i + 1}`, {
+        position,
+        mass: 5.972e24 * (0.3 + Math.random() * 0.4), // 0.3-0.7 Earth masses
+        radius: 6371 * (0.5 + Math.random() * 0.5), // 0.5-1.0 Earth radii
+        type: CelestialBodyType.PLANET,
+        hasAtmosphere: Math.random() > 0.3,
+        isHabitable: Math.random() > 0.6
+      });
+    }
+
+    // Create asteroid belt if applicable
+    if (systemData.economy === 'Industrial' || Math.random() > 0.7) {
+      this.createAsteroidBelt(systemId);
+    }
+  }
+
+  /**
+   * Create a star
+   */
+  createStar(systemId: number, name: string, options: { position: Vector3D; mass: number; radius: number; type?: CelestialBodyType }): string {
+    const fieldId = `star_${systemId}_${name.replace(/\s+/g, '_').toLowerCase()}`;
+    
+    const field: GravitationalField = {
+      id: fieldId,
+      type: options.type || CelestialBodyType.STAR,
+      position: options.position,
+      mass: options.mass,
+      radius: options.radius * 1000, // Convert to simulation units
+      gravityRadius: options.radius * 50000, // Extended gravitational influence
+      density: options.mass / ((4/3) * Math.PI * Math.pow(options.radius * 1000, 3)),
+      surfaceGravity: 274, // Solar surface gravity
+      escapeVelocity: 617800, // Solar escape velocity (m/s)
+      name,
+      description: this.generateStarDescription(options.type),
+      tidalForces: true,
+      magneticField: Math.random() * 2 + 1, // 1-3x solar magnetic field
+      radiationLevel: Math.random() * 0.8 + 0.2, // 0.2-1.0
+      isHabitable: false,
+      hasAtmosphere: false
+    };
+
+    this.fields.set(fieldId, field);
+    return fieldId;
+  }
+
+  /**
+   * Create a planet
+   */
+  createPlanet(systemId: number, name: string, options: { position: Vector3D; mass: number; radius: number; type: CelestialBodyType; hasAtmosphere?: boolean; isHabitable?: boolean }): string {
+    const fieldId = `planet_${systemId}_${name.replace(/\s+/g, '_').toLowerCase()}`;
+    
+    const surfaceGravity = 9.81 * (options.mass / 5.972e24) / Math.pow(options.radius / 6371, 2);
+    const escapeVelocity = Math.sqrt(2 * 6.674e-11 * options.mass / (options.radius * 1000));
+    
+    const field: GravitationalField = {
+      id: fieldId,
+      type: options.type,
+      position: options.position,
+      mass: options.mass,
+      radius: options.radius * 1000,
+      gravityRadius: options.radius * 20000,
+      density: options.mass / ((4/3) * Math.PI * Math.pow(options.radius * 1000, 3)),
+      surfaceGravity,
+      escapeVelocity,
+      name,
+      description: this.generatePlanetDescription(options),
+      tidalForces: true,
+      magneticField: Math.random() * 2 + 0.5,
+      radiationLevel: Math.random() * 0.5,
+      isHabitable: options.isHabitable || false,
+      hasAtmosphere: options.hasAtmosphere || false
+    };
+
+    this.fields.set(fieldId, field);
+    return fieldId;
+  }
+
+  /**
+   * Create asteroid belt
+   */
+  private createAsteroidBelt(systemId: number): void {
+    const beltRadius = 15000 + Math.random() * 10000; // 15,000-25,000 units
+    const asteroidCount = 50 + Math.floor(Math.random() * 100); // 50-150 asteroids
+    
+    for (let i = 0; i < asteroidCount; i++) {
+      const angle = (i / asteroidCount) * Math.PI * 2 + Math.random() * 0.1;
+      const distance = beltRadius + (Math.random() - 0.5) * 2000;
+      const position = {
+        x: Math.cos(angle) * distance,
+        y: Math.sin(angle) * distance,
+        z: (Math.random() - 0.5) * 500
+      };
+      
+      const mass = 1e15 * (0.1 + Math.random() * 0.9); // Variable asteroid masses
+      const radius = 100 + Math.random() * 900; // 100-1000 meter radius
+      
+      const fieldId = `asteroid_${systemId}_${i}`;
+      const field: GravitationalField = {
+        id: fieldId,
+        type: CelestialBodyType.ASTEROID,
+        position,
+        mass,
+        radius,
+        gravityRadius: radius * 10, // Minimal gravitational influence
+        density: mass / ((4/3) * Math.PI * Math.pow(radius, 3)),
+        surfaceGravity: (6.674e-11 * mass) / (radius * radius),
+        escapeVelocity: Math.sqrt(2 * 6.674e-11 * mass / radius),
+        name: `Asteroid ${i + 1}`,
+        description: 'Small rocky body in asteroid belt',
+        tidalForces: false,
+        magneticField: 0,
+        radiationLevel: 0,
+        isHabitable: false,
+        hasAtmosphere: false
+      };
+      
+      this.fields.set(fieldId, field);
+    }
+  }
+
+  /**
+   * Calculate gravitational forces for a ship position
+   */
+  calculateGravitationalForces(position: Vector3D): GravitationalForce[] {
+    const forces: GravitationalForce[] = [];
+    
+    for (const [fieldId, field] of this.fields.entries()) {
+      const force = this.calculateForceAtPosition(field, position);
+      if (force) {
+        forces.push(force);
+      }
+    }
+    
+    return forces;
+  }
+
+  /**
+   * Update all ship gravitational interactions
+   */
+  updateAllShips(shipPositions: Map<string, Vector3D>): void {
+    for (const [shipId, position] of shipPositions.entries()) {
+      this.updateShipInteraction(shipId, position);
+    }
+  }
+
+  /**
+   * Get gravitational field by ID
+   */
+  getField(fieldId: string): GravitationalField | null {
+    return this.fields.get(fieldId) || null;
+  }
+
+  /**
+   * Get all gravitational fields
+   */
+  getAllFields(): GravitationalField[] {
+    return Array.from(this.fields.values());
+  }
+
+  /**
+   * Get fields within a specific radius
+   */
+  getFieldsInRadius(position: Vector3D, radius: number): GravitationalField[] {
+    const result: GravitationalField[] = [];
+    
+    for (const field of this.fields.values()) {
+      const distance = this.calculateDistance(position, field.position);
+      if (distance <= radius) {
+        result.push(field);
+      }
+    }
+    
+    return result;
+  }
+
+  /**
+   * Get ship gravitational interaction data
+   */
+  getShipInteraction(shipId: string): ShipGravityInteraction | null {
+    return this.shipInteractions.get(shipId) || null;
+  }
+
+  /**
+   * Get recent gravitational events
+   */
+  getGravitationalEvents(limit: number = 50): GravitationalEvent[] {
+    const allEvents: GravitationalEvent[] = [];
+    for (const events of this.gravitationalEvents.values()) {
+      allEvents.push(...events);
+    }
+    return allEvents.slice(-limit).reverse(); // Most recent first
+  }
+
+  /**
+   * Calculate orbital velocity for stable orbit
+   */
+  calculateOrbitalVelocity(fieldId: string, orbitRadius: number): number {
+    const field = this.fields.get(fieldId);
+    if (!field) return 0;
+    
+    // v = sqrt(GM/r)
+    return Math.sqrt((6.674e-11 * field.mass) / orbitRadius);
+  }
+
+  /**
+   * Check if a trajectory is escape velocity
+   */
+  checkEscapeTrajectory(shipPosition: Vector3D, shipVelocity: Vector3D, fieldId: string): boolean {
+    const field = this.fields.get(fieldId);
+    if (!field) return false;
+    
+    const distance = this.calculateDistance(shipPosition, field.position);
+    const velocity = this.getVectorMagnitude(shipVelocity);
+    const escapeVel = Math.sqrt(2 * 6.674e-11 * field.mass / distance);
+    
+    return velocity > escapeVel * 0.95; // 95% of escape velocity
+  }
+
+  /**
+   * Calculate surface gravity for landing
+   */
+  calculateSurfaceGravity(fieldId: string): number {
+    const field = this.fields.get(fieldId);
+    return field ? field.surfaceGravity : 0;
+  }
+
+  /**
+   * Remove gravitational field
+   */
+  removeField(fieldId: string): boolean {
+    return this.fields.delete(fieldId);
+  }
+
+  /**
+   * Update ship gravitational interaction
+   */
+  private updateShipInteraction(shipId: string, position: Vector3D): void {
+    const forces = this.calculateGravitationalForces(position);
+    
+    // Calculate total force and acceleration
+    let totalForceX = 0, totalForceY = 0, totalForceZ = 0;
+    let totalAccX = 0, totalAccY = 0, totalAccZ = 0;
+    let inStrongGravity = false;
+    let tidalRisk = 0;
+    
+    for (const force of forces) {
+      totalForceX += force.force.x;
+      totalForceY += force.force.y;
+      totalForceZ += force.force.z;
+      
+      totalAccX += force.acceleration.x;
+      totalAccY += force.acceleration.y;
+      totalAccZ += force.acceleration.z;
+      
+      // Check for strong gravity
+      if (force.acceleration > this.getVectorMagnitude({ x: 0, y: 0, z: 0 }) + 0.1) {
+        inStrongGravity = true;
+      }
+      
+      // Calculate tidal risk
+      if (force.tidalForce > 0.1) {
+        tidalRisk = Math.max(tidalRisk, Math.min(1, force.tidalForce));
+      }
+    }
+    
+    const interaction: ShipGravityInteraction = {
+      shipId,
+      fieldsInRange: forces,
+      totalForce: { x: totalForceX, y: totalForceY, z: totalForceZ },
+      totalAcceleration: { x: totalAccX, y: totalAccY, z: totalAccZ },
+      inStrongGravity,
+      escapeTrajectory: false, // Will be calculated separately if needed
+      tidalRisk
+    };
+    
+    this.shipInteractions.set(shipId, interaction);
+  }
+
+  /**
+   * Calculate gravitational force at a specific position
+   */
+  private calculateForceAtPosition(field: GravitationalField, position: Vector3D): GravitationalForce | null {
+    const distance = this.calculateDistance(position, field.position);
+    
+    // Only calculate if within gravitational influence radius
+    if (distance > field.gravityRadius || distance <= field.radius) {
+      return null;
+    }
+    
+    // Calculate gravitational force using Newton's law: F = GMm/r²
+    const direction = this.normalizeVector({
+      x: field.position.x - position.x,
+      y: field.position.y - position.y,
+      z: field.position.z - position.z
+    });
+    
+    const forceMagnitude = (6.674e-11 * field.mass) / (distance * distance);
+    const force: Vector3D = {
+      x: direction.x * forceMagnitude,
+      y: direction.y * forceMagnitude,
+      z: direction.z * forceMagnitude
+    };
+    
+    // Calculate tidal forces for large bodies
+    let tidalForce = 0;
+    if (field.tidalForces && distance > 0) {
+      const tidalGradient = (2 * 6.674e-11 * field.mass) / Math.pow(distance, 3);
+      tidalForce = tidalGradient;
+    }
+    
+    // Calculate potential energy
+    const potentialEnergy = -(6.674e-11 * field.mass) / distance;
+    
+    // Calculate local escape velocity
+    const localEscapeVelocity = Math.sqrt(2 * 6.674e-11 * field.mass / distance);
+    
+    return {
+      fieldId: field.id,
+      position,
+      force,
+      acceleration: {
+        x: force.x, // Assume unit mass for acceleration
+        y: force.y,
+        z: force.z
+      },
+      distance,
+      tidalForce,
+      potentialEnergy,
+      escapeVelocity: localEscapeVelocity
+    };
+  }
+
+  // Utility functions
+  private calculateDistance(pos1: Vector3D, pos2: Vector3D): number {
+    const dx = pos1.x - pos2.x;
+    const dy = pos1.y - pos2.y;
+    const dz = pos1.z - pos2.z;
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  private getVectorMagnitude(vector: Vector3D): number {
+    return Math.sqrt(vector.x * vector.x + vector.y * vector.y + vector.z * vector.z);
+  }
+
+  private normalizeVector(vector: Vector3D): Vector3D {
+    const magnitude = this.getVectorMagnitude(vector);
+    if (magnitude === 0) return { x: 0, y: 0, z: 0 };
+    
+    return {
+      x: vector.x / magnitude,
+      y: vector.y / magnitude,
+      z: vector.z / magnitude
+    };
+  }
+
+  private generateStarDescription(type: CelestialBodyType): string {
+    const descriptions = {
+      [CelestialBodyType.STAR]: 'Main sequence star providing light and energy to the system',
+      [CelestialBodyType.GAS_GIANT]: 'Massive gas giant with complex atmospheric dynamics',
+      [CelestialBodyType.BLACK_HOLE]: 'Intense gravitational singularity - approach with extreme caution'
+    };
+    return descriptions[type] || 'Stellar object';
+  }
+
+  private generatePlanetDescription(options: any): string {
+    const parts = [];
+    
+    if (options.isHabitable) parts.push('Habitable world');
+    if (options.hasAtmosphere) parts.push('Atmospheric planet');
+    
+    const types = {
+      [CelestialBodyType.PLANET]: 'Rocky terrestrial planet',
+      [CelestialBodyType.GAS_GIANT]: 'Gas giant with complex weather systems'
+    };
+    
+    parts.push(types[options.type] || 'Planetary body');
+    
+    return parts.join(' - ');
+  }
+
+  private initializeDefaultFields(): void {
+    // Initialize with empty maps - fields will be added when systems are created
+  }
+
+  /**
+   * Get gravitational system statistics
+   */
+  getStatistics(): object {
+    const fieldTypes = new Map<string, number>();
+    for (const field of this.fields.values()) {
+      const count = fieldTypes.get(field.type) || 0;
+      fieldTypes.set(field.type, count + 1);
+    }
+    
+    return {
+      totalFields: this.fields.size,
+      fieldTypes: Object.fromEntries(fieldTypes),
+      shipInteractions: this.shipInteractions.size,
+      recentEvents: this.getGravitationalEvents().length
+    };
+  }
+
+  /**
+   * Clean up data for removed ships
+   */
+  removeShip(shipId: string): void {
+    this.shipInteractions.delete(shipId);
+  }
+}

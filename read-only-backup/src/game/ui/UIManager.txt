@@ -1,0 +1,572 @@
+/**
+ * UIManager - Central UI system for managing all user interface elements
+ * Handles screen transitions, UI state, and event routing
+ */
+
+import { Vector2D } from '../../types/index';
+import { Logger } from '../../core/utils/Logging';
+
+export interface UIComponent {
+  id: string;
+  isVisible: boolean;
+  isEnabled: boolean;
+  zIndex: number;
+  parent?: UIComponent;
+  children: UIComponent[];
+  
+  // Lifecycle methods
+  onInit(): void;
+  onDestroy(): void;
+  onShow(): void;
+  onHide(): void;
+  onUpdate(deltaTime: number): void;
+  onRender(ctx: CanvasRenderingContext2D, position: Vector2D, size: Vector2D): void;
+  
+  // State management
+  show(): void;
+  hide(): void;
+  enable(): void;
+  disable(): void;
+  
+  // Hierarchy management
+  addChild(child: UIComponent): void;
+  removeChild(child: UIComponent): void;
+  removeFromParent(): void;
+  findChild(id: string): UIComponent | null;
+  
+  // Input handling
+  handleMouseDown(x: number, y: number): boolean;
+  handleMouseUp(x: number, y: number): boolean;
+  handleMouseMove(x: number, y: number): boolean;
+  handleKeyDown(key: string): boolean;
+  handleKeyUp(key: string): boolean;
+}
+
+export abstract class BaseUIComponent implements UIComponent {
+  public id: string;
+  public isVisible: boolean = true;
+  public isEnabled: boolean = true;
+  public zIndex: number = 0;
+  public parent?: UIComponent;
+  public children: UIComponent[] = [];
+  public position: Vector2D = { x: 0, y: 0 };
+  public size: Vector2D = { x: 100, y: 100 };
+
+  constructor(id: string) {
+    this.id = id;
+  }
+
+  abstract onInit(): void;
+  abstract onDestroy(): void;
+  abstract onUpdate(deltaTime: number): void;
+  abstract onRender(ctx: CanvasRenderingContext2D, position: Vector2D, size: Vector2D): void;
+
+  onShow(): void {
+    this.isVisible = true;
+    this.children.forEach(child => child.onShow());
+  }
+
+  onHide(): void {
+    this.isVisible = false;
+    this.children.forEach(child => child.onHide());
+  }
+
+  show(): void {
+    this.onShow();
+  }
+
+  hide(): void {
+    this.onHide();
+  }
+
+  enable(): void {
+    this.isEnabled = true;
+  }
+
+  disable(): void {
+    this.isEnabled = false;
+  }
+
+  addChild(child: UIComponent): void {
+    if (!this.children.includes(child)) {
+      this.children.push(child);
+      child.parent = this;
+      child.onInit();
+    }
+  }
+
+  removeChild(child: UIComponent): void {
+    const index = this.children.indexOf(child);
+    if (index !== -1) {
+      child.removeFromParent();
+      this.children.splice(index, 1);
+    }
+  }
+
+  removeFromParent(): void {
+    if (this.parent) {
+      this.parent.removeChild(this);
+      this.parent = undefined;
+    }
+  }
+
+  findChild(id: string): UIComponent | null {
+    // Check this component
+    if (this.id === id) {
+      return this;
+    }
+
+    // Check children recursively
+    for (const child of this.children) {
+      const found = child.findChild(id);
+      if (found) {
+        return found;
+      }
+    }
+
+    return null;
+  }
+
+  handleMouseDown(x: number, y: number): boolean {
+    if (!this.isVisible || !this.isEnabled) {
+      return false;
+    }
+
+    // Handle children first (top to bottom)
+    for (let i = this.children.length - 1; i >= 0; i--) {
+      const child = this.children[i];
+      if (child.handleMouseDown(x, y)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  handleMouseUp(x: number, y: number): boolean {
+    if (!this.isVisible || !this.isEnabled) {
+      return false;
+    }
+
+    for (let i = this.children.length - 1; i >= 0; i--) {
+      const child = this.children[i];
+      if (child.handleMouseUp(x, y)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  handleMouseMove(x: number, y: number): boolean {
+    if (!this.isVisible || !this.isEnabled) {
+      return false;
+    }
+
+    for (let i = this.children.length - 1; i >= 0; i--) {
+      const child = this.children[i];
+      if (child.handleMouseMove(x, y)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  handleKeyDown(key: string): boolean {
+    if (!this.isVisible || !this.isEnabled) {
+      return false;
+    }
+
+    for (let i = this.children.length - 1; i >= 0; i--) {
+      const child = this.children[i];
+      if (child.handleKeyDown(key)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  handleKeyUp(key: string): boolean {
+    if (!this.isVisible || !this.isEnabled) {
+      return false;
+    }
+
+    for (let i = this.children.length - 1; i >= 0; i--) {
+      const child = this.children[i];
+      if (child.handleKeyUp(key)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  getAbsolutePosition(): Vector2D {
+    if (!this.parent) {
+      return { ...this.position };
+    }
+
+    const parentPos = this.parent.getAbsolutePosition();
+    return {
+      x: parentPos.x + this.position.x,
+      y: parentPos.y + this.position.y
+    };
+  }
+
+  getBounds(): { x: number; y: number; width: number; height: number } {
+    const absPos = this.getAbsolutePosition();
+    return {
+      x: absPos.x,
+      y: absPos.y,
+      width: this.size.x,
+      height: this.size.y
+    };
+  }
+
+  contains(x: number, y: number): boolean {
+    const bounds = this.getBounds();
+    return x >= bounds.x && x <= bounds.x + bounds.width &&
+           y >= bounds.y && y <= bounds.y + bounds.height;
+  }
+}
+
+export interface Screen {
+  id: string;
+  name: string;
+  isVisible: boolean;
+  isModal: boolean;
+  component: UIComponent;
+  
+  onEnter(): void;
+  onExit(): void;
+  onUpdate(deltaTime: number): void;
+  onRender(ctx: CanvasRenderingContext2D): void;
+}
+
+export class BaseScreen implements Screen {
+  public id: string;
+  public name: string;
+  public isVisible: boolean = false;
+  public isModal: boolean = false;
+  public component: UIComponent;
+
+  constructor(id: string, name: string, component: UIComponent) {
+    this.id = id;
+    this.name = name;
+    this.component = component;
+    component.id = `${id}_root`;
+  }
+
+  onEnter(): void {
+    this.isVisible = true;
+    this.component.onShow();
+  }
+
+  onExit(): void {
+    this.isVisible = false;
+    this.component.onHide();
+  }
+
+  onUpdate(deltaTime: number): void {
+    if (this.isVisible) {
+      this.component.onUpdate(deltaTime);
+    }
+  }
+
+  onRender(ctx: CanvasRenderingContext2D): void {
+    if (this.isVisible) {
+      this.component.onRender(ctx, { x: 0, y: 0 }, { x: ctx.canvas.width, y: ctx.canvas.height });
+    }
+  }
+}
+
+export type ScreenId = 
+  | 'main-menu'
+  | 'cockpit'
+  | 'galaxy-map'
+  | 'system-map'
+  | 'docked'
+  | 'market'
+  | 'shipyard'
+  | 'equipment-store'
+  | 'inventory'
+  | 'trade-history'
+  | 'commander-status'
+  | 'ship-loadout'
+  | 'encyclopedia'
+  | 'achievements'
+  | 'help'
+  | 'settings'
+  | 'controls'
+  | 'graphics-audio'
+  | 'save-load'
+  | 'data-export';
+
+export class UIManager {
+  private static instance: UIManager;
+  private screens: Map<ScreenId, Screen> = new Map();
+  private currentScreenId?: ScreenId;
+  private modalScreens: Screen[] = [];
+  private logger: Logger;
+  private canvas?: HTMLCanvasElement;
+  private mousePosition: Vector2D = { x: 0, y: 0 };
+  private isInitialized: boolean = false;
+
+  private constructor() {
+    this.logger = Logger.getInstance();
+  }
+
+  public static getInstance(): UIManager {
+    if (!UIManager.instance) {
+      UIManager.instance = new UIManager();
+    }
+    return UIManager.instance;
+  }
+
+  public initialize(canvas: HTMLCanvasElement): void {
+    this.canvas = canvas;
+    this.isInitialized = true;
+    this.logger.info('UIManager initialized');
+  }
+
+  public registerScreen(screen: Screen): void {
+    this.screens.set(screen.id as ScreenId, screen);
+    this.logger.debug(`Registered screen: ${screen.name}`);
+  }
+
+  public showScreen(screenId: ScreenId, modal: boolean = false): void {
+    if (!this.isInitialized) {
+      this.logger.error('UIManager not initialized');
+      return;
+    }
+
+    const screen = this.screens.get(screenId);
+    if (!screen) {
+      this.logger.error(`Screen not found: ${screenId}`);
+      return;
+    }
+
+    if (modal) {
+      // Add as modal
+      if (!this.modalScreens.includes(screen)) {
+        this.modalScreens.push(screen);
+      }
+      screen.onEnter();
+    } else {
+      // Replace current screen
+      if (this.currentScreenId) {
+        const currentScreen = this.screens.get(this.currentScreenId);
+        if (currentScreen) {
+          currentScreen.onExit();
+        }
+      }
+      
+      this.currentScreenId = screenId;
+      screen.onEnter();
+    }
+
+    this.logger.info(`Showing screen: ${screen.name}`);
+  }
+
+  public hideScreen(screenId: ScreenId): void {
+    const screen = this.screens.get(screenId);
+    if (!screen) {
+      return;
+    }
+
+    const modalIndex = this.modalScreens.indexOf(screen);
+    if (modalIndex !== -1) {
+      this.modalScreens.splice(modalIndex, 1);
+    }
+
+    if (this.currentScreenId === screenId) {
+      this.currentScreenId = undefined;
+    }
+
+    screen.onExit();
+    this.logger.info(`Hidden screen: ${screen.name}`);
+  }
+
+  public hideAllScreens(): void {
+    // Hide all modal screens first
+    this.modalScreens.forEach(screen => screen.onExit());
+    this.modalScreens = [];
+
+    // Hide current main screen
+    if (this.currentScreenId) {
+      const currentScreen = this.screens.get(this.currentScreenId);
+      if (currentScreen) {
+        currentScreen.onExit();
+      }
+      this.currentScreenId = undefined;
+    }
+
+    this.logger.info('All screens hidden');
+  }
+
+  public getCurrentScreen(): Screen | undefined {
+    if (this.currentScreenId) {
+      return this.screens.get(this.currentScreenId);
+    }
+    return undefined;
+  }
+
+  public getModalScreens(): Screen[] {
+    return [...this.modalScreens];
+  }
+
+  public update(deltaTime: number): void {
+    if (!this.isInitialized) return;
+
+    // Update current screen
+    if (this.currentScreenId) {
+      const currentScreen = this.screens.get(this.currentScreenId);
+      if (currentScreen) {
+        currentScreen.onUpdate(deltaTime);
+      }
+    }
+
+    // Update modal screens
+    this.modalScreens.forEach(screen => {
+      screen.onUpdate(deltaTime);
+    });
+  }
+
+  public render(ctx: CanvasRenderingContext2D): void {
+    if (!this.isInitialized) return;
+
+    // Render current screen first
+    if (this.currentScreenId) {
+      const currentScreen = this.screens.get(this.currentScreenId);
+      if (currentScreen) {
+        currentScreen.onRender(ctx);
+      }
+    }
+
+    // Render modal screens on top
+    this.modalScreens.forEach(screen => {
+      screen.onRender(ctx);
+    });
+  }
+
+  public handleMouseDown(x: number, y: number): boolean {
+    if (!this.isInitialized) return false;
+
+    this.mousePosition = { x, y };
+
+    // Handle modal screens first (top to bottom)
+    for (let i = this.modalScreens.length - 1; i >= 0; i--) {
+      if (this.modalScreens[i].component.handleMouseDown(x, y)) {
+        return true;
+      }
+    }
+
+    // Handle current screen
+    if (this.currentScreenId) {
+      const currentScreen = this.screens.get(this.currentScreenId);
+      if (currentScreen && currentScreen.component.handleMouseDown(x, y)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  public handleMouseUp(x: number, y: number): boolean {
+    if (!this.isInitialized) return false;
+
+    this.mousePosition = { x, y };
+
+    for (let i = this.modalScreens.length - 1; i >= 0; i--) {
+      if (this.modalScreens[i].component.handleMouseUp(x, y)) {
+        return true;
+      }
+    }
+
+    if (this.currentScreenId) {
+      const currentScreen = this.screens.get(this.currentScreenId);
+      if (currentScreen && currentScreen.component.handleMouseUp(x, y)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  public handleMouseMove(x: number, y: number): boolean {
+    if (!this.isInitialized) return false;
+
+    this.mousePosition = { x, y };
+
+    for (let i = this.modalScreens.length - 1; i >= 0; i--) {
+      if (this.modalScreens[i].component.handleMouseMove(x, y)) {
+        return true;
+      }
+    }
+
+    if (this.currentScreenId) {
+      const currentScreen = this.screens.get(this.currentScreenId);
+      if (currentScreen && currentScreen.component.handleMouseMove(x, y)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  public handleKeyDown(key: string): boolean {
+    if (!this.isInitialized) return false;
+
+    for (let i = this.modalScreens.length - 1; i >= 0; i--) {
+      if (this.modalScreens[i].component.handleKeyDown(key)) {
+        return true;
+      }
+    }
+
+    if (this.currentScreenId) {
+      const currentScreen = this.screens.get(this.currentScreenId);
+      if (currentScreen && currentScreen.component.handleKeyDown(key)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  public handleKeyUp(key: string): boolean {
+    if (!this.isInitialized) return false;
+
+    for (let i = this.modalScreens.length - 1; i >= 0; i--) {
+      if (this.modalScreens[i].component.handleKeyUp(key)) {
+        return true;
+      }
+    }
+
+    if (this.currentScreenId) {
+      const currentScreen = this.screens.get(this.currentScreenId);
+      if (currentScreen && currentScreen.component.handleKeyUp(key)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  public getMousePosition(): Vector2D {
+    return { ...this.mousePosition };
+  }
+
+  public isScreenVisible(screenId: ScreenId): boolean {
+    const screen = this.screens.get(screenId);
+    return screen ? screen.isVisible : false;
+  }
+
+  public destroy(): void {
+    this.hideAllScreens();
+    this.screens.clear();
+    this.isInitialized = false;
+    this.logger.info('UIManager destroyed');
+  }
+}

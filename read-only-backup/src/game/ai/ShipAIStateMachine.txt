@@ -1,0 +1,864 @@
+/**
+ * Ship AI State Machine - Advanced AI behavior system for Elite-style NPCs
+ * Handles ship AI states, decision making, and behavioral patterns
+ */
+
+import { Vector3D } from '../../types/index.js';
+import { ShipType } from '../models/Ship.js';
+
+export interface AIState {
+  id: string;
+  type: AIStateType;
+  priority: number;
+  duration: number;
+  conditions: AICondition[];
+  actions: AIAction[];
+  transitions: AIStateTransition[];
+  created: number;
+}
+
+export enum AIStateType {
+  IDLE = 'IDLE',
+  PATROL = 'PATROL',
+  APPROACH = 'APPROACH',
+  ENGAGE = 'ENGAGE',
+  EVADE = 'EVADE',
+  FLEE = 'FLEE',
+  TRADE = 'TRADE',
+  DOCK = 'DOCK',
+  JUMP = 'JUMP',
+  INVESTIGATE = 'INVESTIGATE',
+  ESCORT = 'ESCORT'
+}
+
+export interface AICondition {
+  type: AIConditionType;
+  target: string;
+  comparator: '==' | '!=' | '>' | '<' | '>=' | '<=';
+  value: any;
+  weight: number;
+}
+
+export enum AIConditionType {
+  DISTANCE_TO_TARGET = 'DISTANCE_TO_TARGET',
+  THREAT_LEVEL = 'THREAT_LEVEL',
+  HEALTH_LEVEL = 'HEALTH_LEVEL',
+  FUEL_LEVEL = 'FUEL_LEVEL',
+  WEAPONS_ONLINE = 'WEAPONS_ONLINE',
+  CARGO_FULL = 'CARGO_FULL',
+  CREDITS_LOW = 'CREDITS_LOW',
+  POLICE_RESPONSE = 'POLICE_RESPONSE',
+  PIRATE_ACTIVITY = 'PIRATE_ACTIVITY',
+  MISSION_REQUIREMENT = 'MISSION_REQUIREMENT'
+}
+
+export interface AIAction {
+  type: AIActionType;
+  parameters: { [key: string]: any };
+  duration: number;
+  energyCost: number;
+  priority: number;
+}
+
+export enum AIActionType {
+  MOVE_TO_POSITION = 'MOVE_TO_POSITION',
+  FIRE_WEAPONS = 'FIRE_WEAPONS',
+  BOOST_SPEED = 'BOOST_SPEED',
+  CHANGE_HEADING = 'CHANGE_HEADING',
+  DOCK_WITH_STATION = 'DOCK_WITH_STATION',
+  JUMP_TO_SYSTEM = 'JUMP_TO_SYSTEM',
+  DROP_CARGO = 'DROP_CARGO',
+  REQUEST_HELP = 'REQUEST_HELP',
+  INVESTIGATE_ANOMALY = 'INVESTIGATE_ANOMALY',
+  PATROL_AREA = 'PATROL_AREA'
+}
+
+export interface AIStateTransition {
+  targetState: AIStateType;
+  conditions: AICondition[];
+  priority: number;
+  probability: number;
+}
+
+export interface AIShip {
+  id: string;
+  type: ShipType;
+  position: Vector3D;
+  velocity: Vector3D;
+  health: number;
+  shields: number;
+  fuel: number;
+  credits: number;
+  cargo: Map<string, number>;
+  aiState: AIState;
+  targetId: string | null;
+  memory: AIMemory;
+  personality: AIPersonality;
+  behavior: AIBehavior;
+}
+
+export interface AIMemory {
+  recentEvents: AIEvent[];
+  knownLocations: Map<string, Vector3D>;
+  relationships: Map<string, AIEntityRelation>;
+  lastSeen: Map<string, number>;
+  combatHistory: CombatEncounter[];
+}
+
+export interface AIEvent {
+  type: string;
+  timestamp: number;
+  data: any;
+  importance: number;
+}
+
+export interface AIEntityRelation {
+  entityId: string;
+  relationType: 'friendly' | 'neutral' | 'hostile' | 'unknown';
+  trust: number; // -1 to 1
+  reputation: number;
+  lastInteraction: number;
+}
+
+export interface CombatEncounter {
+  timestamp: number;
+  opponentId: string;
+  outcome: 'victory' | 'defeat' | 'draw' | 'fled';
+  damageDealt: number;
+  damageReceived: number;
+  duration: number;
+}
+
+export interface AIPersonality {
+  aggression: number; // 0-1
+  caution: number; // 0-1
+  greed: number; // 0-1
+  curiosity: number; // 0-1
+  loyalty: number; // 0-1
+  independence: number; // 0-1
+}
+
+export interface AIBehavior {
+  preferredWeapons: string[];
+  flightStyle: 'aggressive' | 'defensive' | 'cautious' | 'balanced';
+  tradingStyle: 'profitable' | 'quick' | 'patient' | 'opportunistic';
+  socialBehavior: 'friendly' | 'reserved' | 'hostile' | 'neutral';
+  missionPriority: 'primary' | 'secondary' | 'none';
+}
+
+/**
+ * Advanced Ship AI State Machine for Elite-style NPC behavior
+ */
+export class ShipAIStateMachine {
+  private ships: Map<string, AIShip>;
+  private stateDefinitions: Map<AIStateType, AIState>;
+  private globalTime: number = 0;
+  private aiUpdateCounter: number = 0;
+
+  constructor() {
+    this.ships = new Map();
+    this.stateDefinitions = new Map();
+    this.initializeStateDefinitions();
+  }
+
+  /**
+   * Initialize AI ship in the system
+   */
+  initializeShip(ship: Omit<AIShip, 'aiState' | 'memory' | 'personality' | 'behavior'>): string {
+    const aiShip: AIShip = {
+      ...ship,
+      aiState: this.createInitialState(),
+      memory: this.initializeMemory(),
+      personality: this.generatePersonality(ship.type),
+      behavior: this.generateBehavior(ship.type)
+    };
+
+    this.ships.set(ship.id, aiShip);
+    return ship.id;
+  }
+
+  /**
+   * Update all AI ships (called every frame)
+   */
+  update(deltaTime: number): void {
+    this.globalTime += deltaTime;
+    this.aiUpdateCounter++;
+
+    // Update AI ships in groups for performance (not every ship every frame)
+    const shipsToUpdate = this.getShipsToUpdate();
+    
+    shipsToUpdate.forEach(ship => {
+      this.updateShipAI(ship, deltaTime);
+    });
+  }
+
+  /**
+   * Update individual ship AI
+   */
+  private updateShipAI(ship: AIShip, deltaTime: number): void {
+    // Update memory and relationships
+    this.updateMemory(ship, deltaTime);
+    
+    // Evaluate state transitions
+    this.evaluateStateTransitions(ship);
+    
+    // Execute current state actions
+    this.executeStateActions(ship, deltaTime);
+    
+    // Update ship position based on AI decisions
+    this.updateShipMovement(ship, deltaTime);
+  }
+
+  /**
+   * Create initial AI state
+   */
+  private createInitialState(): AIState {
+    return {
+      id: 'initial',
+      type: AIStateType.IDLE,
+      priority: 1,
+      duration: 0,
+      conditions: [],
+      actions: [],
+      transitions: [],
+      created: this.globalTime
+    };
+  }
+
+  /**
+   * Initialize AI memory
+   */
+  private initializeMemory(): AIMemory {
+    return {
+      recentEvents: [],
+      knownLocations: new Map(),
+      relationships: new Map(),
+      lastSeen: new Map(),
+      combatHistory: []
+    };
+  }
+
+  /**
+   * Generate personality based on ship type
+   */
+  private generatePersonality(shipType: ShipType): AIPersonality {
+    // Different ship types have different personality tendencies
+    switch (shipType) {
+      case ShipType.VIPER:
+      case ShipType.MAMBA:
+        return {
+          aggression: 0.8,
+          caution: 0.3,
+          greed: 0.4,
+          curiosity: 0.6,
+          loyalty: 0.5,
+          independence: 0.7
+        };
+        
+      case ShipType.HAULER:
+      case ShipType.BULK_CARRIER:
+        return {
+          aggression: 0.2,
+          caution: 0.8,
+          greed: 0.6,
+          curiosity: 0.3,
+          loyalty: 0.7,
+          independence: 0.4
+        };
+        
+      case ShipType.COBRA_MK3:
+      case ShipType.KRAIT:
+        return {
+          aggression: 0.5,
+          caution: 0.5,
+          greed: 0.5,
+          curiosity: 0.5,
+          loyalty: 0.5,
+          independence: 0.5
+        };
+        
+      default:
+        return {
+          aggression: 0.5,
+          caution: 0.5,
+          greed: 0.5,
+          curiosity: 0.5,
+          loyalty: 0.5,
+          independence: 0.5
+        };
+    }
+  }
+
+  /**
+   * Generate behavior patterns based on ship type
+   */
+  private generateBehavior(shipType: ShipType): AIBehavior {
+    switch (shipType) {
+      case ShipType.VIPER:
+      case ShipType.MAMBA:
+        return {
+          preferredWeapons: ['laser', 'missile'],
+          flightStyle: 'aggressive',
+          tradingStyle: 'quick',
+          socialBehavior: 'hostile',
+          missionPriority: 'primary'
+        };
+        
+      case ShipType.HAULER:
+      case ShipType.BULK_CARRIER:
+        return {
+          preferredWeapons: ['laser'],
+          flightStyle: 'cautious',
+          tradingStyle: 'profitable',
+          socialBehavior: 'friendly',
+          missionPriority: 'none'
+        };
+        
+      case ShipType.ANACONDA:
+      case ShipType.CORVETTE:
+        return {
+          preferredWeapons: ['laser', 'missile', 'ballistics'],
+          flightStyle: 'defensive',
+          tradingStyle: 'patient',
+          socialBehavior: 'neutral',
+          missionPriority: 'secondary'
+        };
+        
+      default:
+        return {
+          preferredWeapons: ['laser'],
+          flightStyle: 'balanced',
+          tradingStyle: 'opportunistic',
+          socialBehavior: 'neutral',
+          missionPriority: 'none'
+        };
+    }
+  }
+
+  /**
+   * Evaluate state transitions based on conditions
+   */
+  private evaluateStateTransitions(ship: AIShip): void {
+    const currentState = ship.aiState;
+    
+    // Check each possible transition
+    for (const transition of currentState.transitions) {
+      if (this.evaluateTransitionConditions(ship, transition.conditions)) {
+        // Check probability
+        if (Math.random() < transition.probability) {
+          this.transitionToState(ship, transition.targetState);
+          break;
+        }
+      }
+    }
+  }
+
+  /**
+   * Execute actions for current state
+   */
+  private executeStateActions(ship: AIShip, deltaTime: number): void {
+    const currentState = ship.aiState;
+    
+    currentState.actions.forEach(action => {
+      if (action.duration > 0) {
+        action.duration -= deltaTime;
+        this.executeAIAction(ship, action);
+      }
+    });
+
+    // Clean up completed actions
+    currentState.actions = currentState.actions.filter(action => action.duration > 0);
+  }
+
+  /**
+   * Execute individual AI action
+   */
+  private executeAIAction(ship: AIShip, action: AIAction): void {
+    switch (action.type) {
+      case AIActionType.MOVE_TO_POSITION:
+        this.executeMoveToPosition(ship, action.parameters);
+        break;
+        
+      case AIActionType.FIRE_WEAPONS:
+        this.executeFireWeapons(ship, action.parameters);
+        break;
+        
+      case AIActionType.BOOST_SPEED:
+        this.executeBoostSpeed(ship, action.parameters);
+        break;
+        
+      case AIActionType.CHANGE_HEADING:
+        this.executeChangeHeading(ship, action.parameters);
+        break;
+        
+      case AIActionType.DOCK_WITH_STATION:
+        this.executeDocking(ship, action.parameters);
+        break;
+        
+      case AIActionType.PATROL_AREA:
+        this.executePatrolArea(ship, action.parameters);
+        break;
+        
+      case AIActionType.INVESTIGATE_ANOMALY:
+        this.executeInvestigation(ship, action.parameters);
+        break;
+    }
+  }
+
+  /**
+   * Execute movement to position
+   */
+  private executeMoveToPosition(ship: AIShip, params: any): void {
+    const targetPosition = params.position as Vector3D;
+    const currentPosition = ship.position;
+    
+    // Calculate direction vector
+    const direction = {
+      x: targetPosition.x - currentPosition.x,
+      y: targetPosition.y - currentPosition.y,
+      z: targetPosition.z - currentPosition.z
+    };
+    
+    // Normalize and apply thrust
+    const distance = Math.sqrt(direction.x ** 2 + direction.y ** 2 + direction.z ** 2);
+    if (distance > 10) { // Threshold for stopping
+      const normalizedDirection = {
+        x: direction.x / distance,
+        y: direction.y / distance,
+        z: direction.z / distance
+      };
+      
+      ship.velocity.x += normalizedDirection.x * 0.1;
+      ship.velocity.y += normalizedDirection.y * 0.1;
+      ship.velocity.z += normalizedDirection.z * 0.1;
+    }
+  }
+
+  /**
+   * Execute weapon firing
+   */
+  private executeFireWeapons(ship: AIShip, params: any): void {
+    const targetId = params.targetId as string;
+    if (ship.targetId === targetId) {
+      // Calculate firing solution
+      const target = this.ships.get(targetId);
+      if (target) {
+        const distance = this.calculateDistance(ship.position, target.position);
+        const weaponRange = 500; // Default weapon range
+        
+        if (distance <= weaponRange) {
+          // Calculate lead angle for target prediction
+          const leadTime = distance / 300; // Assumes 300 m/s projectile speed
+          const predictedPosition = {
+            x: target.position.x + target.velocity.x * leadTime,
+            y: target.position.y + target.velocity.y * leadTime,
+            z: target.position.z + target.velocity.z * leadTime
+          };
+          
+          // Fire weapons at predicted position
+          this.processWeaponFire(ship, targetId, predictedPosition);
+        }
+      }
+    }
+  }
+
+  /**
+   * Execute speed boost
+   */
+  private executeBoostSpeed(ship: AIShip, params: any): void {
+    const boostAmount = params.boost || 2.0;
+    const speed = Math.sqrt(ship.velocity.x ** 2 + ship.velocity.y ** 2 + ship.velocity.z ** 2);
+    const direction = speed > 0 ? {
+      x: ship.velocity.x / speed,
+      y: ship.velocity.y / speed,
+      z: ship.velocity.z / speed
+    } : { x: 1, y: 0, z: 0 };
+    
+    ship.velocity.x += direction.x * boostAmount;
+    ship.velocity.y += direction.y * boostAmount;
+    ship.velocity.z += direction.z * boostAmount;
+  }
+
+  /**
+   * Execute heading change
+   */
+  private executeChangeHeading(ship: AIShip, params: any): void {
+    const newHeading = params.heading as Vector3D;
+    const currentHeading = this.getCurrentHeading(ship.velocity);
+    
+    // Calculate angle difference
+    const angleDiff = this.calculateAngleDifference(currentHeading, newHeading);
+    
+    // Gradual heading change based on ship type and personality
+    const turnRate = 1.0 - ship.personality.caution; // Cautious ships turn slower
+    const turnAmount = Math.min(angleDiff, turnRate * 0.1);
+    
+    // Apply turn (simplified)
+    ship.velocity.x += (newHeading.x - currentHeading.x) * turnAmount;
+    ship.velocity.y += (newHeading.y - currentHeading.y) * turnAmount;
+    ship.velocity.z += (newHeading.z - currentHeading.z) * turnAmount;
+  }
+
+  /**
+   * Execute docking procedure
+   */
+  private executeDocking(ship: AIShip, params: any): void {
+    const stationId = params.stationId as string;
+    
+    // Calculate docking approach
+    // This would integrate with the docking system
+    // For now, simplified approach
+    if (ship.fuel < 10) {
+      // Low fuel priority - find nearest station
+      this.transitionToState(ship, AIStateType.DOCK);
+    }
+  }
+
+  /**
+   * Execute patrol area behavior
+   */
+  private executePatrolArea(ship: AIShip, params: any): void {
+    const center = params.center as Vector3D;
+    const radius = params.radius || 100;
+    
+    // Calculate patrol pattern (simple circular patrol)
+    const angle = (this.globalTime * 0.1 + Math.random() * 0.01) % (Math.PI * 2);
+    const targetPosition = {
+      x: center.x + Math.cos(angle) * radius,
+      y: center.y,
+      z: center.z + Math.sin(angle) * radius
+    };
+    
+    this.executeMoveToPosition(ship, { position: targetPosition });
+  }
+
+  /**
+   * Execute investigation behavior
+   */
+  private executeInvestigation(ship: AIShip, params: any): void {
+    const anomalyPosition = params.position as Vector3D;
+    
+    // Approach investigation point cautiously
+    ship.targetId = 'investigation';
+    this.executeMoveToPosition(ship, { position: anomalyPosition });
+  }
+
+  /**
+   * Process weapon fire
+   */
+  private processWeaponFire(ship: AIShip, targetId: string, targetPosition: Vector3D): void {
+    // Record combat event
+    this.addMemoryEvent(ship, {
+      type: 'combat_action',
+      timestamp: this.globalTime,
+      data: { action: 'fire', targetId, targetPosition },
+      importance: 0.8
+    });
+  }
+
+  /**
+   * Transition ship to new state
+   */
+  private transitionToState(ship: AIShip, newStateType: AIStateType): void {
+    const stateDef = this.stateDefinitions.get(newStateType);
+    if (!stateDef) return;
+
+    // Create new state instance
+    const newState: AIState = {
+      id: `${newStateType}_${this.globalTime}`,
+      type: newStateType,
+      priority: stateDef.priority,
+      duration: 0,
+      conditions: [...stateDef.conditions],
+      actions: [...stateDef.actions],
+      transitions: [...stateDef.transitions],
+      created: this.globalTime
+    };
+
+    // Record state transition in memory
+    this.addMemoryEvent(ship, {
+      type: 'state_transition',
+      timestamp: this.globalTime,
+      data: { from: ship.aiState.type, to: newStateType },
+      importance: 0.6
+    });
+
+    ship.aiState = newState;
+  }
+
+  /**
+   * Add event to ship memory
+   */
+  private addMemoryEvent(ship: AIShip, event: AIEvent): void {
+    ship.memory.recentEvents.unshift(event);
+    
+    // Keep only recent events (last 100)
+    if (ship.memory.recentEvents.length > 100) {
+      ship.memory.recentEvents = ship.memory.recentEvents.slice(0, 100);
+    }
+  }
+
+  /**
+   * Update ship memory
+   */
+  private updateMemory(ship: AIShip, deltaTime: number): void {
+    // Update relationships based on recent events
+    // This would be more sophisticated in a full implementation
+    
+    // Clean up old memory entries periodically
+    if (this.aiUpdateCounter % 100 === 0) {
+      const cutoffTime = this.globalTime - 3600; // 1 hour
+      ship.memory.recentEvents = ship.memory.recentEvents.filter(
+        event => event.timestamp >= cutoffTime
+      );
+    }
+  }
+
+  /**
+   * Update ship movement based on AI decisions
+   */
+  private updateShipMovement(ship: AIShip, deltaTime: number): void {
+    // Apply velocity limits based on ship type
+    const maxSpeed = this.getMaxSpeedForShipType(ship.type);
+    const currentSpeed = Math.sqrt(
+      ship.velocity.x ** 2 + ship.velocity.y ** 2 + ship.velocity.z ** 2
+    );
+    
+    if (currentSpeed > maxSpeed) {
+      const scale = maxSpeed / currentSpeed;
+      ship.velocity.x *= scale;
+      ship.velocity.y *= scale;
+      ship.velocity.z *= scale;
+    }
+    
+    // Update position
+    ship.position.x += ship.velocity.x * deltaTime;
+    ship.position.y += ship.velocity.y * deltaTime;
+    ship.position.z += ship.velocity.z * deltaTime;
+    
+    // Apply space drag
+    ship.velocity.x *= Math.pow(0.999, deltaTime);
+    ship.velocity.y *= Math.pow(0.999, deltaTime);
+    ship.velocity.z *= Math.pow(0.999, deltaTime);
+  }
+
+  /**
+   * Get ships to update this frame (performance optimization)
+   */
+  private getShipsToUpdate(): AIShip[] {
+    // Update every ship, but could be optimized to update based on distance to player
+    // or importance level
+    return Array.from(this.ships.values());
+  }
+
+  /**
+   * Initialize state definitions
+   */
+  private initializeStateDefinitions(): void {
+    // Combat states
+    this.addStateDefinition(AIStateType.PATROL, {
+      priority: 5,
+      conditions: [
+        { type: AIConditionType.DISTANCE_TO_TARGET, target: 'patrol_area', comparator: '>', value: 50, weight: 0.5 }
+      ],
+      actions: [
+        { type: AIActionType.PATROL_AREA, parameters: {}, duration: 300, energyCost: 0, priority: 3 }
+      ],
+      transitions: [
+        { targetState: AIStateType.ENGAGE, conditions: [], priority: 10, probability: 1.0 }
+      ]
+    });
+
+    this.addStateDefinition(AIStateType.ENGAGE, {
+      priority: 8,
+      conditions: [
+        { type: AIConditionType.THREAT_LEVEL, target: 'combat_target', comparator: '>=', value: 'moderate', weight: 0.7 }
+      ],
+      actions: [
+        { type: AIActionType.FIRE_WEAPONS, parameters: { targetId: 'combat_target' }, duration: 0, energyCost: 10, priority: 10 },
+        { type: AIActionType.MOVE_TO_POSITION, parameters: { position: 'optimal_combat_range' }, duration: 0, energyCost: 0, priority: 6 }
+      ],
+      transitions: [
+        { targetState: AIStateType.EVADE, conditions: [], priority: 9, probability: 0.1 },
+        { targetState: AIStateType.FLEE, conditions: [], priority: 7, probability: 0.05 }
+      ]
+    });
+
+    this.addStateDefinition(AIStateType.EVADE, {
+      priority: 9,
+      conditions: [
+        { type: AIConditionType.HEALTH_LEVEL, target: 'self', comparator: '<', value: 30, weight: 0.8 }
+      ],
+      actions: [
+        { type: AIActionType.BOOST_SPEED, parameters: { boost: 3.0 }, duration: 5, energyCost: 20, priority: 9 },
+        { type: AIActionType.CHANGE_HEADING, parameters: { heading: 'away_from_threat' }, duration: 2, energyCost: 0, priority: 8 }
+      ],
+      transitions: [
+        { targetState: AIStateType.FLEE, conditions: [], priority: 10, probability: 0.3 }
+      ]
+    });
+
+    // Trading states
+    this.addStateDefinition(AIStateType.TRADE, {
+      priority: 4,
+      conditions: [
+        { type: AIConditionType.CARGO_FULL, target: 'self', comparator: '!=', value: true, weight: 0.6 }
+      ],
+      actions: [
+        { type: AIActionType.MOVE_TO_POSITION, parameters: { position: 'nearest_station' }, duration: 0, energyCost: 0, priority: 5 },
+        { type: AIActionType.DOCK_WITH_STATION, parameters: { stationId: 'nearest_station' }, duration: 600, energyCost: 0, priority: 3 }
+      ],
+      transitions: []
+    });
+  }
+
+  /**
+   * Add state definition
+   */
+  private addStateDefinition(stateType: AIStateType, definition: {
+    priority: number;
+    conditions: AICondition[];
+    actions: AIAction[];
+    transitions: AIStateTransition[];
+  }): void {
+    const state: AIState = {
+      id: `def_${stateType}`,
+      type: stateType,
+      priority: definition.priority,
+      duration: 0,
+      conditions: definition.conditions,
+      actions: definition.actions,
+      transitions: definition.transitions,
+      created: 0
+    };
+
+    this.stateDefinitions.set(stateType, state);
+  }
+
+  /**
+   * Evaluate transition conditions
+   */
+  private evaluateTransitionConditions(ship: AIShip, conditions: AICondition[]): boolean {
+    return conditions.every(condition => {
+      // Simplified condition evaluation
+      switch (condition.type) {
+        case AIConditionType.DISTANCE_TO_TARGET:
+          if (ship.targetId) {
+            const target = this.ships.get(ship.targetId);
+            if (target) {
+              const distance = this.calculateDistance(ship.position, target.position);
+              return this.compareValues(distance, condition.comparator, condition.value);
+            }
+          }
+          break;
+          
+        case AIConditionType.HEALTH_LEVEL:
+          return this.compareValues(ship.health, condition.comparator, condition.value);
+          
+        case AIConditionType.FUEL_LEVEL:
+          return this.compareValues(ship.fuel, condition.comparator, condition.value);
+      }
+      return false;
+    });
+  }
+
+  /**
+   * Compare values with comparator
+   */
+  private compareValues(value: any, comparator: string, target: any): boolean {
+    switch (comparator) {
+      case '==': return value == target;
+      case '!=': return value != target;
+      case '>': return value > target;
+      case '<': return value < target;
+      case '>=': return value >= target;
+      case '<=': return value <= target;
+      default: return false;
+    }
+  }
+
+  /**
+   * Get current heading from velocity
+   */
+  private getCurrentHeading(velocity: Vector3D): Vector3D {
+    const speed = Math.sqrt(velocity.x ** 2 + velocity.y ** 2 + velocity.z ** 2);
+    if (speed === 0) return { x: 1, y: 0, z: 0 };
+    
+    return {
+      x: velocity.x / speed,
+      y: velocity.y / speed,
+      z: velocity.z / speed
+    };
+  }
+
+  /**
+   * Calculate angle difference between two directions
+   */
+  private calculateAngleDifference(heading1: Vector3D, heading2: Vector3D): number {
+    const dotProduct = heading1.x * heading2.x + heading1.y * heading2.y + heading1.z * heading2.z;
+    return Math.acos(Math.max(-1, Math.min(1, dotProduct)));
+  }
+
+  /**
+   * Get maximum speed for ship type
+   */
+  private getMaxSpeedForShipType(shipType: ShipType): number {
+    switch (shipType) {
+      case ShipType.VIPER: return 400;
+      case ShipType.COBRA_MK3: return 350;
+      case ShipType.KRAIT: return 310;
+      case ShipType.MAMBA: return 380;
+      case ShipType.HAULER: return 250;
+      case ShipType.ANACONDA: return 300;
+      default: return 300;
+    }
+  }
+
+  /**
+   * Calculate distance between two 3D points
+   */
+  private calculateDistance(pos1: Vector3D, pos2: Vector3D): number {
+    const dx = pos2.x - pos1.x;
+    const dy = pos2.y - pos1.y;
+    const dz = pos2.z - pos1.z;
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  /**
+   * Get system status
+   */
+  getSystemStatus(): {
+    totalShips: number;
+    statesByType: Map<AIStateType, number>;
+    averageMemoryEvents: number;
+  } {
+    const statesByType = new Map<AIStateType, number>();
+    let totalMemoryEvents = 0;
+    
+    this.ships.forEach(ship => {
+      const count = statesByType.get(ship.aiState.type) || 0;
+      statesByType.set(ship.aiState.type, count + 1);
+      totalMemoryEvents += ship.memory.recentEvents.length;
+    });
+    
+    return {
+      totalShips: this.ships.size,
+      statesByType,
+      averageMemoryEvents: this.ships.size > 0 ? totalMemoryEvents / this.ships.size : 0
+    };
+  }
+
+  /**
+   * Get AI ship by ID
+   */
+  getAIShip(shipId: string): AIShip | undefined {
+    return this.ships.get(shipId);
+  }
+
+  /**
+   * Get all AI ships
+   */
+  getAllAIShips(): AIShip[] {
+    return Array.from(this.ships.values());
+  }
+}

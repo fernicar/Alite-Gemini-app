@@ -1,0 +1,462 @@
+/**
+ * Optimization Coordinator - Central coordination of all optimization systems
+ * Integrates performance, memory, mobile, browser compatibility, and other optimization systems
+ */
+
+import { PerformanceManager } from './PerformanceManager';
+import { ObjectPoolManager } from './ObjectPoolManager';
+import { MemoryManager } from './MemoryManager';
+import { LODSystem } from './LODSystem';
+import { MobileOptimizer } from './MobileOptimizer';
+import { BrowserCompatibilityManager } from './BrowserCompatibilityManager';
+import { AssetManager } from './AssetManager';
+import { BatteryOptimizer } from './BatteryOptimizer';
+
+export interface OptimizationConfig {
+  enablePerformanceOptimization: boolean;
+  enableMemoryOptimization: boolean;
+  enableMobileOptimization: boolean;
+  enableBrowserCompatibility: boolean;
+  enableAssetOptimization: boolean;
+  enableBatteryOptimization: boolean;
+  enableAutoOptimization: boolean;
+  optimizationLevel: 'low' | 'medium' | 'high' | 'aggressive';
+}
+
+export interface OptimizationReport {
+  timestamp: number;
+  performance: any;
+  memory: any;
+  objectPooling: any;
+  lod: any;
+  mobile: any;
+  browser: any;
+  assets: any;
+  battery: any;
+  recommendations: string[];
+  overallScore: number;
+}
+
+export class OptimizationCoordinator {
+  private static instance: OptimizationCoordinator;
+  
+  private config: OptimizationConfig;
+  private initialized: boolean = false;
+  
+  // Optimization systems
+  private performanceManager: PerformanceManager | null = null;
+  private objectPoolManager: ObjectPoolManager | null = null;
+  private memoryManager: MemoryManager | null = null;
+  private lodSystem: LODSystem | null = null;
+  private mobileOptimizer: MobileOptimizer | null = null;
+  private browserCompatibility: BrowserCompatibilityManager | null = null;
+  private assetManager: AssetManager | null = null;
+  private batteryOptimizer: BatteryOptimizer | null = null;
+  
+  // Monitoring
+  private lastOptimizationUpdate: number = 0;
+  private optimizationUpdateInterval: number = 5000; // 5 seconds
+  private reportCallbacks: ((report: OptimizationReport) => void)[] = [];
+
+  private constructor() {
+    this.config = this.getDefaultConfig();
+  }
+
+  public static getInstance(): OptimizationCoordinator {
+    if (!OptimizationCoordinator.instance) {
+      OptimizationCoordinator.instance = new OptimizationCoordinator();
+    }
+    return OptimizationCoordinator.instance;
+  }
+
+  private getDefaultConfig(): OptimizationConfig {
+    return {
+      enablePerformanceOptimization: true,
+      enableMemoryOptimization: true,
+      enableMobileOptimization: true,
+      enableBrowserCompatibility: true,
+      enableAssetOptimization: true,
+      enableBatteryOptimization: true,
+      enableAutoOptimization: true,
+      optimizationLevel: 'medium'
+    };
+  }
+
+  public async initialize(): Promise<void> {
+    if (this.initialized) return;
+
+    console.log('Initializing optimization systems...');
+
+    try {
+      // Initialize in dependency order
+      if (this.config.enableBrowserCompatibility) {
+        this.browserCompatibility = BrowserCompatibilityManager.getInstance();
+        console.log('✅ Browser Compatibility Manager initialized');
+      }
+
+      if (this.config.enableMobileOptimization) {
+        this.mobileOptimizer = MobileOptimizer.getInstance();
+        console.log('✅ Mobile Optimizer initialized');
+      }
+
+      if (this.config.enablePerformanceOptimization) {
+        this.performanceManager = PerformanceManager.getInstance();
+        console.log('✅ Performance Manager initialized');
+      }
+
+      if (this.config.enableMemoryOptimization) {
+        this.memoryManager = MemoryManager.getInstance();
+        console.log('✅ Memory Manager initialized');
+      }
+
+      if (this.config.enableAssetOptimization) {
+        this.assetManager = AssetManager.getInstance();
+        console.log('✅ Asset Manager initialized');
+      }
+
+      if (this.config.enableBatteryOptimization) {
+        this.batteryOptimizer = BatteryOptimizer.getInstance();
+        console.log('✅ Battery Optimizer initialized');
+      }
+
+      // Object pools and LOD don't need initialization (they're singletons)
+      this.objectPoolManager = ObjectPoolManager.getInstance();
+      this.lodSystem = LODSystem.getInstance();
+      
+      console.log('✅ Object Pool Manager available');
+      console.log('✅ LOD System available');
+
+      this.setupOptimizationMonitoring();
+      this.initialized = true;
+      
+      console.log('🎯 All optimization systems initialized successfully');
+      
+    } catch (error) {
+      console.error('❌ Failed to initialize optimization systems:', error);
+      throw error;
+    }
+  }
+
+  private setupOptimizationMonitoring(): void {
+    if (!this.config.enableAutoOptimization) return;
+
+    setInterval(() => {
+      this.performOptimizationUpdate();
+    }, this.optimizationUpdateInterval);
+  }
+
+  private performOptimizationUpdate(): void {
+    const now = Date.now();
+    if (now - this.lastOptimizationUpdate < this.optimizationUpdateInterval) {
+      return;
+    }
+
+    this.lastOptimizationUpdate = now;
+
+    try {
+      // Get current system states
+      const report = this.generateOptimizationReport();
+      
+      // Apply automatic optimizations
+      this.applyAutomaticOptimizations(report);
+      
+      // Notify listeners
+      this.reportCallbacks.forEach(callback => callback(report));
+      
+    } catch (error) {
+      console.warn('Optimization update failed:', error);
+    }
+  }
+
+  private applyAutomaticOptimizations(report: OptimizationReport): void {
+    if (!this.config.enableAutoOptimization) return;
+
+    // Performance-based optimizations
+    if (this.performanceManager && report.performance) {
+      if (report.performance.averageFPS < 30) {
+        console.log('⚡ Low performance detected, applying optimizations...');
+        this.performanceManager.forceLowPerformanceMode();
+      } else if (report.performance.averageFPS > 55) {
+        console.log('🎮 Good performance detected, potentially increasing quality...');
+        this.performanceManager.resetPerformanceMode();
+      }
+    }
+
+    // Memory-based optimizations
+    if (this.memoryManager && report.memory) {
+      const memoryEfficiency = this.memoryManager.getMemoryEfficiency();
+      if (memoryEfficiency < 0.7) {
+        console.log('💾 Low memory efficiency detected, performing cleanup...');
+        this.memoryManager.triggerMemoryCleanup();
+        this.objectPoolManager?.optimizeAll();
+      }
+    }
+
+    // Battery-based optimizations
+    if (this.batteryOptimizer && report.battery) {
+      if (report.battery.level < 0.2 && !report.battery.charging) {
+        console.log('🔋 Low battery detected, enabling power saving mode...');
+        this.batteryOptimizer.enablePowerSavingMode();
+      }
+    }
+
+    // Mobile-specific optimizations
+    if (this.mobileOptimizer && report.mobile) {
+      if (report.mobile.isMobile && report.mobile.performanceProfile === 'mobile_low') {
+        console.log('📱 Mobile device detected, applying mobile optimizations...');
+        // Mobile-specific optimizations would be applied here
+      }
+    }
+  }
+
+  public generateOptimizationReport(): OptimizationReport {
+    const report: OptimizationReport = {
+      timestamp: Date.now(),
+      performance: null,
+      memory: null,
+      objectPooling: null,
+      lod: null,
+      mobile: null,
+      browser: null,
+      assets: null,
+      battery: null,
+      recommendations: [],
+      overallScore: 0
+    };
+
+    try {
+      // Collect data from each system
+      if (this.performanceManager) {
+        report.performance = {
+          currentFPS: this.performanceManager.getMetrics().fps,
+          averageFPS: this.performanceManager.getAverageFPS(),
+          currentLevel: this.performanceManager.getCurrentLevel(),
+          frameTime: this.performanceManager.getMetrics().frameTime,
+          memoryUsage: this.performanceManager.getMetrics().memoryUsage
+        };
+      }
+
+      if (this.memoryManager) {
+        report.memory = {
+          efficiency: this.memoryManager.getMemoryEfficiency(),
+          usedHeap: this.memoryManager.getMemoryStats().usedHeap,
+          trend: this.memoryManager.getMemoryTrend(),
+          allocations: this.memoryManager.getMemoryProfile().totalAllocations
+        };
+      }
+
+      if (this.objectPoolManager) {
+        report.objectPooling = this.objectPoolManager.getGlobalMetrics();
+      }
+
+      if (this.lodSystem) {
+        report.lod = this.lodSystem.getStatistics();
+      }
+
+      if (this.mobileOptimizer) {
+        report.mobile = {
+          deviceInfo: this.mobileOptimizer.getDeviceInfo(),
+          performanceProfile: this.mobileOptimizer.getPerformanceProfile(),
+          isMobileOptimized: this.mobileOptimizer.isMobileOptimized()
+        };
+      }
+
+      if (this.browserCompatibility) {
+        report.browser = {
+          compatibilityLevel: this.browserCompatibility.getSettings(),
+          capabilities: this.browserCompatibility.getCapabilities(),
+          shouldUseCanvasFallback: this.browserCompatibility.shouldUseCanvasFallback()
+        };
+      }
+
+      if (this.assetManager) {
+        report.assets = this.assetManager.getCacheStatistics();
+      }
+
+      if (this.batteryOptimizer) {
+        report.battery = {
+          level: this.batteryOptimizer.getBatteryInfo().level,
+          charging: this.batteryOptimizer.getBatteryInfo().charging,
+          profile: this.batteryOptimizer.getCurrentProfile(),
+          estimatedLife: this.batteryOptimizer.getEstimatedBatteryLife()
+        };
+      }
+
+      // Generate recommendations
+      report.recommendations = this.generateRecommendations(report);
+      
+      // Calculate overall score
+      report.overallScore = this.calculateOverallScore(report);
+
+    } catch (error) {
+      console.warn('Failed to generate optimization report:', error);
+    }
+
+    return report;
+  }
+
+  private generateRecommendations(report: OptimizationReport): string[] {
+    const recommendations: string[] = [];
+
+    // Performance recommendations
+    if (report.performance && report.performance.averageFPS < 45) {
+      recommendations.push('Consider reducing graphics quality or enable performance mode');
+    }
+
+    // Memory recommendations
+    if (report.memory && report.memory.efficiency < 0.6) {
+      recommendations.push('Memory usage is high - consider clearing caches or reducing object pooling');
+    }
+
+    // Battery recommendations
+    if (report.battery && report.battery.level < 0.3 && !report.battery.charging) {
+      recommendations.push('Low battery detected - enable power saving mode for better battery life');
+    }
+
+    // Mobile recommendations
+    if (report.mobile && report.mobile.isMobileOptimized && report.mobile.performanceProfile === 'mobile_low') {
+      recommendations.push('Mobile device detected - consider enabling mobile-specific optimizations');
+    }
+
+    // Browser recommendations
+    if (report.browser && report.browser.shouldUseCanvasFallback) {
+      recommendations.push('Browser compatibility issues detected - falling back to Canvas rendering');
+    }
+
+    return recommendations;
+  }
+
+  private calculateOverallScore(report: OptimizationReport): number {
+    let totalScore = 0;
+    let scoreCount = 0;
+
+    // Performance score (0-100)
+    if (report.performance) {
+      const fpsScore = Math.min(report.performance.averageFPS / 60 * 100, 100);
+      totalScore += fpsScore;
+      scoreCount++;
+    }
+
+    // Memory score (0-100)
+    if (report.memory) {
+      const memoryScore = report.memory.efficiency * 100;
+      totalScore += memoryScore;
+      scoreCount++;
+    }
+
+    // Object pooling score (0-100)
+    if (report.objectPooling) {
+      const poolingScore = (report.objectPooling.averageEfficiency || 0) * 100;
+      totalScore += poolingScore;
+      scoreCount++;
+    }
+
+    return scoreCount > 0 ? totalScore / scoreCount : 0;
+  }
+
+  // Public API methods for external systems
+  public startFrame(): number | null {
+    return this.performanceManager?.startFrame() || null;
+  }
+
+  public endFrame(startTime: number, renderTime: number = 0): void {
+    if (this.performanceManager) {
+      this.performanceManager.endFrame(startTime, renderTime);
+    }
+  }
+
+  public getProjectilePool() {
+    return this.objectPoolManager?.getProjectilePool();
+  }
+
+  public getParticlePool() {
+    return this.objectPoolManager?.getParticlePool();
+  }
+
+  public trackMemory(id: string, size: number, type: string): void {
+    this.memoryManager?.trackAllocation(id, size, type);
+  }
+
+  public untrackMemory(id: string): void {
+    this.memoryManager?.untrackAllocation(id);
+  }
+
+  public registerLODObject(id: string, position: { x: number; y: number; z: number }): void {
+    this.lodSystem?.registerObject(id, position);
+  }
+
+  public updateCamera(camera: any): void {
+    this.lodSystem?.updateCamera(camera);
+  }
+
+  public handleTouchStart(event: TouchEvent): void {
+    this.mobileOptimizer?.handleTouchStart(event);
+  }
+
+  public handleTouchMove(event: TouchEvent): void {
+    this.mobileOptimizer?.handleTouchMove(event);
+  }
+
+  public handleTouchEnd(event: TouchEvent): void {
+    this.mobileOptimizer?.handleTouchEnd(event);
+  }
+
+  public initializeWebGL(options?: any): any {
+    return this.browserCompatibility?.initializeWebGL(options);
+  }
+
+  public handleAudioAutoplay(): Promise<void> {
+    return this.browserCompatibility?.handleAudioAutoplay() || Promise.resolve();
+  }
+
+  public registerAsset(id: string, url: string, type: string, options?: any): void {
+    this.assetManager?.registerAsset(id, url, type as any, options);
+  }
+
+  public async loadAsset(id: string): Promise<any> {
+    return this.assetManager?.loadAsset(id) || Promise.resolve(null);
+  }
+
+  // Configuration and settings
+  public getConfig(): OptimizationConfig {
+    return { ...this.config };
+  }
+
+  public updateConfig(updates: Partial<OptimizationConfig>): void {
+    this.config = { ...this.config, ...updates };
+    
+    // Re-initialize if necessary
+    if (updates.enablePerformanceOptimization !== undefined ||
+        updates.enableMemoryOptimization !== undefined ||
+        updates.enableMobileOptimization !== undefined ||
+        updates.enableBrowserCompatibility !== undefined ||
+        updates.enableAssetOptimization !== undefined ||
+        updates.enableBatteryOptimization !== undefined) {
+      this.initialized = false;
+      this.initialize();
+    }
+  }
+
+  public onReport(callback: (report: OptimizationReport) => void): void {
+    this.reportCallbacks.push(callback);
+  }
+
+  public getOptimizationSummary(): string {
+    const report = this.generateOptimizationReport();
+    return `Optimization Score: ${report.overallScore.toFixed(1)}/100 | FPS: ${report.performance?.averageFPS?.toFixed(1) || 'N/A'} | Memory: ${report.memory?.efficiency ? (report.memory.efficiency * 100).toFixed(1) + '%' : 'N/A'} | Battery: ${report.battery?.level ? (report.battery.level * 100).toFixed(0) + '%' : 'N/A'}`;
+  }
+
+  public dispose(): void {
+    this.performanceManager = null;
+    this.objectPoolManager = null;
+    this.memoryManager = null;
+    this.lodSystem = null;
+    this.mobileOptimizer = null;
+    this.browserCompatibility = null;
+    this.assetManager = null;
+    this.batteryOptimizer = null;
+    
+    this.reportCallbacks.length = 0;
+    this.initialized = false;
+  }
+}

@@ -1,0 +1,357 @@
+/**
+ * Memory Manager - Advanced memory management and garbage collection optimization
+ * Provides memory pooling, tracking, and optimization features for the game
+ */
+
+export interface MemoryStats {
+  usedHeap: number;
+  totalHeap: number;
+  heapLimit: number;
+  external: number;
+  arrayBuffers: number;
+}
+
+export interface MemoryAllocation {
+  id: string;
+  size: number;
+  type: string;
+  timestamp: number;
+  stackTrace?: string;
+}
+
+export interface MemoryProfile {
+  totalAllocations: number;
+  totalSize: number;
+  allocationsByType: Map<string, { count: number; size: number }>;
+  largestAllocations: MemoryAllocation[];
+  memoryLeaks: MemoryAllocation[];
+}
+
+export class MemoryManager {
+  private static instance: MemoryManager;
+  
+  private allocations: Map<string, MemoryAllocation> = new Map();
+  private memoryPools: Map<string, any[]> = new Map();
+  private lastGCStats: any = null;
+  private gcOptimizationEnabled: boolean = true;
+  private memoryTrackingEnabled: boolean = true;
+  private leakDetectionEnabled: boolean = true;
+  
+  private heapSizeHistory: number[] = [];
+  private maxHistoryLength: number = 100;
+  private criticalMemoryThreshold: number = 0.8; // 80% of heap limit
+
+  private constructor() {
+    this.initializeMemoryTracking();
+  }
+
+  public static getInstance(): MemoryManager {
+    if (!MemoryManager.instance) {
+      MemoryManager.instance = new MemoryManager();
+    }
+    return MemoryManager.instance;
+  }
+
+  private initializeMemoryTracking(): void {
+    if (this.memoryTrackingEnabled) {
+      // Set up periodic memory monitoring
+      setInterval(() => {
+        this.monitorMemoryUsage();
+      }, 5000);
+
+      // Force garbage collection when possible
+      setInterval(() => {
+        if (this.gcOptimizationEnabled) {
+          this.requestGarbageCollection();
+        }
+      }, 10000);
+    }
+  }
+
+  public trackAllocation(id: string, size: number, type: string): void {
+    if (!this.memoryTrackingEnabled) return;
+
+    const allocation: MemoryAllocation = {
+      id,
+      size,
+      type,
+      timestamp: Date.now(),
+      stackTrace: this.leakDetectionEnabled ? this.getStackTrace() : undefined
+    };
+
+    this.allocations.set(id, allocation);
+  }
+
+  public untrackAllocation(id: string): boolean {
+    if (!this.memoryTrackingEnabled) return false;
+
+    return this.allocations.delete(id);
+  }
+
+  private getStackTrace(): string {
+    try {
+      throw new Error('Stack trace for memory tracking');
+    } catch (error) {
+      return error.stack || 'No stack trace available';
+    }
+  }
+
+  public getMemoryStats(): MemoryStats {
+    if (performance.memory) {
+      return {
+        usedHeap: performance.memory.usedJSHeapSize,
+        totalHeap: performance.memory.totalJSHeapSize,
+        heapLimit: performance.memory.jsHeapSizeLimit,
+        external: performance.memory.totalJSHeapSize - performance.memory.usedJSHeapSize,
+        arrayBuffers: 0 // Not available in browser
+      };
+    }
+
+    // Fallback for browsers that don't support memory API
+    return {
+      usedHeap: 0,
+      totalHeap: 0,
+      heapLimit: 0,
+      external: 0,
+      arrayBuffers: 0
+    };
+  }
+
+  public getMemoryProfile(): MemoryProfile {
+    if (!this.memoryTrackingEnabled) {
+      return {
+        totalAllocations: 0,
+        totalSize: 0,
+        allocationsByType: new Map(),
+        largestAllocations: [],
+        memoryLeaks: []
+      };
+    }
+
+    const allocationsByType = new Map<string, { count: number; size: number }>();
+    let totalSize = 0;
+
+    // Group allocations by type
+    this.allocations.forEach(allocation => {
+      totalSize += allocation.size;
+      
+      if (!allocationsByType.has(allocation.type)) {
+        allocationsByType.set(allocation.type, { count: 0, size: 0 });
+      }
+      
+      const typeData = allocationsByType.get(allocation.type)!;
+      typeData.count++;
+      typeData.size += allocation.size;
+    });
+
+    // Find largest allocations
+    const largestAllocations = Array.from(this.allocations.values())
+      .sort((a, b) => b.size - a.size)
+      .slice(0, 10);
+
+    // Find potential memory leaks (old allocations that haven't been freed)
+    const now = Date.now();
+    const memoryLeaks = Array.from(this.allocations.values())
+      .filter(allocation => now - allocation.timestamp > 300000) // 5 minutes
+      .sort((a, b) => b.size - a.size);
+
+    return {
+      totalAllocations: this.allocations.size,
+      totalSize,
+      allocationsByType,
+      largestAllocations,
+      memoryLeaks
+    };
+  }
+
+  private monitorMemoryUsage(): void {
+    const stats = this.getMemoryStats();
+    
+    // Add to history
+    this.heapSizeHistory.push(stats.usedHeap);
+    if (this.heapSizeHistory.length > this.maxHistoryLength) {
+      this.heapSizeHistory.shift();
+    }
+
+    // Check for high memory usage
+    const usageRatio = stats.usedHeap / stats.heapLimit;
+    if (usageRatio > this.criticalMemoryThreshold) {
+      console.warn(`High memory usage detected: ${(usageRatio * 100).toFixed(1)}% (${(stats.usedHeap / (1024 * 1024)).toFixed(1)}MB)`);
+      this.triggerMemoryCleanup();
+    }
+
+    // Store last GC stats
+    this.lastGCStats = { ...stats, timestamp: Date.now() };
+  }
+
+  public triggerMemoryCleanup(): void {
+    console.log('Performing memory cleanup...');
+    
+    // Clear unused memory pools
+    this.cleanupMemoryPools();
+    
+    // Request garbage collection
+    this.requestGarbageCollection();
+    
+    // Force cleanup of temporary objects
+    this.cleanupTempObjects();
+  }
+
+  private requestGarbageCollection(): void {
+    if ('gc' in window && typeof (window as any).gc === 'function') {
+      try {
+        (window as any).gc();
+        console.log('Manual garbage collection triggered');
+      } catch (error) {
+        console.warn('Failed to trigger garbage collection:', error);
+      }
+    } else {
+      // Force garbage collection through various methods
+      this.forceGC();
+    }
+  }
+
+  private forceGC(): void {
+    // Create temporary objects to encourage garbage collection
+    const tempArray = new Array(100000).fill(null);
+    tempArray.length = 0;
+    
+    // Trigger memory pressure
+    if ('memoryPressureNotification' in window) {
+      window.dispatchEvent(new Event('memorypressure'));
+    }
+  }
+
+  private cleanupTempObjects(): void {
+    // Clear temporary arrays and objects
+    // This is a placeholder for game-specific temporary object cleanup
+    console.log('Cleaning up temporary objects...');
+  }
+
+  private cleanupMemoryPools(): void {
+    this.memoryPools.forEach((pool, name) => {
+      if (pool.length > 1000) { // If pool is too large
+        console.log(`Cleaning up memory pool: ${name} (${pool.length} objects)`);
+        // Keep only the most recent 500 objects
+        this.memoryPools.set(name, pool.slice(-500));
+      }
+    });
+  }
+
+  public createMemoryPool<T>(name: string): T[] {
+    if (!this.memoryPools.has(name)) {
+      this.memoryPools.set(name, []);
+    }
+    return this.memoryPools.get(name)!;
+  }
+
+  public getMemoryPool<T>(name: string): T[] | null {
+    return this.memoryPools.get(name) || null;
+  }
+
+  public clearMemoryPool(name: string): boolean {
+    const pool = this.memoryPools.get(name);
+    if (pool) {
+      pool.length = 0; // Clear the array
+      return true;
+    }
+    return false;
+  }
+
+  public getMemoryEfficiency(): number {
+    const profile = this.getMemoryProfile();
+    const stats = this.getMemoryStats();
+    
+    if (stats.heapLimit === 0) return 1; // Unknown, assume optimal
+    
+    const usedRatio = stats.usedHeap / stats.heapLimit;
+    const allocationEfficiency = profile.totalSize > 0 ? 
+      (profile.totalAllocations / profile.totalSize) * 1000 : 1; // Arbitrary calculation
+    
+    // Combine efficiency metrics (0-1, where 1 is optimal)
+    return Math.max(0, Math.min(1, (1 - usedRatio) * 0.7 + (allocationEfficiency / 1000) * 0.3));
+  }
+
+  public getMemoryTrend(): 'increasing' | 'decreasing' | 'stable' {
+    if (this.heapSizeHistory.length < 10) return 'stable';
+    
+    const recent = this.heapSizeHistory.slice(-10);
+    const older = this.heapSizeHistory.slice(-20, -10);
+    
+    const recentAvg = recent.reduce((a, b) => a + b) / recent.length;
+    const olderAvg = older.reduce((a, b) => a + b) / older.length;
+    
+    const difference = recentAvg - olderAvg;
+    const threshold = stats.heapLimit * 0.01; // 1% of heap limit
+    
+    if (difference > threshold) return 'increasing';
+    if (difference < -threshold) return 'decreasing';
+    return 'stable';
+  }
+
+  public setMemoryTracking(enabled: boolean): void {
+    this.memoryTrackingEnabled = enabled;
+  }
+
+  public setLeakDetection(enabled: boolean): void {
+    this.leakDetectionEnabled = enabled;
+  }
+
+  public setGCOptimization(enabled: boolean): void {
+    this.gcOptimizationEnabled = enabled;
+  }
+
+  public getMemorySummary(): string {
+    const stats = this.getMemoryStats();
+    const profile = this.getMemoryProfile();
+    const efficiency = this.getMemoryEfficiency();
+    const trend = this.getMemoryTrend();
+    
+    const usedMB = (stats.usedHeap / (1024 * 1024)).toFixed(1);
+    const limitMB = (stats.heapLimit / (1024 * 1024)).toFixed(1);
+    const percentage = ((stats.usedHeap / stats.heapLimit) * 100).toFixed(1);
+    
+    return `Memory: ${usedMB}/${limitMB}MB (${percentage}%) | Allocations: ${profile.totalAllocations} | Efficiency: ${(efficiency * 100).toFixed(1)}% | Trend: ${trend}`;
+  }
+
+  public forceMemoryCleanup(): void {
+    console.log('Forcing memory cleanup...');
+    
+    // Clear all tracking data temporarily to encourage GC
+    const tempAllocations = new Map(this.allocations);
+    this.allocations.clear();
+    
+    // Trigger cleanup
+    this.triggerMemoryCleanup();
+    
+    // Restore tracking
+    setTimeout(() => {
+      this.allocations = tempAllocations;
+    }, 1000);
+  }
+
+  public getOptimizedAllocationSize(originalSize: number): number {
+    // Round up to nearest power of 2 for better memory alignment
+    let optimizedSize = 1;
+    while (optimizedSize < originalSize) {
+      optimizedSize *= 2;
+    }
+    return optimizedSize;
+  }
+
+  public preloadAssets(assetNames: string[]): void {
+    console.log(`Preloading ${assetNames.length} assets for memory optimization...`);
+    
+    // This would integrate with the game's asset loading system
+    // For now, just log the intent
+    assetNames.forEach(name => {
+      console.log(`Asset preloaded: ${name}`);
+    });
+  }
+
+  public dispose(): void {
+    this.allocations.clear();
+    this.memoryPools.clear();
+    this.heapSizeHistory.length = 0;
+  }
+}

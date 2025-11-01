@@ -1,0 +1,772 @@
+import { Logger } from '@utils/Logging';
+import { Vector2D, Vector3D, Rectangle, Color } from '@types/index';
+
+/**
+ * Base renderer interface
+ */
+export interface Renderer {
+  initialize(canvas: HTMLCanvasElement): Promise<void>;
+  clear(): void;
+  render(): void;
+  resize(width: number, height: number): void;
+  getContext(): CanvasRenderingContext2D;
+}
+
+/**
+ * 2D Canvas renderer implementation
+ */
+export class Canvas2DRenderer implements Renderer {
+  protected canvas: HTMLCanvasElement;
+  protected ctx: CanvasRenderingContext2D;
+  protected logger: Logger;
+  protected width: number = 0;
+  protected height: number = 0;
+  protected dpr: number = 1;
+
+  constructor() {
+    this.logger = Logger.getInstance();
+  }
+
+  public async initialize(canvas: HTMLCanvasElement): Promise<void> {
+    this.canvas = canvas;
+    const context = canvas.getContext('2d');
+    
+    if (!context) {
+      throw new Error('Failed to get 2D rendering context');
+    }
+    
+    this.ctx = context;
+    this.setupCanvas();
+    this.logger.info('Canvas2D renderer initialized');
+  }
+
+  public clear(): void {
+    this.ctx.clearRect(0, 0, this.width, this.height);
+  }
+
+  public render(): void {
+    // Placeholder - actual rendering logic in subclasses
+  }
+
+  public resize(width: number, height: number): void {
+    this.width = width;
+    this.height = height;
+    this.setupCanvas();
+  }
+
+  public getContext(): CanvasRenderingContext2D {
+    return this.ctx;
+  }
+
+  public getWidth(): number {
+    return this.width;
+  }
+
+  public getHeight(): number {
+    return this.height;
+  }
+
+  private setupCanvas(): void {
+    this.dpr = window.devicePixelRatio || 1;
+    
+    // Set the internal size to account for device pixel ratio
+    this.canvas.width = this.width * this.dpr;
+    this.canvas.height = this.height * this.dpr;
+    
+    // Scale the context
+    this.ctx.scale(this.dpr, this.dpr);
+    
+    // Set the actual size
+    this.canvas.style.width = this.width + 'px';
+    this.canvas.style.height = this.height + 'px';
+    
+    // Configure context properties
+    this.ctx.imageSmoothingEnabled = true;
+    this.ctx.imageSmoothingQuality = 'high';
+  }
+}
+
+/**
+ * Texture management system
+ */
+export class TextureManager {
+  private static instance: TextureManager;
+  private textures: Map<string, Texture> = new Map();
+  private loadingQueue: string[] = [];
+  private logger: Logger;
+
+  private constructor() {
+    this.logger = Logger.getInstance();
+  }
+
+  public static getInstance(): TextureManager {
+    if (!TextureManager.instance) {
+      TextureManager.instance = new TextureManager();
+    }
+    return TextureManager.instance;
+  }
+
+  /**
+   * Load a texture from URL
+   */
+  public async loadTexture(id: string, url: string): Promise<Texture> {
+    if (this.textures.has(id)) {
+      return this.textures.get(id)!;
+    }
+
+    this.logger.debug(`Loading texture: ${id} from ${url}`);
+
+    const texture = new Texture();
+    
+    try {
+      await texture.loadFromUrl(url);
+      this.textures.set(id, texture);
+      this.logger.debug(`Texture loaded successfully: ${id}`);
+      return texture;
+    } catch (error) {
+      this.logger.error(`Failed to load texture: ${id}`, error);
+      // Return a placeholder texture
+      const placeholder = this.createPlaceholderTexture();
+      this.textures.set(id, placeholder);
+      return placeholder;
+    }
+  }
+
+  /**
+   * Get a texture by ID
+   */
+  public getTexture(id: string): Texture | null {
+    return this.textures.get(id) || null;
+  }
+
+  /**
+   * Check if texture is loaded
+   */
+  public isTextureLoaded(id: string): boolean {
+    const texture = this.textures.get(id);
+    return texture ? texture.isLoaded() : false;
+  }
+
+  /**
+   * Create a placeholder texture
+   */
+  private createPlaceholderTexture(): Texture {
+    const canvas = document.createElement('canvas');
+    canvas.width = 32;
+    canvas.height = 32;
+    const ctx = canvas.getContext('2d')!;
+    
+    // Draw checkerboard pattern
+    ctx.fillStyle = '#333';
+    ctx.fillRect(0, 0, 32, 32);
+    ctx.fillStyle = '#666';
+    ctx.fillRect(0, 0, 16, 16);
+    ctx.fillRect(16, 16, 16, 16);
+    
+    const texture = new Texture();
+    texture.setImageData(canvas);
+    
+    return texture;
+  }
+
+  /**
+   * Preload multiple textures
+   */
+  public async preloadTextures(textures: { id: string; url: string }[]): Promise<void> {
+    this.logger.info(`Preloading ${textures.length} textures...`);
+    
+    const promises = textures.map(({ id, url }) => this.loadTexture(id, url));
+    
+    try {
+      await Promise.all(promises);
+      this.logger.info('All textures preloaded successfully');
+    } catch (error) {
+      this.logger.warn('Some textures failed to preload', error);
+    }
+  }
+
+  /**
+   * Clear all loaded textures
+   */
+  public clear(): void {
+    this.textures.clear();
+    this.loadingQueue.length = 0;
+  }
+}
+
+/**
+ * Texture class for handling image data
+ */
+export class Texture {
+  private image: HTMLImageElement | null = null;
+  private canvas: HTMLCanvasElement | null = null;
+  private width: number = 0;
+  private height: number = 0;
+  private loaded: boolean = false;
+
+  constructor() {}
+
+  /**
+   * Load texture from URL
+   */
+  public async loadFromUrl(url: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      
+      image.onload = () => {
+        this.image = image;
+        this.width = image.width;
+        this.height = image.height;
+        this.loaded = true;
+        resolve();
+      };
+      
+      image.onerror = () => {
+        reject(new Error(`Failed to load texture from ${url}`));
+      };
+      
+      image.src = url;
+    });
+  }
+
+  /**
+   * Set image data from canvas
+   */
+  public setImageData(canvas: HTMLCanvasElement): void {
+    this.canvas = canvas;
+    this.width = canvas.width;
+    this.height = canvas.height;
+    this.loaded = true;
+  }
+
+  /**
+   * Get texture width
+   */
+  public getWidth(): number {
+    return this.width;
+  }
+
+  /**
+   * Get texture height
+   */
+  public getHeight(): number {
+    return this.height;
+  }
+
+  /**
+   * Check if texture is loaded
+   */
+  public isLoaded(): boolean {
+    return this.loaded;
+  }
+
+  /**
+   * Get the image element
+   */
+  public getImage(): HTMLImageElement | null {
+    return this.image;
+  }
+
+  /**
+   * Get the canvas element
+   */
+  public getCanvas(): HTMLCanvasElement | null {
+    return this.canvas;
+  }
+
+  /**
+   * Draw texture to context
+   */
+  public draw(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    width?: number,
+    height?: number
+  ): void {
+    if (!this.loaded) return;
+
+    const drawWidth = width || this.width;
+    const drawHeight = height || this.height;
+
+    if (this.image) {
+      ctx.drawImage(this.image, x, y, drawWidth, drawHeight);
+    } else if (this.canvas) {
+      ctx.drawImage(this.canvas, x, y, drawWidth, drawHeight);
+    }
+  }
+
+  /**
+   * Draw texture with source and destination rectangles
+   */
+  public drawSubRect(
+    ctx: CanvasRenderingContext2D,
+    sourceRect: Rectangle,
+    destRect: Rectangle
+  ): void {
+    if (!this.loaded) return;
+
+    if (this.image) {
+      ctx.drawImage(
+        this.image,
+        sourceRect.x, sourceRect.y, sourceRect.width, sourceRect.height,
+        destRect.x, destRect.y, destRect.width, destRect.height
+      );
+    } else if (this.canvas) {
+      ctx.drawImage(
+        this.canvas,
+        sourceRect.x, sourceRect.y, sourceRect.width, sourceRect.height,
+        destRect.x, destRect.y, destRect.width, destRect.height
+      );
+    }
+  }
+}
+
+/**
+ * Camera system for viewport management
+ */
+export class Camera2D {
+  private position: Vector2D = { x: 0, y: 0 };
+  private zoom: number = 1.0;
+  private rotation: number = 0.0;
+  private bounds: Rectangle = { x: 0, y: 0, width: Infinity, height: Infinity };
+  private followTarget: Vector2D | null = null;
+  private followSpeed: number = 5.0;
+
+  constructor() {}
+
+  /**
+   * Set camera position
+   */
+  public setPosition(x: number, y: number): void {
+    this.position.x = x;
+    this.position.y = y;
+  }
+
+  /**
+   * Get camera position
+   */
+  public getPosition(): Vector2D {
+    return { ...this.position };
+  }
+
+  /**
+   * Set camera zoom
+   */
+  public setZoom(zoom: number): void {
+    this.zoom = Math.max(0.1, Math.min(10.0, zoom));
+  }
+
+  /**
+   * Get camera zoom
+   */
+  public getZoom(): number {
+    return this.zoom;
+  }
+
+  /**
+   * Set camera rotation (in radians)
+   */
+  public setRotation(radians: number): void {
+    this.rotation = radians;
+  }
+
+  /**
+   * Get camera rotation
+   */
+  public getRotation(): number {
+    return this.rotation;
+  }
+
+  /**
+   * Set camera bounds
+   */
+  public setBounds(bounds: Rectangle): void {
+    this.bounds = bounds;
+  }
+
+  /**
+   * Set target for camera to follow
+   */
+  public setFollowTarget(target: Vector2D): void {
+    this.followTarget = target;
+  }
+
+  /**
+   * Update camera (call this in game update loop)
+   */
+  public update(deltaTime: number): void {
+    if (this.followTarget) {
+      // Smoothly follow the target
+      const dx = this.followTarget.x - this.position.x;
+      const dy = this.followTarget.y - this.position.y;
+      
+      this.position.x += dx * this.followSpeed * deltaTime;
+      this.position.y += dy * this.followSpeed * deltaTime;
+    }
+
+    // Clamp to bounds
+    this.position.x = Math.max(this.bounds.x, Math.min(this.bounds.width, this.position.x));
+    this.position.y = Math.max(this.bounds.y, Math.min(this.bounds.height, this.position.y));
+  }
+
+  /**
+   * Apply camera transformations to context
+   */
+  public applyTransform(ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number): void {
+    ctx.save();
+    
+    // Translate to center of screen
+    ctx.translate(canvasWidth / 2, canvasHeight / 2);
+    
+    // Apply zoom
+    ctx.scale(this.zoom, this.zoom);
+    
+    // Apply rotation
+    if (this.rotation !== 0) {
+      ctx.rotate(this.rotation);
+    }
+    
+    // Translate to camera position
+    ctx.translate(-this.position.x, -this.position.y);
+  }
+
+  /**
+   * Restore context transformations
+   */
+  public restoreTransform(ctx: CanvasRenderingContext2D): void {
+    ctx.restore();
+  }
+
+  /**
+   * Convert screen coordinates to world coordinates
+   */
+  public screenToWorld(x: number, y: number, canvasWidth: number, canvasHeight: number): Vector2D {
+    // Apply inverse transformations in reverse order
+    let worldX = x - canvasWidth / 2;
+    let worldY = y - canvasHeight / 2;
+    
+    // Remove zoom
+    worldX /= this.zoom;
+    worldY /= this.zoom;
+    
+    // Remove rotation
+    if (this.rotation !== 0) {
+      const cos = Math.cos(-this.rotation);
+      const sin = Math.sin(-this.rotation);
+      const rotatedX = worldX * cos - worldY * sin;
+      const rotatedY = worldX * sin + worldY * cos;
+      worldX = rotatedX;
+      worldY = rotatedY;
+    }
+    
+    // Add camera position
+    worldX += this.position.x;
+    worldY += this.position.y;
+    
+    return { x: worldX, y: worldY };
+  }
+
+  /**
+   * Convert world coordinates to screen coordinates
+   */
+  public worldToScreen(x: number, y: number, canvasWidth: number, canvasHeight: number): Vector2D {
+    // Apply camera transformations
+    let screenX = x - this.position.x;
+    let screenY = y - this.position.y;
+    
+    // Apply rotation
+    if (this.rotation !== 0) {
+      const cos = Math.cos(this.rotation);
+      const sin = Math.sin(this.rotation);
+      const rotatedX = screenX * cos - screenY * sin;
+      const rotatedY = screenX * sin + screenY * cos;
+      screenX = rotatedX;
+      screenY = rotatedY;
+    }
+    
+    // Apply zoom
+    screenX *= this.zoom;
+    screenY *= this.zoom;
+    
+    // Translate to center of screen
+    screenX += canvasWidth / 2;
+    screenY += canvasHeight / 2;
+    
+    return { x: screenX, y: screenY };
+  }
+}
+
+/**
+ * Sprite class for rendering textured objects
+ */
+export class Sprite {
+  private texture: Texture | null = null;
+  private position: Vector2D = { x: 0, y: 0 };
+  private size: Vector2D = { x: 0, y: 0 };
+  private rotation: number = 0;
+  private scale: Vector2D = { x: 1, y: 1 };
+  private color: Color = { r: 255, g: 255, b: 255, a: 1 };
+  private visible: boolean = true;
+  private zIndex: number = 0;
+
+  constructor() {}
+
+  /**
+   * Set texture
+   */
+  public setTexture(texture: Texture): void {
+    this.texture = texture;
+    this.size.x = texture.getWidth();
+    this.size.y = texture.getHeight();
+  }
+
+  /**
+   * Get texture
+   */
+  public getTexture(): Texture | null {
+    return this.texture;
+  }
+
+  /**
+   * Set position
+   */
+  public setPosition(x: number, y: number): void {
+    this.position.x = x;
+    this.position.y = y;
+  }
+
+  /**
+   * Get position
+   */
+  public getPosition(): Vector2D {
+    return { ...this.position };
+  }
+
+  /**
+   * Set size
+   */
+  public setSize(width: number, height: number): void {
+    this.size.x = width;
+    this.size.y = height;
+  }
+
+  /**
+   * Get size
+   */
+  public getSize(): Vector2D {
+    return { ...this.size };
+  }
+
+  /**
+   * Set rotation (in radians)
+   */
+  public setRotation(rotation: number): void {
+    this.rotation = rotation;
+  }
+
+  /**
+   * Get rotation
+   */
+  public getRotation(): number {
+    return this.rotation;
+  }
+
+  /**
+   * Set scale
+   */
+  public setScale(x: number, y: number): void {
+    this.scale.x = x;
+    this.scale.y = y;
+  }
+
+  /**
+   * Get scale
+   */
+  public getScale(): Vector2D {
+    return { ...this.scale };
+  }
+
+  /**
+   * Set color
+   */
+  public setColor(color: Color): void {
+    this.color = { ...color };
+  }
+
+  /**
+   * Get color
+   */
+  public getColor(): Color {
+    return { ...this.color };
+  }
+
+  /**
+   * Set visibility
+   */
+  public setVisible(visible: boolean): void {
+    this.visible = visible;
+  }
+
+  /**
+   * Get visibility
+   */
+  public getVisible(): boolean {
+    return this.visible;
+  }
+
+  /**
+   * Set z-index for rendering order
+   */
+  public setZIndex(zIndex: number): void {
+    this.zIndex = zIndex;
+  }
+
+  /**
+   * Get z-index
+   */
+  public getZIndex(): number {
+    return this.zIndex;
+  }
+
+  /**
+   * Render sprite
+   */
+  public render(ctx: CanvasRenderingContext2D, camera?: Camera2D): void {
+    if (!this.visible) return;
+
+    ctx.save();
+
+    // Apply transformations
+    ctx.translate(this.position.x, this.position.y);
+    
+    if (this.rotation !== 0) {
+      ctx.rotate(this.rotation);
+    }
+    
+    ctx.scale(this.scale.x, this.scale.y);
+
+    // Apply color
+    ctx.globalAlpha = this.color.a || 1;
+    ctx.fillStyle = `rgb(${this.color.r}, ${this.color.g}, ${this.color.b})`;
+
+    // Draw texture or colored rectangle
+    if (this.texture && this.texture.isLoaded()) {
+      const width = this.size.x;
+      const height = this.size.y;
+      
+      ctx.drawImage(
+        this.texture.getImage() || this.texture.getCanvas()!,
+        -width / 2, -height / 2,
+        width, height
+      );
+    } else {
+      // Draw placeholder rectangle
+      const width = this.size.x;
+      const height = this.size.y;
+      ctx.fillRect(-width / 2, -height / 2, width, height);
+    }
+
+    ctx.restore();
+  }
+
+  /**
+   * Get bounding box for collision detection
+   */
+  public getBoundingBox(): Rectangle {
+    return {
+      x: this.position.x - this.size.x / 2,
+      y: this.position.y - this.size.y / 2,
+      width: this.size.x,
+      height: this.size.y
+    };
+  }
+}
+
+/**
+ * Particle system for visual effects
+ */
+export class Particle {
+  position: Vector2D;
+  velocity: Vector2D;
+  life: number;
+  maxLife: number;
+  size: number;
+  color: Color;
+  alpha: number;
+
+  constructor() {
+    this.position = { x: 0, y: 0 };
+    this.velocity = { x: 0, y: 0 };
+    this.life = 0;
+    this.maxLife = 1;
+    this.size = 1;
+    this.color = { r: 255, g: 255, b: 255, a: 1 };
+    this.alpha = 1;
+  }
+
+  public update(deltaTime: number): void {
+    this.position.x += this.velocity.x * deltaTime;
+    this.position.y += this.velocity.y * deltaTime;
+    
+    this.life += deltaTime;
+    this.alpha = Math.max(0, 1 - (this.life / this.maxLife));
+  }
+
+  public isDead(): boolean {
+    return this.life >= this.maxLife;
+  }
+
+  public render(ctx: CanvasRenderingContext2D): void {
+    ctx.save();
+    ctx.globalAlpha = this.alpha;
+    ctx.fillStyle = `rgb(${this.color.r}, ${this.color.g}, ${this.color.b})`;
+    ctx.beginPath();
+    ctx.arc(this.position.x, this.position.y, this.size, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+/**
+ * Particle system for managing multiple particles
+ */
+export class ParticleSystem {
+  private particles: Particle[] = [];
+  private maxParticles: number = 1000;
+
+  constructor(maxParticles: number = 1000) {
+    this.maxParticles = maxParticles;
+  }
+
+  public addParticle(particle: Particle): void {
+    if (this.particles.length < this.maxParticles) {
+      this.particles.push(particle);
+    }
+  }
+
+  public update(deltaTime: number): void {
+    // Update all particles
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      const particle = this.particles[i];
+      particle.update(deltaTime);
+      
+      // Remove dead particles
+      if (particle.isDead()) {
+        this.particles.splice(i, 1);
+      }
+    }
+  }
+
+  public render(ctx: CanvasRenderingContext2D): void {
+    this.particles.forEach(particle => particle.render(ctx));
+  }
+
+  public clear(): void {
+    this.particles.length = 0;
+  }
+
+  public getParticleCount(): number {
+    return this.particles.length;
+  }
+}

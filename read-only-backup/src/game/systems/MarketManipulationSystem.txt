@@ -1,0 +1,1624 @@
+/**
+ * Market Manipulation Mechanics System
+ * Allows players to influence market prices through various trading strategies
+ * Implements supply/demand manipulation, market cornering, and economic warfare
+ */
+
+import { TradeGood } from '../models/Market.js';
+import { EconomyType, GovernmentType } from '../models/Galaxy.js';
+
+export interface MarketManipulationAction {
+  id: string;
+  type: ManipulationType;
+  systemId: number;
+  targetGood: TradeGood;
+  
+  // Action details
+  description: string;
+  strategy: string;
+  
+  // Requirements and costs
+  requiredCapital: number;
+  requiredGoods: Map<TradeGood, number>;
+  skillRequirements: {
+    trading: number;
+    economics: number;
+    negotiation: number;
+  };
+  
+  // Execution parameters
+  duration: number; // hours
+  intensity: number; // 0.1 to 1.0
+  areaOfEffect: number; // systems affected
+  
+  // Expected outcomes
+  expectedImpact: {
+    priceChange: number; // percentage
+    volumeChange: number; // percentage
+    stabilityChange: number; // percentage
+  };
+  
+  // Risk factors
+  riskLevel: 'LOW' | 'MEDIUM' | 'HIGH';
+  riskFactors: string[];
+  detectionChance: number; // 0-1
+  legalConsequences?: {
+    fines: number;
+    reputationLoss: number;
+    banDuration?: number;
+  };
+  
+  // Status
+  state: 'PLANNING' | 'EXECUTING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+  progress: number; // 0-1
+  startTime?: number;
+  completionTime?: number;
+}
+
+export enum ManipulationType {
+  // Supply Manipulation
+  STOCKPILE = 'stockpile',           // Buy large quantities to reduce supply
+  DUMP = 'dump',                     // Sell massive quantities to crash prices
+  PRODUCTION_HALT = 'production_halt', // Sabotage production facilities
+  
+  // Demand Manipulation  
+  FOMENT_DEMAND = 'foment_demand',   // Spread rumors to increase demand
+  BOYCOTT = 'boycott',              // Organize buyers to avoid a market
+  MONOPOLY = 'monopoly',            // Attempt to corner the market
+  
+  // Information Warfare
+  DISINFORMATION = 'disinformation', // Spread false market information
+  MARKET_RUMORS = 'market_rumors',   // Start price manipulation rumors
+  AUTHORITY_RUIN = 'authority_ruin', // Undermine market authority
+  
+  // Economic Warfare
+  PRICE_WAR = 'price_war',           // Aggressive competitive pricing
+  RESOURCE_WAR = 'resource_war',     // Control resource supply routes
+  SABOTAGE = 'sabotage',             // Destroy competitor facilities
+  
+  // Sophisticated Strategies
+  ARBITRAGE_SCHEME = 'arbitrage_scheme', // Complex multi-system arbitrage
+  MARKET_CORNERING = 'market_cornering', // Control >80% of supply
+  PUMP_AND_DUMP = 'pump_and_dump',       // Artificial price inflation then dump
+  BEAR_RAID = 'bear_raid'               // Coordinated selling to crash prices
+}
+
+export interface ManipulatorProfile {
+  playerId: string;
+  experience: {
+    totalManipulations: number;
+    successfulManipulations: number;
+    failedManipulations: number;
+    netProfitFromManipulation: number;
+    
+    // Expertise in different types
+    expertise: {
+      supplyManipulation: number;    // 0-1
+      demandManipulation: number;    // 0-1
+      informationWarfare: number;    // 0-1
+      economicWarfare: number;       // 0-1
+      marketCornering: number;       // 0-1
+    };
+  };
+  
+  // Reputation and standing
+  reputation: {
+    overall: number;                 // -100 to 100
+    trading: number;                 // Market manipulation reputation
+    corporate: number;               // Corporate world standing
+    government: number;              // Government relations
+    criminal: number;                // Criminal underworld connections
+  };
+  
+  // Resources and capabilities
+  resources: {
+    availableCapital: number;
+    networkConnections: number;      // 0-1, affects success rates
+    intelligenceNetwork: number;     // 0-1, affects market information
+    legalProtection: number;         // 0-1, reduces consequences
+    legalTroubles: number;           // 0-1, increases consequences
+  };
+  
+  // Track record
+  achievements: {
+    firstManipulation: boolean;
+    marketCornerer: boolean;         // Successfully cornered a market
+    priceCrusher: boolean;           // Caused >50% price drop
+    profitMaster: boolean;           // >1M profit from single manipulation
+    wanted: boolean;                 // Currently wanted by authorities
+  };
+  
+  // Cooldowns and restrictions
+  cooldowns: {
+    lastSuccessfulManipulation: number;
+    lastFailedManipulation: number;
+    governmentAttention: number;     // 0-1, higher = more monitoring
+    systemReputation: Map<number, number>; // systemId -> reputation
+  };
+}
+
+export interface MarketConditions {
+  systemId: number;
+  currentPrice: Map<TradeGood, number>;
+  availableSupply: Map<TradeGood, number>;
+  activeDemand: Map<TradeGood, number>;
+  
+  // Market state
+  priceStability: Map<TradeGood, number>; // 0-1
+  tradeVolume: Map<TradeGood, number>;
+  marketDepth: number; // How resistant to manipulation
+  
+  // External factors
+  governmentType: GovernmentType;
+  economyType: EconomyType;
+  politicalStability: number; // 0-1
+  lawEnforcement: number; // 0-1
+  
+  // Current manipulations
+  activeManipulations: Map<string, MarketManipulationAction>;
+  manipulationIntensity: Map<TradeGood, number>; // 0-1
+  
+  // Market memory
+  lastSignificantEvents: {
+    timestamp: number;
+    type: string;
+    impact: number;
+    description: string;
+  }[];
+}
+
+export interface ManipulationResult {
+  actionId: string;
+  success: boolean;
+  
+  // Actual vs expected outcomes
+  priceChange: number;
+  volumeChange: number;
+  stabilityChange: number;
+  
+  // Financial results
+  profitOrLoss: number;
+  capitalExpended: number;
+  transactionCosts: number;
+  
+  // Reputation effects
+  reputationChange: {
+    overall: number;
+    trading: number;
+    government: number;
+    corporate: number;
+  };
+  
+  // Market effects
+  marketImpact: {
+    affectedSystems: number;
+    totalVolume: number;
+    duration: number; // hours
+  };
+  
+  // Consequences
+  consequences: {
+    legal: {
+      fines: number;
+      reputationDamage: number;
+      legalTroubles: number;
+    };
+    economic: {
+      marketRetaliation: number; // Other traders response
+      supplyChainDisruption: number;
+    };
+    social: {
+      communityReaction: number;
+      mediaAttention: number;
+    };
+  };
+  
+  // Lessons learned
+  analysis: {
+    whatWorked: string[];
+    whatFailed: string[];
+    riskAssessment: string;
+    futureRecommendations: string[];
+  };
+}
+
+export interface ManipulationOpportunity {
+  id: string;
+  type: ManipulationType;
+  
+  // Target
+  systemId: number;
+  systemName: string;
+  targetGood: TradeGood;
+  
+  // Opportunity assessment
+  attractiveness: {
+    profitPotential: number; // 0-1
+    riskLevel: 'LOW' | 'MEDIUM' | 'HIGH';
+    successProbability: number; // 0-1
+    requiredCapital: number;
+    expectedROI: number; // return on investment
+  };
+  
+  // Market conditions
+  marketState: {
+    priceVolatility: number; // Higher = easier to manipulate
+    marketDepth: number; // Lower = easier to manipulate
+    currentManipulationLevel: number;
+    governmentStance: number; // 0-1, higher = more likely to intervene
+  };
+  
+  // Timing factors
+  timing: {
+    urgency: number; // 0-1, how time-sensitive
+    windowDuration: number; // hours available
+    seasonalFactors: number; // Seasonal effects multiplier
+  };
+  
+  // Competitive factors
+  competition: {
+    otherManipulators: number;
+    marketSentinels: number; // Authorities monitoring
+    corporateInterests: number;
+  };
+  
+  // Strategic value
+  strategicImportance: {
+    marketSignificance: number;
+    chainReactionPotential: number;
+    reputationValue: number;
+  };
+}
+
+/**
+ * Market Manipulation System Manager
+ * Core class for managing all market manipulation activities
+ */
+export class MarketManipulationSystem {
+  private activeManipulations: Map<string, MarketManipulationAction>;
+  private completedManipulations: Map<string, ManipulationResult>;
+  private manipulatorProfiles: Map<string, ManipulatorProfile>;
+  private systemMarketConditions: Map<number, MarketConditions>;
+  
+  // Global tracking
+  private manipulationEvents: {
+    priceSpikes: Map<string, { good: TradeGood; magnitude: number; systems: number[] }>;
+    marketInstability: Map<string, { level: number; affectedSystems: Set<number> }>;
+    manipulationDetectionEvents: Array<{
+      timestamp: number;
+      manipulatorId: string;
+      type: ManipulationType;
+      systemId: number;
+      severity: number;
+    }>;
+  };
+  
+  // Configuration
+  private readonly MANIPULATION_COOLDOWN_HOURS = 24;
+  private readonly GOVERNMENT_ATTENTION_THRESHOLD = 0.3;
+  private readonly MARKET_CORNER_THRESHOLD = 0.8; // 80% market control
+  private readonly PRICE_IMPACT_THRESHOLD = 0.5; // 50% price change triggers investigation
+  
+  constructor() {
+    this.activeManipulations = new Map();
+    this.completedManipulations = new Map();
+    this.manipulatorProfiles = new Map();
+    this.systemMarketConditions = new Map();
+    this.manipulationEvents = {
+      priceSpikes: new Map(),
+      marketInstability: new Map(),
+      manipulationDetectionEvents: []
+    };
+  }
+
+  /**
+   * Initialize market conditions for a system
+   */
+  initializeSystemConditions(
+    systemId: number,
+    governmentType: GovernmentType,
+    economyType: EconomyType
+  ): MarketConditions {
+    const conditions: MarketConditions = {
+      systemId,
+      currentPrice: new Map(),
+      availableSupply: new Map(),
+      activeDemand: new Map(),
+      priceStability: new Map(),
+      tradeVolume: new Map(),
+      marketDepth: this.calculateMarketDepth(governmentType, economyType),
+      governmentType,
+      economyType,
+      politicalStability: this.calculatePoliticalStability(governmentType),
+      lawEnforcement: this.calculateLawEnforcement(governmentType, economyType),
+      activeManipulations: new Map(),
+      manipulationIntensity: new Map(),
+      lastSignificantEvents: []
+    };
+
+    // Initialize with reasonable defaults for all trade goods
+    for (const good of Object.values(TradeGood)) {
+      const basePrice = this.getBasePrice(good);
+      conditions.currentPrice.set(good, basePrice);
+      conditions.availableSupply.set(good, 100);
+      conditions.activeDemand.set(good, 80);
+      conditions.priceStability.set(good, 0.7);
+      conditions.tradeVolume.set(good, 50);
+      conditions.manipulationIntensity.set(good, 0);
+    }
+
+    this.systemMarketConditions.set(systemId, conditions);
+    return conditions;
+  }
+
+  /**
+   * Create or get manipulator profile
+   */
+  getOrCreateManipulatorProfile(playerId: string): ManipulatorProfile {
+    let profile = this.manipulatorProfiles.get(playerId);
+    if (!profile) {
+      profile = this.createNewManipulatorProfile(playerId);
+      this.manipulatorProfiles.set(playerId, profile);
+    }
+    return profile;
+  }
+
+  /**
+   * Create new manipulator profile
+   */
+  private createNewManipulatorProfile(playerId: string): ManipulatorProfile {
+    return {
+      playerId,
+      experience: {
+        totalManipulations: 0,
+        successfulManipulations: 0,
+        failedManipulations: 0,
+        netProfitFromManipulation: 0,
+        expertise: {
+          supplyManipulation: 0.1,
+          demandManipulation: 0.1,
+          informationWarfare: 0.1,
+          economicWarfare: 0.1,
+          marketCornering: 0.1
+        }
+      },
+      reputation: {
+        overall: 50,
+        trading: 50,
+        corporate: 50,
+        government: 50,
+        criminal: 0
+      },
+      resources: {
+        availableCapital: 100000,
+        networkConnections: 0.2,
+        intelligenceNetwork: 0.1,
+        legalProtection: 0,
+        legalTroubles: 0
+      },
+      achievements: {
+        firstManipulation: false,
+        marketCornerer: false,
+        priceCrusher: false,
+        profitMaster: false,
+        wanted: false
+      },
+      cooldowns: {
+        lastSuccessfulManipulation: 0,
+        lastFailedManipulation: 0,
+        governmentAttention: 0,
+        systemReputation: new Map()
+      }
+    };
+  }
+
+  /**
+   * Plan a market manipulation action
+   */
+  planManipulation(
+    playerId: string,
+    type: ManipulationType,
+    systemId: number,
+    targetGood: TradeGood,
+    intensity: number = 0.5
+  ): {
+    success: boolean;
+    action?: MarketManipulationAction;
+    error?: string;
+    recommendations?: string[];
+  } {
+    const profile = this.getOrCreateManipulatorProfile(playerId);
+    const conditions = this.systemMarketConditions.get(systemId);
+    
+    if (!conditions) {
+      return { success: false, error: 'System market conditions not found' };
+    }
+
+    // Check cooldowns
+    const cooldownCheck = this.checkManipulationCooldowns(profile);
+    if (!cooldownCheck.allowed) {
+      return { 
+        success: false, 
+        error: `Manipulation cooldown active: ${cooldownCheck.reason}`,
+        recommendations: cooldownCheck.recommendations
+      };
+    }
+
+    // Create the manipulation action
+    const action = this.createManipulationAction(
+      profile,
+      type,
+      systemId,
+      targetGood,
+      intensity,
+      conditions
+    );
+
+    // Validate the action
+    const validation = this.validateManipulationAction(profile, action);
+    if (!validation.valid) {
+      return { 
+        success: false, 
+        error: validation.error,
+        recommendations: validation.recommendations
+      };
+    }
+
+    return { success: true, action };
+  }
+
+  /**
+   * Create a manipulation action
+   */
+  private createManipulationAction(
+    profile: ManipulatorProfile,
+    type: ManipulationType,
+    systemId: number,
+    targetGood: TradeGood,
+    intensity: number,
+    conditions: MarketConditions
+  ): MarketManipulationAction {
+    const actionConfig = this.getManipulationConfig(type, targetGood, intensity);
+    
+    return {
+      id: this.generateActionId(),
+      type,
+      systemId,
+      targetGood,
+      description: this.getManipulationDescription(type, targetGood, intensity),
+      strategy: this.getManipulationStrategy(type),
+      requiredCapital: actionConfig.requiredCapital,
+      requiredGoods: actionConfig.requiredGoods,
+      skillRequirements: actionConfig.skillRequirements,
+      duration: actionConfig.duration,
+      intensity,
+      areaOfEffect: actionConfig.areaOfEffect,
+      expectedImpact: actionConfig.expectedImpact,
+      riskLevel: actionConfig.riskLevel,
+      riskFactors: actionConfig.riskFactors,
+      detectionChance: this.calculateDetectionChance(profile, type, intensity, conditions),
+      legalConsequences: this.calculateLegalConsequences(type, conditions),
+      state: 'PLANNING',
+      progress: 0
+    };
+  }
+
+  /**
+   * Get manipulation configuration
+   */
+  private getManipulationConfig(
+    type: ManipulationType,
+    targetGood: TradeGood,
+    intensity: number
+  ): {
+    requiredCapital: number;
+    requiredGoods: Map<TradeGood, number>;
+    skillRequirements: { trading: number; economics: number; negotiation: number };
+    duration: number;
+    areaOfEffect: number;
+    expectedImpact: { priceChange: number; volumeChange: number; stabilityChange: number };
+    riskLevel: 'LOW' | 'MEDIUM' | 'HIGH';
+    riskFactors: string[];
+  } {
+    const configs: { [key in ManipulationType]: any } = {
+      [ManipulationType.STOCKPILE]: {
+        requiredCapital: 500000 * intensity,
+        requiredGoods: new Map([[targetGood, 1000 * intensity]]),
+        skillRequirements: { trading: 0.7, economics: 0.6, negotiation: 0.5 },
+        duration: 48 * intensity,
+        areaOfEffect: 1,
+        expectedImpact: { priceChange: 0.3 * intensity, volumeChange: -0.6 * intensity, stabilityChange: -0.2 * intensity },
+        riskLevel: 'MEDIUM' as const,
+        riskFactors: ['Market memory', 'Storage costs', 'Capital tied up']
+      },
+      
+      [ManipulationType.DUMP]: {
+        requiredCapital: 100000 * intensity,
+        requiredGoods: new Map([[targetGood, 2000 * intensity]]),
+        skillRequirements: { trading: 0.6, economics: 0.7, negotiation: 0.4 },
+        duration: 24 * intensity,
+        areaOfEffect: 1,
+        expectedImpact: { priceChange: -0.4 * intensity, volumeChange: 1.2 * intensity, stabilityChange: -0.3 * intensity },
+        riskLevel: 'HIGH' as const,
+        riskFactors: ['Price cratering', 'Legal consequences', 'Market retaliation']
+      },
+      
+      [ManipulationType.FOMENT_DEMAND]: {
+        requiredCapital: 50000 * intensity,
+        requiredGoods: new Map(),
+        skillRequirements: { trading: 0.4, economics: 0.8, negotiation: 0.9 },
+        duration: 72 * intensity,
+        areaOfEffect: 3,
+        expectedImpact: { priceChange: 0.2 * intensity, volumeChange: 0.4 * intensity, stabilityChange: 0.1 * intensity },
+        riskLevel: 'LOW' as const,
+        riskFactors: ['Information reliability', 'Rumors backfire', 'Reputation risk']
+      },
+      
+      [ManipulationType.BOYCOTT]: {
+        requiredCapital: 200000 * intensity,
+        requiredGoods: new Map(),
+        skillRequirements: { trading: 0.5, economics: 0.6, negotiation: 0.8 },
+        duration: 168 * intensity, // 1 week
+        areaOfEffect: 2,
+        expectedImpact: { priceChange: -0.25 * intensity, volumeChange: -0.3 * intensity, stabilityChange: -0.15 * intensity },
+        riskLevel: 'MEDIUM' as const,
+        riskFactors: ['Coordination difficulty', 'Economic disruption', 'Government intervention']
+      },
+      
+      [ManipulationType.MONOPOLY]: {
+        requiredCapital: 1000000 * intensity,
+        requiredGoods: new Map([[targetGood, 5000 * intensity]]),
+        skillRequirements: { trading: 0.9, economics: 0.9, negotiation: 0.8 },
+        duration: 336 * intensity, // 2 weeks
+        areaOfEffect: 1,
+        expectedImpact: { priceChange: 0.8 * intensity, volumeChange: -0.8 * intensity, stabilityChange: -0.4 * intensity },
+        riskLevel: 'HIGH' as const,
+        riskFactors: ['Regulatory crackdown', 'International response', 'Market collapse']
+      }
+    };
+
+    // Add other manipulation types with similar patterns
+    configs[ManipulationType.DISINFORMATION] = {
+      requiredCapital: 30000 * intensity,
+      requiredGoods: new Map(),
+      skillRequirements: { trading: 0.3, economics: 0.7, negotiation: 0.8 },
+      duration: 96 * intensity,
+      areaOfEffect: 4,
+      expectedImpact: { priceChange: 0.15 * intensity, volumeChange: 0.3 * intensity, stabilityChange: -0.1 * intensity },
+      riskLevel: 'LOW' as const,
+      riskFactors: ['Information discovery', 'Reputation damage', 'Legal issues']
+    };
+
+    // Add remaining manipulation types...
+    configs[ManipulationType.PRICE_WAR] = configs[ManipulationType.DUMP];
+    configs[ManipulationType.SABOTAGE] = {
+      requiredCapital: 800000 * intensity,
+      requiredGoods: new Map(),
+      skillRequirements: { trading: 0.6, economics: 0.8, negotiation: 0.3 },
+      duration: 120 * intensity,
+      areaOfEffect: 1,
+      expectedImpact: { priceChange: -0.3 * intensity, volumeChange: -0.5 * intensity, stabilityChange: -0.25 * intensity },
+      riskLevel: 'HIGH' as const,
+      riskFactors: ['Legal prosecution', 'Security retaliation', 'Economic warfare']
+    };
+
+    return configs[type] || configs[ManipulationType.STOCKPILE];
+  }
+
+  /**
+   * Get manipulation description
+   */
+  private getManipulationDescription(
+    type: ManipulationType,
+    targetGood: TradeGood,
+    intensity: number
+  ): string {
+    const descriptions: { [key in ManipulationType]: string } = {
+      [ManipulationType.STOCKPILE]: `Acquire large quantities of ${targetGood} to artificially reduce market supply and drive up prices.`,
+      [ManipulationType.DUMP]: `Massively sell ${targetGood} inventory to flood the market and crash prices.`,
+      [ManipulationType.FOMENT_DEMAND]: `Spread positive information about ${targetGood} to artificially increase demand.`,
+      [ManipulationType.BOYCOTT]: `Organize coordinated buying boycott to disrupt ${targetGood} markets.`,
+      [ManipulationType.MONOPOLY]: `Attempt to corner the market by controlling the majority of ${targetGood} supply.`,
+      [ManipulationType.DISINFORMATION]: `Spread false market intelligence to manipulate ${targetGood} trading behavior.`,
+      [ManipulationType.MARKET_RUMORS]: `Start and spread rumors about ${targetGood} to influence prices.`,
+      [ManipulationType.AUTHORITY_RUIN]: `Undermine market authorities to reduce oversight of ${targetGood} trading.`,
+      [ManipulationType.PRICE_WAR]: `Engage in aggressive competitive pricing to eliminate competition in ${targetGood} markets.`,
+      [ManipulationType.RESOURCE_WAR]: `Control supply routes and distribution channels for ${targetGood}.`,
+      [ManipulationType.SABOTAGE]: `Disrupt production and supply facilities for ${targetGood}.`,
+      [ManipulationType.ARBITRAGE_SCHEME]: `Execute complex multi-system arbitrage operations affecting ${targetGood} prices.`,
+      [ManipulationType.MARKET_CORNERING]: `Achieve dominant market position (>80%) in ${targetGood} trading.`,
+      [ManipulationType.PUMP_AND_DUMP]: `Artificially inflate ${targetGood} prices then sell off at peak values.`,
+      [ManipulationType.BEAR_RAID]: `Coordinated selling campaign to crash ${targetGood} prices across markets.`
+    };
+
+    return descriptions[type] || `Manipulate ${targetGood} markets using ${type} strategy.`;
+  }
+
+  /**
+   * Get manipulation strategy
+   */
+  private getManipulationStrategy(type: ManipulationType): string {
+    const strategies: { [key in ManipulationType]: string } = {
+      [ManipulationType.STOCKPILE]: 'Gradual acquisition through multiple intermediaries to avoid detection',
+      [ManipulationType.DUMP]: 'Rapid selloff across multiple channels to maximize market impact',
+      [ManipulationType.FOMENT_DEMAND]: 'Information warfare through media and network influence',
+      [ManipulationType.BOYCOTT]: 'Coordinated economic pressure through organized buyer networks',
+      [ManipulationType.MONOPOLY]: 'Systematic acquisition and control of supply channels',
+      [ManipulationType.DISINFORMATION]: 'Strategic information dissemination to shape market expectations',
+      [ManipulationType.MARKET_RUMORS]: 'Whisper campaigns and rumor propagation',
+      [ManipulationType.AUTHORITY_RUIN]: 'Undermining market oversight and regulatory enforcement',
+      [ManipulationType.PRICE_WAR]: 'Predatory pricing to eliminate competition',
+      [ManipulationType.RESOURCE_WAR]: 'Control of physical and economic supply chains',
+      [ManipulationType.SABOTAGE]: 'Disruption of production and distribution capabilities',
+      [ManipulationType.ARBITRAGE_SCHEME]: 'Complex multi-market price differential exploitation',
+      [ManipulationType.MARKET_CORNERING]: 'Achieving dominant market position through strategic acquisition',
+      [ManipulationType.PUMP_AND_DUMP]: 'Artificial price inflation followed by coordinated selling',
+      [ManipulationType.BEAR_RAID]: 'Coordinated market crash through massive selling pressure'
+    };
+
+    return strategies[type] || 'Advanced market manipulation through strategic economic intervention';
+  }
+
+  /**
+   * Calculate detection chance
+   */
+  private calculateDetectionChance(
+    profile: ManipulatorProfile,
+    type: ManipulationType,
+    intensity: number,
+    conditions: MarketConditions
+  ): number {
+    let baseChance = 0.1; // 10% base detection chance
+
+    // Intensity increases detection
+    baseChance += intensity * 0.3;
+
+    // Manipulation type affects detection
+    const typeMultipliers: { [key in ManipulationType]: number } = {
+      [ManipulationType.STOCKPILE]: 0.8,
+      [ManipulationType.DUMP]: 1.2,
+      [ManipulationType.FOMENT_DEMAND]: 0.6,
+      [ManipulationType.BOYCOTT]: 0.9,
+      [ManipulationType.MONOPOLY]: 1.5,
+      [ManipulationType.DISINFORMATION]: 0.7,
+      [ManipulationType.MARKET_RUMORS]: 0.5,
+      [ManipulationType.AUTHORITY_RUIN]: 1.3,
+      [ManipulationType.PRICE_WAR]: 1.1,
+      [ManipulationType.RESOURCE_WAR]: 1.4,
+      [ManipulationType.SABOTAGE]: 1.6,
+      [ManipulationType.ARBITRAGE_SCHEME]: 0.8,
+      [ManipulationType.MARKET_CORNERING]: 1.8,
+      [ManipulationType.PUMP_AND_DUMP]: 1.0,
+      [ManipulationType.BEAR_RAID]: 1.1
+    };
+
+    baseChance *= typeMultipliers[type] || 1.0;
+
+    // Government type affects detection
+    const governmentMultipliers: { [key in GovernmentType]: number } = {
+      [GovernmentType.DEMOCRACY]: 1.2,
+      [GovernmentType.CORPORATE_STATE]: 0.8,
+      [GovernmentType.DICTATORSHIP]: 1.0,
+      [GovernmentType.ANARCHY]: 0.6,
+      [GovernmentType.IMPLANTED_EMPIRE]: 0.9,
+      [GovernmentType.FEUDAL]: 0.7,
+      [GovernmentType.MULTI_GOVERNMENT]: 0.9,
+      [GovernmentType.CONFEDERATE]: 1.0,
+      [GovernmentType.COMMUNIST]: 0.8
+    };
+
+    baseChance *= governmentMultipliers[conditions.governmentType] || 1.0;
+
+    // Player resources reduce detection
+    const protectionFactor = 1.0 - (profile.resources.legalProtection * 0.3);
+    baseChance *= protectionFactor;
+
+    // Government attention increases detection
+    const attentionMultiplier = 1.0 + (profile.cooldowns.governmentAttention * 0.5);
+    baseChance *= attentionMultiplier;
+
+    return Math.min(0.95, Math.max(0.05, baseChance));
+  }
+
+  /**
+   * Calculate legal consequences
+   */
+  private calculateLegalConsequences(
+    type: ManipulationType,
+    conditions: MarketConditions
+  ): {
+    fines: number;
+    reputationLoss: number;
+    banDuration?: number;
+  } {
+    const baseFines = 10000;
+    const baseReputationLoss = 10;
+
+    const typeFactors: { [key in ManipulationType]: number } = {
+      [ManipulationType.STOCKPILE]: { fines: 1.0, reputation: 0.5 },
+      [ManipulationType.DUMP]: { fines: 1.5, reputation: 0.8 },
+      [ManipulationType.FOMENT_DEMAND]: { fines: 0.3, reputation: 0.2 },
+      [ManipulationType.BOYCOTT]: { fines: 0.8, reputation: 0.6 },
+      [ManipulationType.MONOPOLY]: { fines: 3.0, reputation: 1.5 },
+      [ManipulationType.DISINFORMATION]: { fines: 0.5, reputation: 0.7 },
+      [ManipulationType.MARKET_RUMORS]: { fines: 0.2, reputation: 0.3 },
+      [ManipulationType.AUTHORITY_RUIN]: { fines: 2.0, reputation: 1.2 },
+      [ManipulationType.PRICE_WAR]: { fines: 1.2, reputation: 0.9 },
+      [ManipulationType.RESOURCE_WAR]: { fines: 2.5, reputation: 1.3 },
+      [ManipulationType.SABOTAGE]: { fines: 5.0, reputation: 2.0 },
+      [ManipulationType.ARBITRAGE_SCHEME]: { fines: 1.0, reputation: 0.4 },
+      [ManipulationType.MARKET_CORNERING]: { fines: 4.0, reputation: 2.5 },
+      [ManipulationType.PUMP_AND_DUMP]: { fines: 2.2, reputation: 1.4 },
+      [ManipulationType.BEAR_RAID]: { fines: 1.8, reputation: 1.1 }
+    };
+
+    const factors = typeFactors[type] || { fines: 1.0, reputation: 0.5 };
+
+    return {
+      fines: Math.round(baseFines * factors.fines),
+      reputationLoss: Math.round(baseReputationLoss * factors.reputation),
+      banDuration: type === ManipulationType.SABOTAGE || type === ManipulationType.MONOPOLY ? 168 : undefined // Hours
+    };
+  }
+
+  /**
+   * Validate manipulation action
+   */
+  private validateManipulationAction(
+    profile: ManipulatorProfile,
+    action: MarketManipulationAction
+  ): { valid: boolean; error?: string; recommendations?: string[] } {
+    const recommendations: string[] = [];
+
+    // Check capital requirements
+    if (profile.resources.availableCapital < action.requiredCapital) {
+      return {
+        valid: false,
+        error: `Insufficient capital: need ${action.requiredCapital}, have ${profile.resources.availableCapital}`,
+        recommendations: ['Increase available capital', 'Choose less capital-intensive strategy']
+      };
+    }
+
+    // Check skill requirements
+    if (profile.experience.expertise.supplyManipulation < action.skillRequirements.trading) {
+      recommendations.push('Improve trading expertise');
+    }
+    if (profile.experience.expertise.demandManipulation < action.skillRequirements.economics) {
+      recommendations.push('Study economics and market theory');
+    }
+    if (profile.reputation.trading < 30) {
+      recommendations.push('Build trading reputation first');
+    }
+
+    // Check government attention
+    if (profile.cooldowns.governmentAttention > this.GOVERNMENT_ATTENTION_THRESHOLD) {
+      return {
+        valid: false,
+        error: `Government attention too high: ${(profile.cooldowns.governmentAttention * 100).toFixed(1)}%`,
+        recommendations: ['Wait for attention to subside', 'Focus on legal activities', 'Improve legal protection']
+      };
+    }
+
+    // Check risk level vs player resources
+    if (action.riskLevel === 'HIGH' && profile.resources.networkConnections < 0.5) {
+      recommendations.push('Build more network connections for high-risk operations');
+    }
+
+    return { valid: true, recommendations };
+  }
+
+  /**
+   * Check manipulation cooldowns
+   */
+  private checkManipulationCooldowns(profile: ManipulatorProfile): {
+    allowed: boolean;
+    reason?: string;
+    recommendations?: string[];
+  } {
+    const now = Date.now();
+    const cooldownMs = this.MANIPULATION_COOLDOWN_HOURS * 60 * 60 * 1000;
+
+    if (now - profile.cooldowns.lastFailedManipulation < cooldownMs) {
+      const timeLeft = Math.ceil((cooldownMs - (now - profile.cooldowns.lastFailedManipulation)) / (60 * 60 * 1000));
+      return {
+        allowed: false,
+        reason: `Cooldown from failed manipulation: ${timeLeft} hours remaining`,
+        recommendations: ['Focus on legitimate trading', 'Study market mechanics', 'Build reputation']
+      };
+    }
+
+    if (profile.achievements.wanted) {
+      return {
+        allowed: false,
+        reason: 'Cannot manipulate while wanted by authorities',
+        recommendations: ['Clear legal troubles first', 'Surrender to authorities', 'Go into hiding']
+      };
+    }
+
+    return { allowed: true };
+  }
+
+  /**
+   * Execute a manipulation action
+   */
+  executeManipulation(
+    playerId: string,
+    actionId: string
+  ): {
+    success: boolean;
+    result?: ManipulationResult;
+    error?: string;
+  } {
+    const action = this.activeManipulations.get(actionId);
+    if (!action) {
+      return { success: false, error: 'Action not found' };
+    }
+
+    const profile = this.getOrCreateManipulatorProfile(playerId);
+    if (action.state !== 'PLANNING') {
+      return { success: false, error: 'Action not in planning state' };
+    }
+
+    // Set execution state
+    action.state = 'EXECUTING';
+    action.startTime = Date.now();
+    action.progress = 0;
+
+    // Deduct required capital
+    profile.resources.availableCapital -= action.requiredCapital;
+
+    // Start the manipulation process
+    this.beginManipulationExecution(action, profile);
+
+    return { success: true };
+  }
+
+  /**
+   * Begin manipulation execution
+   */
+  private beginManipulationExecution(
+    action: MarketManipulationAction,
+    profile: ManipulatorProfile
+  ): void {
+    // In a full implementation, this would be a game loop that updates progress
+    // For now, we'll simulate the execution
+
+    const executionTime = action.duration * 60 * 60 * 1000; // Convert hours to milliseconds
+    const startTime = Date.now();
+
+    // Simulate async execution
+    setTimeout(() => {
+      this.completeManipulation(action, profile);
+    }, Math.min(executionTime, 5000)); // Use shorter delay for testing
+
+    this.activeManipulations.set(action.id, action);
+  }
+
+  /**
+   * Complete manipulation execution
+   */
+  private completeManipulation(action: MarketManipulationAction, profile: ManipulatorProfile): void {
+    const result = this.simulateManipulationOutcome(action, profile);
+    
+    // Update action state
+    action.state = result.success ? 'COMPLETED' : 'FAILED';
+    action.completionTime = Date.now();
+
+    // Store result
+    this.completedManipulations.set(action.id, result);
+
+    // Update player profile
+    this.updateManipulatorProfile(profile, action, result);
+
+    // Apply market effects
+    if (result.success) {
+      this.applyMarketEffects(action, result);
+    }
+
+    // Handle consequences
+    this.handleManipulationConsequences(profile, action, result);
+  }
+
+  /**
+   * Simulate manipulation outcome
+   */
+  private simulateManipulationOutcome(
+    action: MarketManipulationAction,
+    profile: ManipulatorProfile
+  ): ManipulationResult {
+    const success = Math.random() < this.calculateSuccessProbability(profile, action);
+    
+    // Calculate actual outcomes
+    const priceChange = success ? 
+      action.expectedImpact.priceChange * (0.7 + Math.random() * 0.6) : // ±30% variance
+      action.expectedImpact.priceChange * (0.1 + Math.random() * 0.2); // Much smaller impact if failed
+    
+    const volumeChange = success ?
+      action.expectedImpact.volumeChange * (0.8 + Math.random() * 0.4) :
+      action.expectedImpact.volumeChange * (0.1 + Math.random() * 0.3);
+    
+    const stabilityChange = success ?
+      action.expectedImpact.stabilityChange * (0.9 + Math.random() * 0.2) :
+      action.expectedImpact.stabilityChange * (0.2 + Math.random() * 0.3);
+
+    // Calculate financial results
+    const capitalExpended = action.requiredCapital;
+    const transactionCosts = capitalExpended * 0.02; // 2% transaction costs
+    const profitOrLoss = success ? 
+      capitalExpended * priceChange * 0.3 - transactionCosts : // Assume 30% capture of price movement
+      -transactionCosts;
+
+    return {
+      actionId: action.id,
+      success,
+      priceChange,
+      volumeChange,
+      stabilityChange,
+      profitOrLoss,
+      capitalExpended,
+      transactionCosts,
+      reputationChange: {
+        overall: success ? 2 : -3,
+        trading: success ? 5 : -5,
+        government: success ? -2 : -8,
+        corporate: success ? 3 : -2
+      },
+      marketImpact: {
+        affectedSystems: action.areaOfEffect,
+        totalVolume: Math.abs(volumeChange) * 1000,
+        duration: action.duration
+      },
+      consequences: {
+        legal: {
+          fines: action.legalConsequences ? action.legalConsequences.fines : 0,
+          reputationDamage: action.legalConsequences ? action.legalConsequences.reputationLoss : 0,
+          legalTroubles: Math.random() < action.detectionChance ? 0.3 : 0
+        },
+        economic: {
+          marketRetaliation: success ? 0.1 : 0.2,
+          supplyChainDisruption: Math.abs(priceChange) * 0.1
+        },
+        social: {
+          communityReaction: Math.abs(priceChange) * 0.05,
+          mediaAttention: success ? 0.1 : 0.3
+        }
+      },
+      analysis: {
+        whatWorked: success ? ['Strategy execution', 'Market timing', 'Resource allocation'] : [],
+        whatFailed: success ? [] : ['Strategy flawed', 'Poor market timing', 'Insufficient resources'],
+        riskAssessment: `Risk level: ${action.riskLevel}, Success probability: ${(this.calculateSuccessProbability(profile, action) * 100).toFixed(1)}%`,
+        futureRecommendations: this.generateRecommendations(action, success)
+      }
+    };
+  }
+
+  /**
+   * Calculate success probability
+   */
+  private calculateSuccessProbability(
+    profile: ManipulatorProfile,
+    action: MarketManipulationAction
+  ): number {
+    let baseProbability = 0.5; // 50% base chance
+
+    // Player expertise affects success
+    const skillFactors = [
+      profile.experience.expertise.supplyManipulation,
+      profile.experience.expertise.demandManipulation,
+      profile.experience.expertise.informationWarfare,
+      profile.experience.expertise.economicWarfare,
+      profile.experience.expertise.marketCornering
+    ];
+    const avgSkill = skillFactors.reduce((sum, skill) => sum + skill, 0) / skillFactors.length;
+    baseProbability += (avgSkill - 0.5) * 0.4; // ±20% based on skills
+
+    // Reputation affects success
+    const reputationBonus = (profile.reputation.overall - 50) / 1000; // Small bonus for good reputation
+    baseProbability += reputationBonus;
+
+    // Resources affect success
+    const resourceBonus = profile.resources.networkConnections * 0.2;
+    baseProbability += resourceBonus;
+
+    // Risk level affects success (higher risk = lower success)
+    const riskMultipliers: { [key in 'LOW' | 'MEDIUM' | 'HIGH']: number } = {
+      LOW: 1.2,
+      MEDIUM: 1.0,
+      HIGH: 0.8
+    };
+    baseProbability *= riskMultipliers[action.riskLevel];
+
+    // Government attention reduces success
+    const attentionPenalty = profile.cooldowns.governmentAttention * 0.3;
+    baseProbability -= attentionPenalty;
+
+    // Previous experience improves success
+    const experienceBonus = profile.experience.successfulManipulations * 0.02;
+    baseProbability += experienceBonus;
+
+    return Math.min(0.9, Math.max(0.1, baseProbability));
+  }
+
+  /**
+   * Generate recommendations based on outcome
+   */
+  private generateRecommendations(action: MarketManipulationAction, success: boolean): string[] {
+    const recommendations: string[] = [];
+
+    if (success) {
+      recommendations.push('Build on this success with larger operations');
+      recommendations.push('Consider expanding to neighboring systems');
+      recommendations.push('Develop more sophisticated strategies');
+      
+      if (action.priceChange > 0.3) {
+        recommendations.push('Focus on supply-side manipulation for better results');
+      } else if (action.priceChange < -0.3) {
+        recommendations.push('Demand manipulation may be more profitable');
+      }
+    } else {
+      recommendations.push('Study market fundamentals more thoroughly');
+      recommendations.push('Build better network connections');
+      recommendations.push('Start with lower-risk strategies');
+      recommendations.push('Focus on reputation building');
+
+      if (action.riskLevel === 'HIGH') {
+        recommendations.push('Avoid high-risk strategies until more experienced');
+      }
+    }
+
+    return recommendations;
+  }
+
+  /**
+   * Update manipulator profile after action
+   */
+  private updateManipulatorProfile(
+    profile: ManipulatorProfile,
+    action: MarketManipulationAction,
+    result: ManipulationResult
+  ): void {
+    // Update experience
+    profile.experience.totalManipulations++;
+    if (result.success) {
+      profile.experience.successfulManipulations++;
+    } else {
+      profile.experience.failedManipulations++;
+    }
+    
+    profile.experience.netProfitFromManipulation += result.profitOrLoss;
+
+    // Update expertise based on action type
+    const expertiseGains = this.calculateExpertiseGains(action, result);
+    for (const [type, gain] of Object.entries(expertiseGains)) {
+      const key = type as keyof typeof profile.experience.expertise;
+      profile.experience.expertise[key] = Math.min(1.0, profile.experience.expertise[key] + gain);
+    }
+
+    // Update reputation
+    for (const [reputationType, change] of Object.entries(result.reputationChange)) {
+      const key = reputationType as keyof typeof profile.reputation;
+      profile.reputation[key] = Math.max(-100, Math.min(100, profile.reputation[key] + change));
+    }
+
+    // Update achievements
+    this.checkAchievements(profile, result);
+
+    // Update cooldowns
+    if (result.success) {
+      profile.cooldowns.lastSuccessfulManipulation = Date.now();
+    } else {
+      profile.cooldowns.lastFailedManipulation = Date.now();
+    }
+
+    // Update government attention
+    if (result.consequences.legal.legalTroubles > 0) {
+      profile.cooldowns.governmentAttention = Math.min(1.0, profile.cooldowns.governmentAttention + 0.2);
+    }
+
+    // Update wanted status
+    if (result.consequences.legal.legalTroubles > 0.5) {
+      profile.achievements.wanted = true;
+    }
+  }
+
+  /**
+   * Calculate expertise gains from manipulation
+   */
+  private calculateExpertiseGains(
+    action: MarketManipulationAction,
+    result: ManipulationResult
+  ): { [key: string]: number } {
+    const baseGain = result.success ? 0.03 : 0.01;
+    const successMultiplier = result.success ? 1.5 : 1.0;
+
+    const typeExpertiseMap: { [key in ManipulationType]: string } = {
+      [ManipulationType.STOCKPILE]: 'supplyManipulation',
+      [ManipulationType.DUMP]: 'supplyManipulation',
+      [ManipulationType.FOMENT_DEMAND]: 'demandManipulation',
+      [ManipulationType.BOYCOTT]: 'demandManipulation',
+      [ManipulationType.MONOPOLY]: 'marketCornering',
+      [ManipulationType.DISINFORMATION]: 'informationWarfare',
+      [ManipulationType.MARKET_RUMORS]: 'informationWarfare',
+      [ManipulationType.AUTHORITY_RUIN]: 'informationWarfare',
+      [ManipulationType.PRICE_WAR]: 'economicWarfare',
+      [ManipulationType.RESOURCE_WAR]: 'economicWarfare',
+      [ManipulationType.SABOTAGE]: 'economicWarfare',
+      [ManipulationType.ARBITRAGE_SCHEME]: 'marketCornering',
+      [ManipulationType.MARKET_CORNERING]: 'marketCornering',
+      [ManipulationType.PUMP_AND_DUMP]: 'marketCornering',
+      [ManipulationType.BEAR_RAID]: 'economicWarfare'
+    };
+
+    const gains: { [key: string]: number } = {};
+    const primaryExpertise = typeExpertiseMap[action.type];
+    gains[primaryExpertise] = baseGain * successMultiplier;
+
+    // Small gains in other areas
+    for (const expertise of Object.keys(gains)) {
+      if (expertise !== primaryExpertise) {
+        gains[expertise] = baseGain * 0.3;
+      }
+    }
+
+    return gains;
+  }
+
+  /**
+   * Check for achievement unlocks
+   */
+  private checkAchievements(profile: ManipulatorProfile, result: ManipulationResult): void {
+    if (!profile.achievements.firstManipulation) {
+      profile.achievements.firstManipulation = true;
+    }
+
+    if (!profile.achievements.profitMaster && result.profitOrLoss > 1000000) {
+      profile.achievements.profitMaster = true;
+    }
+
+    if (!profile.achievements.priceCrusher && result.priceChange < -0.5) {
+      profile.achievements.priceCrusher = true;
+    }
+
+    if (!profile.achievements.marketCornerer && Math.abs(result.priceChange) > 0.8) {
+      profile.achievements.marketCornerer = true;
+    }
+  }
+
+  /**
+   * Apply market effects from successful manipulation
+   */
+  private applyMarketEffects(action: MarketManipulationAction, result: ManipulationResult): void {
+    const conditions = this.systemMarketConditions.get(action.systemId);
+    if (!conditions) return;
+
+    // Update manipulation intensity
+    const currentIntensity = conditions.manipulationIntensity.get(action.targetGood) || 0;
+    const newIntensity = Math.min(1.0, currentIntensity + action.intensity * 0.5);
+    conditions.manipulationIntensity.set(action.targetGood, newIntensity);
+
+    // Update current price
+    const currentPrice = conditions.currentPrice.get(action.targetGood) || 100;
+    const newPrice = currentPrice * (1 + result.priceChange);
+    conditions.currentPrice.set(action.targetGood, newPrice);
+
+    // Update available supply/demand
+    const currentSupply = conditions.availableSupply.get(action.targetGood) || 100;
+    const newSupply = Math.max(0, currentSupply * (1 + result.volumeChange));
+    conditions.availableSupply.set(action.targetGood, newSupply);
+
+    // Record the manipulation event
+    conditions.lastSignificantEvents.push({
+      timestamp: Date.now(),
+      type: action.type,
+      impact: Math.abs(result.priceChange),
+      description: `Market manipulation: ${action.description}`
+    });
+
+    // Keep only recent events
+    if (conditions.lastSignificantEvents.length > 50) {
+      conditions.lastSignificantEvents = conditions.lastSignificantEvents.slice(-30);
+    }
+
+    // Add to global manipulation tracking
+    this.updateGlobalManipulationTracking(action, result);
+  }
+
+  /**
+   * Update global manipulation tracking
+   */
+  private updateGlobalManipulationTracking(action: MarketManipulationAction, result: ManipulationResult): void {
+    // Track price spikes
+    const spikeKey = `${action.systemId}-${action.targetGood}`;
+    if (Math.abs(result.priceChange) > 0.3) {
+      this.manipulationEvents.priceSpikes.set(spikeKey, {
+        good: action.targetGood,
+        magnitude: Math.abs(result.priceChange),
+        systems: [action.systemId]
+      });
+    }
+
+    // Track market instability
+    const instabilityKey = action.systemId.toString();
+    if (Math.abs(result.stabilityChange) > 0.2) {
+      const current = this.manipulationEvents.marketInstability.get(instabilityKey) || 
+        { level: 0, affectedSystems: new Set<number>() };
+      current.level += Math.abs(result.stabilityChange);
+      current.affectedSystems.add(action.systemId);
+      this.manipulationEvents.marketInstability.set(instabilityKey, current);
+    }
+
+    // Track detection events
+    if (Math.random() < result.consequences.legal.legalTroubles) {
+      this.manipulationEvents.manipulationDetectionEvents.push({
+        timestamp: Date.now(),
+        manipulatorId: '', // Would be actual player ID
+        type: action.type,
+        systemId: action.systemId,
+        severity: action.intensity
+      });
+    }
+  }
+
+  /**
+   * Handle consequences of manipulation
+   */
+  private handleManipulationConsequences(
+    profile: ManipulatorProfile,
+    action: MarketManipulationAction,
+    result: ManipulationResult
+  ): void {
+    // Legal consequences
+    if (result.consequences.legal.fines > 0) {
+      profile.resources.availableCapital -= result.consequences.legal.fines;
+    }
+
+    // Update legal troubles
+    profile.resources.legalTroubles += result.consequences.legal.legalTroubles;
+
+    // Government attention increase
+    if (result.consequences.legal.legalTroubles > 0.3) {
+      profile.cooldowns.governmentAttention = Math.min(1.0, 
+        profile.cooldowns.governmentAttention + 0.2);
+    }
+
+    // System reputation damage
+    const currentSystemRep = profile.cooldowns.systemReputation.get(action.systemId) || 50;
+    const reputationDamage = -result.consequences.legal.reputationDamage;
+    const newReputation = Math.max(-100, Math.min(100, currentSystemRep + reputationDamage));
+    profile.cooldowns.systemReputation.set(action.systemId, newReputation);
+  }
+
+  // =============== Helper Methods ===============
+
+  private calculateMarketDepth(governmentType: GovernmentType, economyType: EconomyType): number {
+    // Higher tech, stable governments = deeper markets
+    let depth = 0.5;
+    
+    switch (governmentType) {
+      case GovernmentType.DEMOCRACY:
+      case GovernmentType.CORPORATE_STATE:
+        depth += 0.2;
+        break;
+      case GovernmentType.ANARCHY:
+        depth -= 0.3;
+        break;
+    }
+
+    switch (economyType) {
+      case EconomyType.INDUSTRIAL:
+      case EconomyType.HIGH_TECH:
+        depth += 0.3;
+        break;
+      case EconomyType.MINING:
+        depth += 0.1;
+        break;
+    }
+
+    return Math.max(0.1, Math.min(1.0, depth));
+  }
+
+  private calculatePoliticalStability(governmentType: GovernmentType): number {
+    switch (governmentType) {
+      case GovernmentType.DEMOCRACY:
+        return 0.8;
+      case GovernmentType.CORPORATE_STATE:
+        return 0.7;
+      case GovernmentType.DICTATORSHIP:
+        return 0.6;
+      case GovernmentType.ANARCHY:
+        return 0.1;
+      default:
+        return 0.5;
+    }
+  }
+
+  private calculateLawEnforcement(governmentType: GovernmentType, economyType: EconomyType): number {
+    let enforcement = 0.5;
+
+    switch (governmentType) {
+      case GovernmentType.DEMOCRACY:
+      case GovernmentType.CORPORATE_STATE:
+        enforcement += 0.3;
+        break;
+      case GovernmentType.ANARCHY:
+        enforcement -= 0.4;
+        break;
+    }
+
+    if (economyType === EconomyType.MILITARY) {
+      enforcement += 0.2;
+    }
+
+    return Math.max(0.1, Math.min(1.0, enforcement));
+  }
+
+  private getBasePrice(good: TradeGood): number {
+    // Simple base prices for all goods
+    const prices: { [key in TradeGood]: number } = {
+      [TradeGood.FOOD_CARTRIDGES]: 15,
+      [TradeGood.LIQUOR]: 75,
+      [TradeGood.LUXURIES]: 250,
+      [TradeGood.GRAIN]: 20,
+      [TradeGood.VEGETABLES]: 25,
+      [TradeGood.MEAT]: 45,
+      [TradeGood.METALS]: 120,
+      [TradeGood.MACHINERY]: 500,
+      [TradeGood.CHEMICALS]: 200,
+      [TradeGood.COMPUTERS]: 1000,
+      [TradeGood.SOFTWARE]: 800,
+      [TradeGood.ROBOTS]: 2000,
+      [TradeGood.MINERALS]: 80,
+      [TradeGood.PRECIOUS_STONES]: 1500,
+      [TradeGood.FUEL]: 5,
+      [TradeGood.WEAPONS]: 400,
+      [TradeGood.MILITARY_EQUIPMENT]: 1200,
+      [TradeGood.ARMOR]: 300
+    };
+
+    return prices[good] || 100;
+  }
+
+  private generateActionId(): string {
+    return `manip_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  // =============== Public API ===============
+
+  /**
+   * Get active manipulations for a system
+   */
+  getActiveManipulations(systemId: number): MarketManipulationAction[] {
+    return Array.from(this.activeManipulations.values())
+      .filter(action => action.systemId === systemId);
+  }
+
+  /**
+   * Get manipulator profile
+   */
+  getManipulatorProfile(playerId: string): ManipulatorProfile | undefined {
+    return this.manipulatorProfiles.get(playerId);
+  }
+
+  /**
+   * Get system market conditions
+   */
+  getSystemMarketConditions(systemId: number): MarketConditions | undefined {
+    return this.systemMarketConditions.get(systemId);
+  }
+
+  /**
+   * Find manipulation opportunities
+   */
+  findManipulationOpportunities(
+    playerId: string,
+    availableCapital: number,
+    preferredRiskLevel: 'LOW' | 'MEDIUM' | 'HIGH' = 'MEDIUM'
+  ): ManipulationOpportunity[] {
+    const opportunities: ManipulationOpportunity[] = [];
+
+    for (const [systemId, conditions] of this.systemMarketConditions.entries()) {
+      for (const good of Object.values(TradeGood)) {
+        const opportunity = this.assessManipulationOpportunity(
+          playerId, systemId, good, availableCapital, preferredRiskLevel, conditions
+        );
+        if (opportunity) {
+          opportunities.push(opportunity);
+        }
+      }
+    }
+
+    // Sort by attractiveness (profit potential / risk)
+    opportunities.sort((a, b) => 
+      (b.attractiveness.expectedROI / (b.attractiveness.riskLevel === 'LOW' ? 1 : b.attractiveness.riskLevel === 'MEDIUM' ? 2 : 3)) -
+      (a.attractiveness.expectedROI / (a.attractiveness.riskLevel === 'LOW' ? 1 : a.attractiveness.riskLevel === 'MEDIUM' ? 2 : 3))
+    );
+
+    return opportunities.slice(0, 10); // Return top 10 opportunities
+  }
+
+  /**
+   * Assess manipulation opportunity
+   */
+  private assessManipulationOpportunity(
+    playerId: string,
+    systemId: number,
+    good: TradeGood,
+    availableCapital: number,
+    preferredRiskLevel: 'LOW' | 'MEDIUM' | 'HIGH',
+    conditions: MarketConditions
+  ): ManipulationOpportunity | null {
+    const currentPrice = conditions.currentPrice.get(good) || 100;
+    const priceStability = conditions.priceStability.get(good) || 0.7;
+    const manipulationLevel = conditions.manipulationIntensity.get(good) || 0;
+
+    // Skip if manipulation level is already high
+    if (manipulationLevel > 0.8) {
+      return null;
+    }
+
+    // Assess price volatility (higher = better manipulation opportunity)
+    const volatility = 1.0 - priceStability;
+    
+    // Calculate opportunity score
+    const profitPotential = volatility * (1 - manipulationLevel) * 0.3;
+    const successProbability = this.calculateBasicSuccessProbability(conditions);
+    
+    if (successProbability < 0.3) {
+      return null; // Too risky
+    }
+
+    const expectedROI = profitPotential * successProbability * 10;
+
+    // Determine risk level
+    let riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' = 'MEDIUM';
+    if (volatility > 0.6 || conditions.lawEnforcement > 0.8) {
+      riskLevel = 'HIGH';
+    } else if (volatility < 0.3 && conditions.lawEnforcement < 0.5) {
+      riskLevel = 'LOW';
+    }
+
+    if (riskLevel !== preferredRiskLevel) {
+      return null;
+    }
+
+    // Calculate required capital (simplified)
+    const requiredCapital = currentPrice * 1000 * (0.5 + volatility); // More for volatile markets
+
+    if (requiredCapital > availableCapital) {
+      return null;
+    }
+
+    return {
+      id: `opp_${systemId}_${good}_${Date.now()}`,
+      type: this.determineBestManipulationType(good, volatility, conditions),
+      systemId,
+      systemName: `System ${systemId}`, // Would be actual name
+      targetGood: good,
+      attractiveness: {
+        profitPotential,
+        riskLevel,
+        successProbability,
+        requiredCapital,
+        expectedROI
+      },
+      marketState: {
+        priceVolatility: volatility,
+        marketDepth: conditions.marketDepth,
+        currentManipulationLevel: manipulationLevel,
+        governmentStance: conditions.lawEnforcement
+      },
+      timing: {
+        urgency: volatility > 0.5 ? 0.8 : 0.3,
+        windowDuration: 24 * (1 - manipulationLevel), // Less time as manipulation increases
+        seasonalFactors: 1.0 // Simplified
+      },
+      competition: {
+        otherManipulators: manipulationLevel * 2,
+        marketSentinels: conditions.lawEnforcement * 3,
+        corporateInterests: conditions.marketDepth * 2
+      },
+      strategicImportance: {
+        marketSignificance: this.calculateMarketSignificance(good, conditions),
+        chainReactionPotential: volatility * manipulationLevel,
+        reputationValue: expectedROI * 0.1
+      }
+    };
+  }
+
+  /**
+   * Calculate basic success probability
+   */
+  private calculateBasicSuccessProbability(conditions: MarketConditions): number {
+    // Basic formula: higher in unstable systems
+    const baseProb = 0.4;
+    const stabilityBonus = (1 - conditions.politicalStability) * 0.3;
+    const lawPenalty = conditions.lawEnforcement * 0.2;
+    
+    return Math.max(0.1, Math.min(0.9, baseProb + stabilityBonus - lawPenalty));
+  }
+
+  /**
+   * Determine best manipulation type for opportunity
+   */
+  private determineBestManipulationType(
+    good: TradeGood,
+    volatility: number,
+    conditions: MarketConditions
+  ): ManipulationType {
+    if (volatility > 0.6) {
+      return ManipulationType.STOCKPILE;
+    } else if (conditions.lawEnforcement < 0.5) {
+      return ManipulationType.DUMP;
+    } else {
+      return ManipulationType.FOMENT_DEMAND;
+    }
+  }
+
+  /**
+   * Calculate market significance
+   */
+  private calculateMarketSignificance(good: TradeGood, conditions: MarketConditions): number {
+    // Simplified calculation based on trade volume and economic importance
+    const volume = conditions.tradeVolume.get(good) || 50;
+    const importance = this.getGoodEconomicImportance(good);
+    
+    return Math.min(1.0, (volume / 100) * importance);
+  }
+
+  /**
+   * Get economic importance of good
+   */
+  private getGoodEconomicImportance(good: TradeGood): number {
+    const importanceMap: { [key in TradeGood]: number } = {
+      [TradeGood.FOOD_CARTRIDGES]: 0.9, // Essential
+      [TradeGood.FUEL]: 1.0, // Critical
+      [TradeGood.COMPUTERS]: 0.6,
+      [TradeGood.WEAPONS]: 0.7,
+      [TradeGood.MACHINERY]: 0.8,
+      [TradeGood.LUXURIES]: 0.3,
+      [TradeGood.PRECIOUS_STONES]: 0.2
+    };
+
+    return importanceMap[good] || 0.5;
+  }
+
+  /**
+   * Get global manipulation statistics
+   */
+  getGlobalManipulationStats(): {
+    totalActiveManipulations: number;
+    systemsUnderManipulation: number;
+    mostManipulatedGoods: { good: TradeGood; intensity: number }[];
+    recentPriceSpikes: number;
+    detectionEvents: number;
+  } {
+    const totalActiveManipulations = this.activeManipulations.size;
+    const manipulatedSystems = new Set<number>();
+    const goodIntensity = new Map<TradeGood, number>();
+
+    for (const action of this.activeManipulations.values()) {
+      manipulatedSystems.add(action.systemId);
+      const current = goodIntensity.get(action.targetGood) || 0;
+      goodIntensity.set(action.targetGood, current + action.intensity);
+    }
+
+    const mostManipulatedGoods = Array.from(goodIntensity.entries())
+      .map(([good, intensity]) => ({ good, intensity }))
+      .sort((a, b) => b.intensity - a.intensity)
+      .slice(0, 5);
+
+    const recentSpikes = Array.from(this.manipulationEvents.priceSpikes.values())
+      .filter(spike => Date.now() - (spike as any).timestamp < 7 * 24 * 60 * 60 * 1000).length;
+
+    const detectionEvents = this.manipulationEvents.manipulationDetectionEvents
+      .filter(event => Date.now() - event.timestamp < 24 * 60 * 60 * 1000).length;
+
+    return {
+      totalActiveManipulations,
+      systemsUnderManipulation: manipulatedSystems.size,
+      mostManipulatedGoods,
+      recentPriceSpikes: recentSpikes,
+      detectionEvents
+    };
+  }
+}

@@ -1,0 +1,1431 @@
+/**
+ * Economic and Market System Coordinator
+ * Integrates trade history, market manipulation, and enhanced 17-commodity trading
+ * Central hub for all economic systems in Phase 3.3
+ */
+
+import { 
+  TradeGood, 
+  MarketManager, 
+  SystemMarketInstance, 
+  GalacticMarket,
+  CommodityMarket 
+} from '../models/Market.js';
+import { EconomyType, GovernmentType, TechLevel, System } from '../models/Galaxy.js';
+import { TradeHistoryTracker, 
+  TradeRecord, 
+  SystemTradeHistory, 
+  PlayerTradeHistory,
+  MarketTrendAnalysis,
+  ArbitrageOpportunity 
+} from './TradeHistoryTracker.js';
+import { 
+  MarketManipulationSystem,
+  MarketManipulationAction,
+  ManipulatorProfile,
+  MarketConditions,
+  ManipulationOpportunity
+} from './MarketManipulationSystem.js';
+
+export interface EconomicEvent {
+  id: string;
+  type: EconomicEventType;
+  timestamp: number;
+  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  
+  // Event details
+  title: string;
+  description: string;
+  
+  // Affected markets
+  affectedSystems: number[];
+  affectedGoods: TradeGood[];
+  
+  // Economic impact
+  priceImpact: Map<TradeGood, number>; // percentage change
+  volumeImpact: Map<TradeGood, number>; // percentage change
+  supplyImpact: Map<TradeGood, number>; // percentage change
+  
+  // Duration and progression
+  duration: number; // hours
+  remainingDuration: number;
+  
+  // Context
+  causes: string[];
+  consequences: string[];
+  affectedPopulations: number; // people affected
+  
+  // Economic indicators
+  economicIndicators: {
+    inflation: number;
+    unemployment: number;
+    tradeVolume: number;
+    marketStability: number;
+  };
+}
+
+export enum EconomicEventType {
+  // Natural disasters
+  NATURAL_DISASTER = 'natural_disaster',
+  WEATHER_EVENT = 'weather_event',
+  PANDEMIC = 'pandemic',
+  
+  // Economic events
+  ECONOMIC_BOOM = 'economic_boom',
+  RECESSION = 'recession',
+  MARKET_CRASH = 'market_crash',
+  INFLATION_SPIKE = 'inflation_spike',
+  
+  // Political events
+  GOVERNMENT_CHANGE = 'government_change',
+  WAR = 'war',
+  PEACE_TREATY = 'peace_treaty',
+  TRADE_EMBARGO = 'trade_embargo',
+  
+  // Technological events
+  TECH_BREAKTHROUGH = 'tech_breakthrough',
+  RESOURCE_DISCOVERY = 'resource_discovery',
+  INFRASTRUCTURE_UPGRADE = 'infrastructure_upgrade',
+  
+  // Market manipulation
+  MARKET_MANIPULATION = 'market_manipulation',
+  CORPORATE_TAKEOVER = 'corporate_takeover',
+  MONOPOLY_FORMATION = 'monopoly_formation',
+  
+  // Player-specific events
+  PLAYER_ACHIEVEMENT = 'player_achievement',
+  TRADE_ROUTE_ESTABLISHMENT = 'trade_route_establishment'
+}
+
+export interface GlobalEconomicState {
+  timestamp: number;
+  
+  // Overall economic health
+  economicHealth: number; // 0-1
+  tradeVolumeIndex: number; // 0-100
+  priceStabilityIndex: number; // 0-100
+  innovationIndex: number; // 0-100
+  
+  // Market concentration
+  marketConcentration: Map<TradeGood, number>; // Herfindahl-Hirschman Index
+  monopolyThreats: Array<{
+    good: TradeGood;
+    systemId: number;
+    concentration: number;
+    threatLevel: 'LOW' | 'MEDIUM' | 'HIGH';
+  }>;
+  
+  // Economic inequality
+  wealthDistribution: {
+    top10Percent: number; // wealth share percentage
+    giniCoefficient: number; // 0-1 (0 = perfect equality)
+    averageWealth: number;
+  };
+  
+  // Trade flows
+  majorTradeRoutes: Array<{
+    fromSystem: number;
+    toSystem: number;
+    primaryGood: TradeGood;
+    volume: number;
+    value: number;
+    stability: number; // 0-1
+  }>;
+  
+  // Economic sentiment
+  marketSentiment: 'OPTIMISTIC' | 'NEUTRAL' | 'PESSIMISTIC';
+  consumerConfidence: number; // 0-100
+  
+  // Regulatory environment
+  regulationTightness: number; // 0-1
+  enforcementEffectiveness: number; // 0-1
+  corruptionLevel: number; // 0-1
+}
+
+export interface PlayerEconomicProfile {
+  playerId: string;
+  
+  // Trading metrics
+  totalCredits: number;
+  netWorth: number;
+  tradingVolume: number;
+  profitMargin: number;
+  
+  // Market influence
+  marketImpactScore: number; // 0-1
+  systemReputations: Map<number, number>; // systemId -> reputation
+  corporateStanding: number; // 0-100
+  governmentRelations: Map<number, number>; // governmentId -> relation
+  
+  // Economic activities
+  activeTradeRoutes: number;
+  ownedSystems: number[];
+  corporateAffiliations: string[];
+  investmentPortfolio: {
+    stocks: Map<string, number>;
+    bonds: Map<string, number>;
+    commodities: Map<TradeGood, number>;
+  };
+  
+  // Economic behavior patterns
+  riskTolerance: 'CONSERVATIVE' | 'MODERATE' | 'AGGRESSIVE';
+  preferredGoods: TradeGood[];
+  tradingFrequency: 'OCCASIONAL' | 'REGULAR' | 'INTENSIVE';
+  marketSpecialization: TradeGood[];
+  
+  // Economic achievements
+  achievements: {
+    millionare: boolean;
+    tradeBaron: boolean; // >100M profit
+    marketMaker: boolean; // Influenced major price changes
+    monopolist: boolean; // Controlled >50% of a market
+    arbitrageur: boolean; // Successful in >100 arbitrage ops
+    philanthropist: boolean; // Significant charitable contributions
+  };
+}
+
+export interface EconomicPrediction {
+  timeframe: 'SHORT_TERM' | 'MEDIUM_TERM' | 'LONG_TERM';
+  predictionType: 'PRICE' | 'VOLUME' | 'MARKET_HEALTH' | 'ECONOMIC_GROWTH';
+  
+  // Target
+  target: {
+    type: 'GOOD' | 'SYSTEM' | 'GALAXY' | 'ECONOMY';
+    good?: TradeGood;
+    systemId?: number;
+    region?: string;
+  };
+  
+  // Prediction details
+  predictedChange: number; // percentage change
+  confidence: number; // 0-1
+  timeframeHours: number;
+  
+  // Supporting factors
+  supportingFactors: string[];
+  opposingFactors: string[];
+  keyVariables: Array<{
+    variable: string;
+    impact: number; // -1 to 1
+    uncertainty: number; // 0-1
+  }>;
+  
+  // Alternative scenarios
+  bestCase: {
+    probability: number;
+    change: number;
+    conditions: string[];
+  };
+  
+  worstCase: {
+    probability: number;
+    change: number;
+    conditions: string[];
+  };
+  
+  // Market recommendations
+  recommendations: Array<{
+    action: string;
+    rationale: string;
+    risk: 'LOW' | 'MEDIUM' | 'HIGH';
+    potentialReturn: number;
+  }>;
+}
+
+/**
+ * Economic and Market System Coordinator
+ * Master controller for all economic systems in the game
+ */
+export class EconomicSystemCoordinator {
+  private marketManager: MarketManager;
+  private tradeHistoryTracker: TradeHistoryTracker;
+  private marketManipulationSystem: MarketManipulationSystem;
+  
+  // System state
+  private globalEconomicState: GlobalEconomicState;
+  private systemMarketConditions: Map<number, MarketConditions>;
+  private activeEconomicEvents: EconomicEvent[];
+  private playerEconomicProfiles: Map<string, PlayerEconomicProfile>;
+  
+  // Analytics and prediction
+  private economicModels: {
+    pricePrediction: Map<string, EconomicPrediction[]>;
+    marketSimulation: {
+      activeSimulations: Map<string, any>;
+      simulationResults: Map<string, any>;
+    };
+    trendAnalysis: {
+      shortTerm: Map<string, number>;
+      mediumTerm: Map<string, number>;
+      longTerm: Map<string, number>;
+    };
+  };
+  
+  // Real-time processing
+  private processingQueue: Array<{
+    type: string;
+    data: any;
+    priority: number;
+    timestamp: number;
+  }>;
+  
+  // Configuration
+  private readonly EVENT_PROCESSING_INTERVAL = 1000 * 60 * 5; // 5 minutes
+  private readonly PREDICTION_UPDATE_INTERVAL = 1000 * 60 * 30; // 30 minutes
+  private readonly ECONOMIC_HEALTH_UPDATE_INTERVAL = 1000 * 60 * 60; // 1 hour
+  
+  constructor(marketManager: MarketManager) {
+    this.marketManager = marketManager;
+    this.tradeHistoryTracker = new TradeHistoryTracker();
+    this.marketManipulationSystem = new MarketManipulationSystem();
+    
+    this.globalEconomicState = this.initializeGlobalEconomicState();
+    this.systemMarketConditions = new Map();
+    this.activeEconomicEvents = [];
+    this.playerEconomicProfiles = new Map();
+    
+    this.economicModels = {
+      pricePrediction: new Map(),
+      marketSimulation: {
+        activeSimulations: new Map(),
+        simulationResults: new Map()
+      },
+      trendAnalysis: {
+        shortTerm: new Map(),
+        mediumTerm: new Map(),
+        longTerm: new Map()
+      }
+    };
+    
+    this.processingQueue = [];
+    
+    // Start processing loops
+    this.startEconomicProcessing();
+  }
+
+  /**
+   * Initialize global economic state
+   */
+  private initializeGlobalEconomicState(): GlobalEconomicState {
+    return {
+      timestamp: Date.now(),
+      economicHealth: 0.7, // Base economic health
+      tradeVolumeIndex: 100, // Base index
+      priceStabilityIndex: 80, // Moderate stability
+      innovationIndex: 50, // Neutral innovation
+      
+      marketConcentration: new Map(),
+      monopolyThreats: [],
+      
+      wealthDistribution: {
+        top10Percent: 60, // Moderate inequality
+        giniCoefficient: 0.4, // Moderate inequality
+        averageWealth: 50000
+      },
+      
+      majorTradeRoutes: [],
+      
+      marketSentiment: 'NEUTRAL',
+      consumerConfidence: 50,
+      
+      regulationTightness: 0.5,
+      enforcementEffectiveness: 0.6,
+      corruptionLevel: 0.3
+    };
+  }
+
+  /**
+   * Initialize system for economic operations
+   */
+  initializeSystem(
+    systemId: number,
+    system: System
+  ): void {
+    // Initialize market conditions
+    const conditions = this.marketManipulationSystem.initializeSystemConditions(
+      systemId,
+      system.government,
+      system.economy
+    );
+    this.systemMarketConditions.set(systemId, conditions);
+
+    // Initialize market in market manager
+    this.marketManager.createSystemMarket(
+      systemId,
+      system.economy,
+      system.government,
+      system.techLevel,
+      system.position
+    );
+
+    // Calculate initial economic indicators
+    this.calculateSystemEconomicIndicators(systemId);
+  }
+
+  /**
+   * Record a trade transaction
+   */
+  recordTrade(
+    systemId: number,
+    systemName: string,
+    playerId: string,
+    tradeType: 'BUY' | 'SELL',
+    good: TradeGood,
+    quantity: number,
+    pricePerUnit: number,
+    marketContext: any,
+    economicContext: any,
+    playerContext: any
+  ): void {
+    // Record in trade history
+    this.tradeHistoryTracker.recordTrade(
+      systemId,
+      systemName,
+      playerId,
+      tradeType,
+      good,
+      quantity,
+      pricePerUnit,
+      marketContext,
+      economicContext,
+      playerContext
+    );
+
+    // Execute trade in market manager
+    const tradeResult = this.marketManager.executeTrade(
+      systemId,
+      good,
+      quantity,
+      tradeType
+    );
+
+    // Update player economic profile
+    this.updatePlayerEconomicProfile(playerId, systemId, tradeType, good, quantity, pricePerUnit);
+
+    // Check for economic events
+    this.checkForEconomicEvents(systemId, good, quantity, pricePerUnit);
+
+    // Update market conditions
+    this.updateSystemMarketConditions(systemId, good, quantity, pricePerUnit, tradeType);
+  }
+
+  /**
+   * Plan a market manipulation
+   */
+  planMarketManipulation(
+    playerId: string,
+    type: any,
+    systemId: number,
+    targetGood: TradeGood,
+    intensity: number = 0.5
+  ): {
+    success: boolean;
+    action?: MarketManipulationAction;
+    error?: string;
+    recommendations?: string[];
+  } {
+    return this.marketManipulationSystem.planManipulation(
+      playerId,
+      type,
+      systemId,
+      targetGood,
+      intensity
+    );
+  }
+
+  /**
+   * Execute market manipulation
+   */
+  executeMarketManipulation(
+    playerId: string,
+    actionId: string
+  ): {
+    success: boolean;
+    result?: any;
+    error?: string;
+  } {
+    return this.marketManipulationSystem.executeManipulation(playerId, actionId);
+  }
+
+  /**
+   * Get arbitrage opportunities
+   */
+  getArbitrageOpportunities(): ArbitrageOpportunity[] {
+    return this.tradeHistoryTracker.getArbitrageOpportunities();
+  }
+
+  /**
+   * Get manipulation opportunities for player
+   */
+  getManipulationOpportunities(
+    playerId: string,
+    availableCapital: number,
+    preferredRiskLevel: 'LOW' | 'MEDIUM' | 'HIGH' = 'MEDIUM'
+  ): ManipulationOpportunity[] {
+    return this.marketManipulationSystem.findManipulationOpportunities(
+      playerId,
+      availableCapital,
+      preferredRiskLevel
+    );
+  }
+
+  /**
+   * Generate economic predictions
+   */
+  generateEconomicPredictions(
+    timeframe: 'SHORT_TERM' | 'MEDIUM_TERM' | 'LONG_TERM',
+    targets: Array<{ type: 'GOOD' | 'SYSTEM'; good?: TradeGood; systemId?: number }>
+  ): EconomicPrediction[] {
+    const predictions: EconomicPrediction[] = [];
+
+    for (const target of targets) {
+      const prediction = this.createEconomicPrediction(timeframe, target);
+      if (prediction) {
+        predictions.push(prediction);
+      }
+    }
+
+    return predictions;
+  }
+
+  /**
+   * Create economic prediction
+   */
+  private createEconomicPrediction(
+    timeframe: 'SHORT_TERM' | 'MEDIUM_TERM' | 'LONG_TERM',
+    target: { type: 'GOOD' | 'SYSTEM'; good?: TradeGood; systemId?: number }
+  ): EconomicPrediction | null {
+    const timeframeHours = {
+      SHORT_TERM: 24,
+      MEDIUM_TERM: 168, // 1 week
+      LONG_TERM: 720   // 1 month
+    }[timeframe];
+
+    if (target.type === 'GOOD' && target.good) {
+      return this.predictGoodMarket(target.good, timeframe, timeframeHours);
+    } else if (target.type === 'SYSTEM' && target.systemId) {
+      return this.predictSystemEconomy(target.systemId, timeframe, timeframeHours);
+    }
+
+    return null;
+  }
+
+  /**
+   * Predict good market trends
+   */
+  private predictGoodMarket(
+    good: TradeGood,
+    timeframe: 'SHORT_TERM' | 'MEDIUM_TERM' | 'LONG_TERM',
+    timeframeHours: number
+  ): EconomicPrediction {
+    // Analyze trade history
+    const marketTrends = this.tradeHistoryTracker.getMarketTrends(0, good); // System ID would vary
+    
+    // Analyze manipulation activity
+    const manipulationIntensity = this.calculateGoodManipulationIntensity(good);
+    
+    // Market sentiment analysis
+    const sentiment = this.analyzeMarketSentiment(good);
+    
+    // Calculate prediction
+    const baseTrend = marketTrends?.priceMomentum || 0;
+    const manipulationEffect = manipulationIntensity * 0.2;
+    const sentimentEffect = (sentiment === 'OPTIMISTIC' ? 0.1 : sentiment === 'PESSIMISTIC' ? -0.1 : 0);
+    
+    const predictedChange = baseTrend + manipulationEffect + sentimentEffect;
+    const confidence = Math.max(0.3, 1.0 - Math.abs(predictedChange));
+
+    const supportingFactors: string[] = [];
+    const opposingFactors: string[] = [];
+
+    if (baseTrend > 0) {
+      supportingFactors.push('Positive price momentum');
+    } else {
+      opposingFactors.push('Negative price momentum');
+    }
+
+    if (manipulationIntensity > 0.5) {
+      supportingFactors.push('Active market manipulation detected');
+    }
+
+    if (sentiment !== 'NEUTRAL') {
+      supportingFactors.push(`${sentiment.toLowerCase()} market sentiment`);
+    }
+
+    return {
+      timeframe,
+      predictionType: 'PRICE',
+      target: {
+        type: 'GOOD',
+        good
+      },
+      predictedChange: predictedChange * 100, // Convert to percentage
+      confidence,
+      timeframeHours,
+      supportingFactors,
+      opposingFactors,
+      keyVariables: [
+        {
+          variable: 'Price momentum',
+          impact: baseTrend,
+          uncertainty: 0.3
+        },
+        {
+          variable: 'Manipulation intensity',
+          impact: manipulationEffect,
+          uncertainty: 0.5
+        },
+        {
+          variable: 'Market sentiment',
+          impact: sentimentEffect,
+          uncertainty: 0.4
+        }
+      ],
+      bestCase: {
+        probability: 0.3,
+        change: predictedChange * 1.5,
+        conditions: ['Market manipulation succeeds', 'Positive sentiment continues']
+      },
+      worstCase: {
+        probability: 0.2,
+        change: predictedChange * 0.5,
+        conditions: ['Manipulation backfires', 'Market shock occurs']
+      },
+      recommendations: this.generateMarketRecommendations(good, predictedChange, confidence)
+    };
+  }
+
+  /**
+   * Predict system economy trends
+   */
+  private predictSystemEconomy(
+    systemId: number,
+    timeframe: 'SHORT_TERM' | 'MEDIUM_TERM' | 'LONG_TERM',
+    timeframeHours: number
+  ): EconomicPrediction {
+    const systemHistory = this.tradeHistoryTracker.getSystemHistory(systemId);
+    const marketConditions = this.systemMarketConditions.get(systemId);
+    
+    if (!systemHistory || !marketConditions) {
+      return {
+        timeframe,
+        predictionType: 'MARKET_HEALTH',
+        target: {
+          type: 'SYSTEM',
+          systemId
+        },
+        predictedChange: 0,
+        confidence: 0.1,
+        timeframeHours,
+        supportingFactors: [],
+        opposingFactors: ['Insufficient data'],
+        keyVariables: [],
+        bestCase: { probability: 0, change: 0, conditions: [] },
+        worstCase: { probability: 0, change: 0, conditions: [] },
+        recommendations: []
+      };
+    }
+
+    // Calculate economic health trend
+    const tradeGrowth = systemHistory.tradeFrequency / 10; // Normalize
+    const priceStability = marketConditions.marketDepth;
+    const manipulationLevel = Math.max(...Array.from(marketConditions.manipulationIntensity.values()));
+    
+    const healthTrend = (tradeGrowth + priceStability - manipulationLevel) / 3;
+    
+    return {
+      timeframe,
+      predictionType: 'MARKET_HEALTH',
+      target: {
+        type: 'SYSTEM',
+        systemId
+      },
+      predictedChange: healthTrend * 20, // Scale to percentage
+      confidence: Math.min(0.9, 0.3 + (systemHistory.totalTrades / 100)),
+      timeframeHours,
+      supportingFactors: tradeGrowth > 0.1 ? ['Growing trade activity'] : [],
+      opposingFactors: manipulationLevel > 0.5 ? ['High manipulation levels'] : [],
+      keyVariables: [
+        {
+          variable: 'Trade growth',
+          impact: tradeGrowth,
+          uncertainty: 0.2
+        },
+        {
+          variable: 'Price stability',
+          impact: priceStability - 0.5,
+          uncertainty: 0.3
+        },
+        {
+          variable: 'Manipulation level',
+          impact: -manipulationLevel,
+          uncertainty: 0.4
+        }
+      ],
+      bestCase: {
+        probability: 0.3,
+        change: healthTrend * 1.5,
+        conditions: ['Stable government', 'Growing economy']
+      },
+      worstCase: {
+        probability: 0.2,
+        change: healthTrend * 0.3,
+        conditions: ['Political instability', 'Economic shocks']
+      },
+      recommendations: this.generateSystemRecommendations(systemId, healthTrend)
+    };
+  }
+
+  /**
+   * Generate market recommendations
+   */
+  private generateMarketRecommendations(
+    good: TradeGood,
+    predictedChange: number,
+    confidence: number
+  ): Array<{
+    action: string;
+    rationale: string;
+    risk: 'LOW' | 'MEDIUM' | 'HIGH';
+    potentialReturn: number;
+  }> {
+    const recommendations = [];
+
+    if (predictedChange > 0.1 && confidence > 0.6) {
+      recommendations.push({
+        action: 'Buy and hold',
+        rationale: 'Positive price trend predicted with high confidence',
+        risk: 'LOW' as const,
+        potentialReturn: predictedChange * 0.8
+      });
+    } else if (predictedChange < -0.1 && confidence > 0.6) {
+      recommendations.push({
+        action: 'Short sell',
+        rationale: 'Negative price trend predicted with high confidence',
+        risk: 'MEDIUM' as const,
+        potentialReturn: -predictedChange * 0.6
+      });
+    }
+
+    if (confidence < 0.4) {
+      recommendations.push({
+        action: 'Wait and observe',
+        rationale: 'Market conditions too uncertain for clear direction',
+        risk: 'LOW' as const,
+        potentialReturn: 0
+      });
+    }
+
+    return recommendations;
+  }
+
+  /**
+   * Generate system recommendations
+   */
+  private generateSystemRecommendations(
+    systemId: number,
+    healthTrend: number
+  ): Array<{
+    action: string;
+    rationale: string;
+    risk: 'LOW' | 'MEDIUM' | 'HIGH';
+    potentialReturn: number;
+  }> {
+    const recommendations = [];
+
+    if (healthTrend > 0.2) {
+      recommendations.push({
+        action: 'Establish trade route',
+        rationale: 'System economy showing strong growth potential',
+        risk: 'LOW' as const,
+        potentialReturn: 0.15
+      });
+    } else if (healthTrend < -0.2) {
+      recommendations.push({
+        action: 'Avoid investment',
+        rationale: 'System economy showing decline',
+        risk: 'HIGH' as const,
+        potentialReturn: -0.2
+      });
+    }
+
+    return recommendations;
+  }
+
+  /**
+   * Update player economic profile
+   */
+  private updatePlayerEconomicProfile(
+    playerId: string,
+    systemId: number,
+    tradeType: 'BUY' | 'SELL',
+    good: TradeGood,
+    quantity: number,
+    pricePerUnit: number
+  ): void {
+    let profile = this.playerEconomicProfiles.get(playerId);
+    if (!profile) {
+      profile = this.createPlayerEconomicProfile(playerId);
+      this.playerEconomicProfiles.set(playerId, profile);
+    }
+
+    const tradeValue = quantity * pricePerUnit;
+
+    // Update basic metrics
+    if (tradeType === 'BUY') {
+      profile.tradingVolume += tradeValue;
+      profile.totalCredits -= tradeValue;
+    } else {
+      profile.tradingVolume += tradeValue;
+      profile.totalCredits += tradeValue;
+      profile.netWorth += tradeValue * 0.1; // Assume 10% profit margin
+    }
+
+    // Update market impact
+    profile.marketImpactScore = Math.min(1.0, profile.marketImpactScore + (tradeValue / 100000));
+
+    // Update system reputation
+    const currentRep = profile.systemReputations.get(systemId) || 50;
+    const reputationChange = tradeType === 'SELL' ? 0.5 : 0.1;
+    profile.systemReputations.set(systemId, Math.min(100, currentRep + reputationChange));
+
+    // Update preferred goods
+    if (!profile.preferredGoods.includes(good)) {
+      profile.preferredGoods.push(good);
+    }
+
+    // Check achievements
+    this.checkEconomicAchievements(profile);
+  }
+
+  /**
+   * Create player economic profile
+   */
+  private createPlayerEconomicProfile(playerId: string): PlayerEconomicProfile {
+    return {
+      playerId,
+      totalCredits: 100000, // Starting credits
+      netWorth: 100000,
+      tradingVolume: 0,
+      profitMargin: 0,
+      marketImpactScore: 0,
+      systemReputations: new Map(),
+      corporateStanding: 50,
+      governmentRelations: new Map(),
+      activeTradeRoutes: 0,
+      ownedSystems: [],
+      corporateAffiliations: [],
+      investmentPortfolio: {
+        stocks: new Map(),
+        bonds: new Map(),
+        commodities: new Map()
+      },
+      riskTolerance: 'MODERATE',
+      preferredGoods: [],
+      tradingFrequency: 'OCCASIONAL',
+      marketSpecialization: [],
+      achievements: {
+        millionare: false,
+        tradeBaron: false,
+        marketMaker: false,
+        monopolist: false,
+        arbitrageur: false,
+        philanthropist: false
+      }
+    };
+  }
+
+  /**
+   * Check for economic achievements
+   */
+  private checkEconomicAchievements(profile: PlayerEconomicProfile): void {
+    if (!profile.achievements.millionare && profile.totalCredits >= 1000000) {
+      profile.achievements.millionare = true;
+    }
+
+    if (!profile.achievements.tradeBaron && profile.netWorth >= 100000000) {
+      profile.achievements.tradeBaron = true;
+    }
+
+    if (!profile.achievements.marketMaker && profile.marketImpactScore >= 0.5) {
+      profile.achievements.marketMaker = true;
+    }
+
+    if (!profile.achievements.arbitrageur && profile.tradingVolume >= 10000000) {
+      profile.achievements.arbitrageur = true;
+    }
+  }
+
+  /**
+   * Calculate system economic indicators
+   */
+  private calculateSystemEconomicIndicators(systemId: number): void {
+    const systemHistory = this.tradeHistoryTracker.getSystemHistory(systemId);
+    if (!systemHistory) return;
+
+    // Economic health calculation
+    const tradeVolumeScore = Math.min(1.0, systemHistory.totalVolume / 1000);
+    const priceStabilityScore = 1.0 - systemHistory.priceVolatility;
+    const marketHealthScore = (tradeVolumeScore + priceStabilityScore) / 2;
+
+    // Update global economic indicators
+    this.globalEconomicState.economicHealth = 
+      (this.globalEconomicState.economicHealth * 0.9) + (marketHealthScore * 0.1);
+  }
+
+  /**
+   * Check for economic events
+   */
+  private checkForEconomicEvents(
+    systemId: number,
+    good: TradeGood,
+    quantity: number,
+    pricePerUnit: number
+  ): void {
+    // Check for significant price movements
+    const systemHistory = this.tradeHistoryTracker.getSystemHistory(systemId);
+    if (systemHistory && systemHistory.marketShocks > 0) {
+      this.triggerEconomicEvent({
+        type: EconomicEventType.MARKET_CRASH,
+        affectedSystems: [systemId],
+        affectedGoods: [good],
+        severity: 'HIGH',
+        description: `Significant market disruption in ${good} trading`
+      });
+    }
+
+    // Check for unusual trading volumes
+    const marketConditions = this.systemMarketConditions.get(systemId);
+    if (marketConditions) {
+      const currentVolume = quantity;
+      const baselineVolume = marketConditions.tradeVolume.get(good) || 100;
+      
+      if (currentVolume > baselineVolume * 5) {
+        this.triggerEconomicEvent({
+          type: EconomicEventType.TRADE_ROUTE_ESTABLISHMENT,
+          affectedSystems: [systemId],
+          affectedGoods: [good],
+          severity: 'MEDIUM',
+          description: `Unusual trading volume detected for ${good}`
+        });
+      }
+    }
+  }
+
+  /**
+   * Trigger economic event
+   */
+  private triggerEconomicEvent(eventConfig: {
+    type: EconomicEventType;
+    affectedSystems: number[];
+    affectedGoods: TradeGood[];
+    severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+    description: string;
+  }): void {
+    const event: EconomicEvent = {
+      id: `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      type: eventConfig.type,
+      timestamp: Date.now(),
+      severity: eventConfig.severity,
+      title: this.getEventTitle(eventConfig.type),
+      description: eventConfig.description,
+      affectedSystems: eventConfig.affectedSystems,
+      affectedGoods: eventConfig.affectedGoods,
+      priceImpact: new Map(),
+      volumeImpact: new Map(),
+      supplyImpact: new Map(),
+      duration: this.getEventDuration(eventConfig.type),
+      remainingDuration: this.getEventDuration(eventConfig.type),
+      causes: [],
+      consequences: [],
+      affectedPopulations: 0,
+      economicIndicators: {
+        inflation: 0,
+        unemployment: 0,
+        tradeVolume: 0,
+        marketStability: 0
+      }
+    };
+
+    // Calculate event impacts
+    this.calculateEventImpacts(event);
+    
+    this.activeEconomicEvents.push(event);
+    
+    // Process immediate effects
+    this.processEventEffects(event);
+  }
+
+  /**
+   * Get event title
+   */
+  private getEventTitle(type: EconomicEventType): string {
+    const titles: { [key in EconomicEventType]: string } = {
+      [EconomicEventType.NATURAL_DISASTER]: 'Natural Disaster',
+      [EconomicEventType.WEATHER_EVENT]: 'Severe Weather Event',
+      [EconomicEventType.PANDEMIC]: 'Pandemic Outbreak',
+      [EconomicEventType.ECONOMIC_BOOM]: 'Economic Boom',
+      [EconomicEventType.RECESSION]: 'Economic Recession',
+      [EconomicEventType.MARKET_CRASH]: 'Market Crash',
+      [EconomicEventType.INFLATION_SPIKE]: 'Inflation Spike',
+      [EconomicEventType.GOVERNMENT_CHANGE]: 'Government Change',
+      [EconomicEventType.WAR]: 'War Outbreak',
+      [EconomicEventType.PEACE_TREATY]: 'Peace Treaty Signed',
+      [EconomicEventType.TRADE_EMBARGO]: 'Trade Embargo',
+      [EconomicEventType.TECH_BREAKTHROUGH]: 'Technological Breakthrough',
+      [EconomicEventType.RESOURCE_DISCOVERY]: 'Major Resource Discovery',
+      [EconomicEventType.INFRASTRUCTURE_UPGRADE]: 'Infrastructure Upgrade',
+      [EconomicEventType.MARKET_MANIPULATION]: 'Market Manipulation Detected',
+      [EconomicEventType.CORPORATE_TAKEOVER]: 'Corporate Takeover',
+      [EconomicEventType.MONOPOLY_FORMATION]: 'Monopoly Formation',
+      [EconomicEventType.PLAYER_ACHIEVEMENT]: 'Major Player Achievement',
+      [EconomicEventType.TRADE_ROUTE_ESTABLISHMENT]: 'Trade Route Establishment'
+    };
+
+    return titles[type] || 'Unknown Economic Event';
+  }
+
+  /**
+   * Get event duration
+   */
+  private getEventDuration(type: EconomicEventType): number {
+    const durations: { [key in EconomicEventType]: number } = {
+      [EconomicEventType.NATURAL_DISASTER]: 168, // 1 week
+      [EconomicEventType.WEATHER_EVENT]: 48,    // 2 days
+      [EconomicEventType.PANDEMIC]: 720,        // 1 month
+      [EconomicEventType.ECONOMIC_BOOM]: 2160,  // 3 months
+      [EconomicEventType.RECESSION]: 2160,      // 3 months
+      [EconomicEventType.MARKET_CRASH]: 168,    // 1 week
+      [EconomicEventType.INFLATION_SPIKE]: 720, // 1 month
+      [EconomicEventType.GOVERNMENT_CHANGE]: 720,
+      [EconomicEventType.WAR]: 4320,            // 6 months
+      [EconomicEventType.PEACE_TREATY]: 168,
+      [EconomicEventType.TRADE_EMBARGO]: 2160,
+      [EconomicEventType.TECH_BREAKTHROUGH]: 720,
+      [EconomicEventType.RESOURCE_DISCOVERY]: 2160,
+      [EconomicEventType.INFRASTRUCTURE_UPGRADE]: 2160,
+      [EconomicEventType.MARKET_MANIPULATION]: 48,
+      [EconomicEventType.CORPORATE_TAKEOVER]: 720,
+      [EconomicEventType.MONOPOLY_FORMATION]: 720,
+      [EconomicEventType.PLAYER_ACHIEVEMENT]: 24,
+      [EconomicEventType.TRADE_ROUTE_ESTABLISHMENT]: 168
+    };
+
+    return durations[type] || 48;
+  }
+
+  /**
+   * Calculate event impacts
+   */
+  private calculateEventImpacts(event: EconomicEvent): void {
+    const impactMagnitude = {
+      LOW: 0.1,
+      MEDIUM: 0.25,
+      HIGH: 0.5,
+      CRITICAL: 1.0
+    }[event.severity];
+
+    // Calculate price impacts based on event type
+    for (const good of event.affectedGoods) {
+      let priceChange = 0;
+      let volumeChange = 0;
+      let supplyChange = 0;
+
+      switch (event.type) {
+        case EconomicEventType.MARKET_CRASH:
+          priceChange = -impactMagnitude;
+          volumeChange = -impactMagnitude * 0.5;
+          supplyChange = impactMagnitude * 0.3;
+          break;
+        case EconomicEventType.ECONOMIC_BOOM:
+          priceChange = impactMagnitude * 0.2;
+          volumeChange = impactMagnitude;
+          supplyChange = impactMagnitude * 0.2;
+          break;
+        case EconomicEventType.NATURAL_DISASTER:
+          priceChange = impactMagnitude * 0.5;
+          volumeChange = -impactMagnitude * 0.3;
+          supplyChange = -impactMagnitude;
+          break;
+        case EconomicEventType.TECH_BREAKTHROUGH:
+          priceChange = -impactMagnitude * 0.3;
+          volumeChange = impactMagnitude * 0.5;
+          supplyChange = impactMagnitude * 0.2;
+          break;
+      }
+
+      event.priceImpact.set(good, priceChange);
+      event.volumeImpact.set(good, volumeChange);
+      event.supplyImpact.set(good, supplyChange);
+    }
+
+    // Calculate economic indicators
+    event.economicIndicators.inflation = impactMagnitude * 0.2;
+    event.economicIndicators.unemployment = event.type === EconomicEventType.RECESSION ? impactMagnitude : -impactMagnitude * 0.1;
+    event.economicIndicators.tradeVolume = Math.max(-impactMagnitude, impactMagnitude * (volumeChange || 0));
+    event.economicIndicators.marketStability = -impactMagnitude;
+  }
+
+  /**
+   * Process event effects
+   */
+  private processEventEffects(event: EconomicEvent): void {
+    for (const systemId of event.affectedSystems) {
+      const conditions = this.systemMarketConditions.get(systemId);
+      if (!conditions) continue;
+
+      // Apply price impacts
+      for (const [good, priceChange] of event.priceImpact.entries()) {
+        const currentPrice = conditions.currentPrice.get(good) || 100;
+        const newPrice = currentPrice * (1 + priceChange);
+        conditions.currentPrice.set(good, newPrice);
+      }
+
+      // Apply volume impacts
+      for (const [good, volumeChange] of event.volumeImpact.entries()) {
+        const currentVolume = conditions.tradeVolume.get(good) || 50;
+        const newVolume = currentVolume * (1 + volumeChange);
+        conditions.tradeVolume.set(good, newVolume);
+      }
+
+      // Apply supply impacts
+      for (const [good, supplyChange] of event.supplyImpact.entries()) {
+        const currentSupply = conditions.availableSupply.get(good) || 100;
+        const newSupply = currentSupply * (1 + supplyChange);
+        conditions.availableSupply.set(good, Math.max(0, newSupply));
+      }
+    }
+
+    // Update global economic state
+    this.updateGlobalEconomicState(event);
+  }
+
+  /**
+   * Update global economic state
+   */
+  private updateGlobalEconomicState(event: EconomicEvent): void {
+    // Update overall economic health
+    const healthChange = {
+      [EconomicEventType.ECONOMIC_BOOM]: 0.1,
+      [EconomicEventType.RECESSION]: -0.15,
+      [EconomicEventType.MARKET_CRASH]: -0.2,
+      [EconomicEventType.NATURAL_DISASTER]: -0.1,
+      [EconomicEventType.TECH_BREAKTHROUGH]: 0.05,
+      [EconomicEventType.PEACE_TREATY]: 0.08
+    }[event.type] || 0;
+
+    this.globalEconomicState.economicHealth = Math.max(0, Math.min(1, 
+      this.globalEconomicState.economicHealth + healthChange));
+
+    // Update trade volume index
+    const volumeChange = Array.from(event.volumeImpact.values())
+      .reduce((sum, change) => sum + change, 0) / event.affectedGoods.length;
+    this.globalEconomicState.tradeVolumeIndex += volumeChange * 10;
+
+    // Update price stability
+    this.globalEconomicState.priceStabilityIndex -= Math.abs(volumeChange) * 15;
+
+    // Update innovation index
+    if (event.type === EconomicEventType.TECH_BREAKTHROUGH) {
+      this.globalEconomicState.innovationIndex += 5;
+    }
+
+    // Update market sentiment
+    if (healthChange > 0.1) {
+      this.globalEconomicState.marketSentiment = 'OPTIMISTIC';
+      this.globalEconomicState.consumerConfidence += 10;
+    } else if (healthChange < -0.1) {
+      this.globalEconomicState.marketSentiment = 'PESSIMISTIC';
+      this.globalEconomicState.consumerConfidence -= 15;
+    }
+  }
+
+  /**
+   * Update system market conditions
+   */
+  private updateSystemMarketConditions(
+    systemId: number,
+    good: TradeGood,
+    quantity: number,
+    pricePerUnit: number,
+    tradeType: 'BUY' | 'SELL'
+  ): void {
+    const conditions = this.systemMarketConditions.get(systemId);
+    if (!conditions) return;
+
+    // Update current price
+    const currentPrice = conditions.currentPrice.get(good) || 100;
+    conditions.currentPrice.set(good, pricePerUnit);
+
+    // Update trade volume
+    const currentVolume = conditions.tradeVolume.get(good) || 50;
+    const volumeChange = quantity / 100; // Normalize
+    const newVolume = tradeType === 'SELL' ? currentVolume + volumeChange : currentVolume;
+    conditions.tradeVolume.set(good, newVolume);
+
+    // Update available supply
+    const currentSupply = conditions.availableSupply.get(good) || 100;
+    const supplyChange = tradeType === 'SELL' ? quantity : -quantity;
+    const newSupply = Math.max(0, currentSupply + supplyChange);
+    conditions.availableSupply.set(good, newSupply);
+
+    // Update manipulation intensity based on large trades
+    if (quantity > 500) {
+      const currentIntensity = conditions.manipulationIntensity.get(good) || 0;
+      const newIntensity = Math.min(1.0, currentIntensity + 0.1);
+      conditions.manipulationIntensity.set(good, newIntensity);
+    }
+  }
+
+  /**
+   * Calculate good manipulation intensity
+   */
+  private calculateGoodManipulationIntensity(good: TradeGood): number {
+    let totalIntensity = 0;
+    let systemCount = 0;
+
+    for (const conditions of this.systemMarketConditions.values()) {
+      const intensity = conditions.manipulationIntensity.get(good) || 0;
+      totalIntensity += intensity;
+      systemCount++;
+    }
+
+    return systemCount > 0 ? totalIntensity / systemCount : 0;
+  }
+
+  /**
+   * Analyze market sentiment
+   */
+  private analyzeMarketSentiment(good: TradeGood): 'OPTIMISTIC' | 'NEUTRAL' | 'PESSIMISTIC' {
+    // Analyze recent price trends
+    let positiveTrends = 0;
+    let negativeTrends = 0;
+
+    for (const conditions of this.systemMarketConditions.values()) {
+      const currentPrice = conditions.currentPrice.get(good) || 100;
+      // In a full implementation, we'd compare to historical prices
+      if (currentPrice > 105) {
+        positiveTrends++;
+      } else if (currentPrice < 95) {
+        negativeTrends++;
+      }
+    }
+
+    if (positiveTrends > negativeTrends * 1.5) {
+      return 'OPTIMISTIC';
+    } else if (negativeTrends > positiveTrends * 1.5) {
+      return 'PESSIMISTIC';
+    } else {
+      return 'NEUTRAL';
+    }
+  }
+
+  /**
+   * Start economic processing loops
+   */
+  private startEconomicProcessing(): void {
+    // Event processing
+    setInterval(() => {
+      this.processEconomicEvents();
+    }, this.EVENT_PROCESSING_INTERVAL);
+
+    // Prediction updates
+    setInterval(() => {
+      this.updateEconomicPredictions();
+    }, this.PREDICTION_UPDATE_INTERVAL);
+
+    // Economic health updates
+    setInterval(() => {
+      this.updateGlobalEconomicHealth();
+    }, this.ECONOMIC_HEALTH_UPDATE_INTERVAL);
+  }
+
+  /**
+   * Process economic events
+   */
+  private processEconomicEvents(): void {
+    const now = Date.now();
+    
+    for (const event of this.activeEconomicEvents) {
+      event.remainingDuration--;
+      
+      if (event.remainingDuration <= 0) {
+        // Event ended, remove it
+        const index = this.activeEconomicEvents.indexOf(event);
+        this.activeEconomicEvents.splice(index, 1);
+      }
+    }
+  }
+
+  /**
+   * Update economic predictions
+   */
+  private updateEconomicPredictions(): void {
+    // Update short-term predictions
+    for (const [key, prediction] of this.economicModels.trendAnalysis.shortTerm.entries()) {
+      // Process prediction updates
+    }
+
+    // Generate new predictions for active markets
+    // This would be implemented based on current market conditions
+  }
+
+  /**
+   * Update global economic health
+   */
+  private updateGlobalEconomicHealth(): void {
+    let totalHealth = 0;
+    let systemCount = 0;
+
+    for (const conditions of this.systemMarketConditions.values()) {
+      const systemHealth = this.calculateSystemHealth(conditions);
+      totalHealth += systemHealth;
+      systemCount++;
+    }
+
+    if (systemCount > 0) {
+      const averageHealth = totalHealth / systemCount;
+      this.globalEconomicState.economicHealth = 
+        (this.globalEconomicState.economicHealth * 0.9) + (averageHealth * 0.1);
+    }
+
+    this.globalEconomicState.timestamp = Date.now();
+  }
+
+  /**
+   * Calculate system health
+   */
+  private calculateSystemHealth(conditions: MarketConditions): number {
+    let health = 0.5; // Base health
+
+    // Factor in market depth
+    health += conditions.marketDepth * 0.3;
+
+    // Factor in political stability
+    health += conditions.politicalStability * 0.2;
+
+    // Penalize high manipulation
+    const maxManipulation = Math.max(...Array.from(conditions.manipulationIntensity.values()));
+    health -= maxManipulation * 0.2;
+
+    return Math.max(0, Math.min(1, health));
+  }
+
+  // =============== Public API ===============
+
+  /**
+   * Get global economic state
+   */
+  getGlobalEconomicState(): GlobalEconomicState {
+    return { ...this.globalEconomicState };
+  }
+
+  /**
+   * Get system market conditions
+   */
+  getSystemMarketConditions(systemId: number): MarketConditions | undefined {
+    return this.systemMarketConditions.get(systemId);
+  }
+
+  /**
+   * Get player economic profile
+   */
+  getPlayerEconomicProfile(playerId: string): PlayerEconomicProfile | undefined {
+    return this.playerEconomicProfiles.get(playerId);
+  }
+
+  /**
+   * Get active economic events
+   */
+  getActiveEconomicEvents(): EconomicEvent[] {
+    return [...this.activeEconomicEvents];
+  }
+
+  /**
+   * Get trade history summary
+   */
+  getTradeHistorySummary() {
+    return this.tradeHistoryTracker.getTradingStatistics();
+  }
+
+  /**
+   * Get manipulator profile
+   */
+  getManipulatorProfile(playerId: string) {
+    return this.marketManipulationSystem.getManipulatorProfile(playerId);
+  }
+
+  /**
+   * Get global manipulation statistics
+   */
+  getGlobalManipulationStats() {
+    return this.marketManipulationSystem.getGlobalManipulationStats();
+  }
+
+  /**
+   * Get market summary for system
+   */
+  getSystemMarketSummary(systemId: number) {
+    return this.marketManager.getMarketSummary(systemId);
+  }
+
+  /**
+   * Get arbitrage opportunities
+   */
+  getCurrentArbitrageOpportunities(): ArbitrageOpportunity[] {
+    return this.getArbitrageOpportunities();
+  }
+
+  /**
+   * Search trade records
+   */
+  searchTradeRecords(filters: any, limit: number = 100) {
+    return this.tradeHistoryTracker.searchTradeRecords(filters, limit);
+  }
+
+  /**
+   * Get market trends analysis
+   */
+  getMarketTrends(systemId: number, good: TradeGood) {
+    return this.tradeHistoryTracker.getMarketTrends(systemId, good);
+  }
+
+  /**
+   * Get complete economic dashboard data
+   */
+  getEconomicDashboard(): {
+    globalState: GlobalEconomicState;
+    activeEvents: EconomicEvent[];
+    manipulationStats: any;
+    tradeStats: any;
+    systemSummaries: Array<{
+      systemId: number;
+      health: number;
+      manipulationLevel: number;
+      recentActivity: number;
+    }>;
+  } {
+    return {
+      globalState: this.getGlobalEconomicState(),
+      activeEvents: this.getActiveEconomicEvents(),
+      manipulationStats: this.getGlobalManipulationStats(),
+      tradeStats: this.getTradeHistorySummary(),
+      systemSummaries: Array.from(this.systemMarketConditions.entries()).map(([systemId, conditions]) => ({
+        systemId,
+        health: this.calculateSystemHealth(conditions),
+        manipulationLevel: Math.max(...Array.from(conditions.manipulationIntensity.values())),
+        recentActivity: this.calculateRecentActivity(systemId)
+      }))
+    };
+  }
+
+  /**
+   * Calculate recent activity for system
+   */
+  private calculateRecentActivity(systemId: number): number {
+    const systemHistory = this.tradeHistoryTracker.getSystemHistory(systemId);
+    if (!systemHistory) return 0;
+
+    return Math.min(1.0, systemHistory.totalTrades / 100);
+  }
+}

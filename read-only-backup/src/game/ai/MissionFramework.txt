@@ -1,0 +1,1150 @@
+/**
+ * Mission Framework - Advanced mission system for Elite-style gameplay
+ * Handles mission generation, tracking, storylines, and procedural mission creation
+ */
+
+import { ShipType } from '../models/Ship.js';
+
+export interface Mission {
+  id: string;
+  title: string;
+  description: string;
+  type: MissionType;
+  difficulty: 'easy' | 'medium' | 'hard' | 'extreme';
+  category: MissionCategory;
+  location: MissionLocation;
+  requirements: MissionRequirement[];
+  objectives: MissionObjective[];
+  rewards: MissionReward[];
+  timeLimit: number;
+  failureConditions: MissionFailureCondition[];
+  successConditions: MissionSuccessCondition[];
+  prerequisites: string[]; // Other missions required first
+  reputationRequirements: Map<string, number>;
+  legalStatusRequirements: string;
+  cargoRestrictions: CargoRestriction[];
+  created: number;
+  expires: number;
+  active: boolean;
+  completed: boolean;
+  failed: boolean;
+  confidential: boolean; // Some missions require discretion
+}
+
+export enum MissionType {
+  // Combat missions
+  ASSASSINATION = 'assassination',
+  PIRATE_HUNT = 'pirate_hunt',
+  ESCORT = 'escort',
+  INTERDICTION = 'interdiction',
+  
+  // Trading missions
+  DELIVERY = 'delivery',
+  COLLECTION = 'collection',
+  SMUGGLING = 'smuggling',
+  CARGO_TRANSPORT = 'cargo_transport',
+  
+  // Exploration missions
+  SURVEY = 'survey',
+  EXPLORATION = 'exploration',
+  ANOMALY_INVESTIGATION = 'anomaly_investigation',
+  XENOBiology = 'xenobiology',
+  
+  // Special missions
+  RESCUE = 'rescue',
+  TERRORIST_HUNT = 'terrorist_hunt',
+  SABOTAGE = 'sabotage',
+  DIPLOMATIC = 'diplomatic',
+  
+  // Chain missions
+  STORYLINE = 'storyline',
+  TUTORIAL = 'tutorial',
+  ENDGAME = 'endgame'
+}
+
+export enum MissionCategory {
+  COMBAT = 'combat',
+  TRADING = 'trading',
+  EXPLORATION = 'exploration',
+  SPECIAL = 'special',
+  MAINTENANCE = 'maintenance',
+  RESCUE = 'rescue'
+}
+
+export interface MissionLocation {
+  system: string;
+  stations: string[];
+  coordinates: Vector3D[];
+  regions: string[];
+  jumpPoints: string[];
+  noFireZones: string[];
+  dangerousAreas: string[];
+}
+
+export interface MissionRequirement {
+  type: 'ship_type' | 'ship_class' | 'cargo_capacity' | 'weapon_equipped' | 'reputation' | 'legal_status' | 'credits' | 'mission_rank' | 'equipment';
+  value: any;
+  comparison: '==' | '!=' | '>' | '<' | '>=' | '<=' | 'contains' | 'not_contains';
+  description: string;
+  optional: boolean;
+}
+
+export interface MissionObjective {
+  id: string;
+  title: string;
+  description: string;
+  type: 'deliver' | 'collect' | 'destroy' | 'reach' | 'scan' | 'escort' | 'avoid' | 'wait' | 'investigate' | 'rescue';
+  target?: string;
+  location?: string;
+  quantity?: number;
+  completed: boolean;
+  optional: boolean;
+  progress: number; // 0-1
+  timeout?: number;
+  dependencies: string[]; // Other objectives that must be completed first
+  conditions: ObjectiveCondition[];
+}
+
+export interface ObjectiveCondition {
+  type: 'distance' | 'time' | 'item_collected' | 'enemy_defeated' | 'area_entered' | 'scan_completed';
+  target: string;
+  value: any;
+  comparison: string;
+  description: string;
+}
+
+export interface MissionReward {
+  type: 'credits' | 'reputation' | 'ship_upgrade' | 'equipment' | 'information' | 'faction_standing' | 'license' | 'title' | 'story_unlock';
+  amount?: number;
+  item?: string;
+  description: string;
+  rarity: 'common' | 'uncommon' | 'rare' | 'unique' | 'legendary';
+  value: number; // For trade evaluation
+  requirements?: string[]; // What player must do to receive reward
+}
+
+export interface MissionFailureCondition {
+  type: 'timeout' | 'target_escaped' | 'civilians_harmed' | 'illegal_action' | 'equipment_destroyed' | 'reputation_loss';
+  trigger: string;
+  penalty: MissionPenalty;
+  description: string;
+}
+
+export interface MissionPenalty {
+  credits?: number;
+  reputation?: Map<string, number>;
+  legalStatus?: number;
+  equipment?: string[];
+  storyProgress?: string;
+}
+
+export interface MissionSuccessCondition {
+  type: 'all_objectives' | 'primary_objective' | 'minimum_objectives' | 'time_limit' | 'stealth_required';
+  parameters: any;
+  description: string;
+}
+
+export interface CargoRestriction {
+  type: string;
+  maxQuantity: number;
+  allowed: boolean;
+  description: string;
+}
+
+export interface MissionGenerationContext {
+  playerShip: ShipType;
+  playerCredits: number;
+  playerReputation: Map<string, number>;
+  currentSystem: string;
+  localFactions: string[];
+  economicConditions: EconomicCondition[];
+  recentEvents: string[];
+  difficulty: 'easy' | 'medium' | 'hard';
+  missionRank: number;
+  legalStatus: number;
+  completedMissions: string[];
+  activeMissions: string[];
+  timeSinceLastMission: number;
+}
+
+export interface EconomicCondition {
+  faction: string;
+  condition: 'war' | 'peace' | 'shortage' | 'abundance' | 'blockade' | 'prosperity';
+  severity: number; // 0-1
+  affectedGoods: string[];
+  duration: number;
+}
+
+export interface MissionStoryline {
+  id: string;
+  name: string;
+  description: string;
+  missions: MissionLineage[];
+  prerequisites: string[];
+  rewards: MissionReward[];
+  hiddenRequirements: HiddenRequirement[];
+  progressiveDifficulty: boolean;
+  maxMissions: number;
+  branching: StorylineBranch[];
+}
+
+export interface MissionLineage {
+  missionId: string;
+  order: number;
+  prerequisites: string[]; // Mission IDs
+  dependencies: string[]; // Story elements that must be established
+  unlocks: string[]; // What this mission unlocks
+}
+
+export interface HiddenRequirement {
+  condition: string;
+  description: string;
+  requiredState: any;
+  notification: string;
+}
+
+export interface StorylineBranch {
+  fromMission: string;
+  conditions: BranchCondition[];
+  consequences: BranchConsequence[];
+}
+
+export interface BranchCondition {
+  type: 'reputation' | 'credits' | 'mission_completion' | 'time_elapsed' | 'random';
+  parameters: any;
+  probability: number;
+}
+
+export interface BranchConsequence {
+  type: 'mission_unlocked' | 'reputation_change' | 'story_lock' | 'new_faction' | 'world_change';
+  parameters: any;
+  description: string;
+}
+
+export interface ProceduralMissionTemplate {
+  id: string;
+  name: string;
+  type: MissionType;
+  difficultyRange: { min: number; max: number };
+  systemTypes: string[];
+  duration: { min: number; max: number };
+  complexity: number; // 0-1 (affects objective count and requirements)
+  rewardMultiplier: number;
+  failureChance: number; // Base chance of mission failure
+  parameters: TemplateParameters;
+}
+
+export interface TemplateParameters {
+  cargoTypes: string[];
+  weaponTypes: string[];
+  locationTypes: string[];
+  factionTypes: string[];
+  eventTypes: string[];
+  complicationChance: number;
+  assistanceAvailable: boolean;
+  timePressure: number; // 0-1
+}
+
+/**
+ * Advanced Mission Framework for Elite-style mission gameplay
+ */
+export class MissionFramework {
+  private missions: Map<string, Mission>;
+  private storylines: Map<string, MissionStoryline>;
+  private proceduralTemplates: Map<string, ProceduralMissionTemplate>;
+  private missionCounter: number = 0;
+  private activeMissions: Set<string>;
+  private missionHistory: string[]; // Track completed missions for analytics
+  private generationContext: MissionGenerationContext | null;
+
+  constructor() {
+    this.missions = new Map();
+    this.storylines = new Map();
+    this.proceduralTemplates = new Map();
+    this.activeMissions = new Set();
+    this.missionHistory = [];
+    
+    this.initializeStorylines();
+    this.initializeProceduralTemplates();
+  }
+
+  /**
+   * Generate mission for player based on context
+   */
+  generateMission(context: MissionGenerationContext): Mission | null {
+    this.generationContext = context;
+    
+    // Select appropriate mission template
+    const template = this.selectMissionTemplate(context);
+    if (!template) return null;
+    
+    // Generate mission using template
+    const mission = this.generateMissionFromTemplate(template, context);
+    if (mission) {
+      this.missions.set(mission.id, mission);
+      return mission;
+    }
+    
+    return null;
+  }
+
+  /**
+   * Generate storyline mission
+   */
+  generateStorylineMission(storylineId: string, context: MissionGenerationContext): Mission | null {
+    const storyline = this.storylines.get(storylineId);
+    if (!storyline) return null;
+    
+    // Find next mission in storyline
+    const nextMission = this.getNextStorylineMission(storyline, context);
+    if (!nextMission) return null;
+    
+    // Generate the mission
+    const mission = this.generateStorylineMissionInstance(nextMission, context);
+    if (mission) {
+      this.missions.set(mission.id, mission);
+      return mission;
+    }
+    
+    return null;
+  }
+
+  /**
+   * Accept mission
+   */
+  acceptMission(missionId: string): boolean {
+    const mission = this.missions.get(missionId);
+    if (!mission || mission.active || mission.completed || mission.failed) {
+      return false;
+    }
+    
+    // Check requirements
+    if (!this.checkMissionRequirements(mission, this.generationContext)) {
+      return false;
+    }
+    
+    mission.active = true;
+    mission.expires = Date.now() + (mission.timeLimit * 1000);
+    this.activeMissions.add(missionId);
+    
+    return true;
+  }
+
+  /**
+   * Update mission progress
+   */
+  updateMissionProgress(missionId: string, objectiveId: string, progress: number, data?: any): boolean {
+    const mission = this.missions.get(missionId);
+    if (!mission || !mission.active) return false;
+    
+    const objective = mission.objectives.find(obj => obj.id === objectiveId);
+    if (!objective) return false;
+    
+    // Update progress
+    objective.progress = Math.max(0, Math.min(1, progress));
+    
+    // Check if objective is completed
+    if (objective.progress >= 1.0) {
+      objective.completed = true;
+      
+      // Check for mission completion
+      this.checkMissionCompletion(mission);
+      
+      // Trigger any consequences
+      this.triggerObjectiveConsequences(mission, objective, data);
+    }
+    
+    return true;
+  }
+
+  /**
+   * Fail mission
+   */
+  failMission(missionId: string, reason: string): MissionPenalty | null {
+    const mission = this.missions.get(missionId);
+    if (!mission || !mission.active) return null;
+    
+    mission.failed = true;
+    mission.active = false;
+    this.activeMissions.delete(missionId);
+    
+    // Calculate penalties
+    const penalty = this.calculateFailurePenalty(mission, reason);
+    
+    // Trigger failure consequences
+    this.triggerMissionFailureConsequences(mission, reason);
+    
+    return penalty;
+  }
+
+  /**
+   * Complete mission
+   */
+  completeMission(missionId: string): MissionReward[] {
+    const mission = this.missions.get(missionId);
+    if (!mission || !mission.active) return [];
+    
+    mission.completed = true;
+    mission.active = false;
+    this.activeMissions.delete(missionId);
+    this.missionHistory.push(missionId);
+    
+    // Calculate rewards
+    const rewards = this.calculateMissionRewards(mission);
+    
+    // Trigger completion consequences
+    this.triggerMissionCompletionConsequences(mission);
+    
+    return rewards;
+  }
+
+  /**
+   * Generate procedural mission from template
+   */
+  private generateMissionFromTemplate(template: ProceduralMissionTemplate, context: MissionGenerationContext): Mission | null {
+    const missionId = `procedural_${++this.missionCounter}`;
+    
+    // Generate mission elements based on template
+    const location = this.generateMissionLocation(template, context);
+    const objectives = this.generateObjectives(template, context, location);
+    const requirements = this.generateRequirements(template, context);
+    const rewards = this.generateRewards(template, context);
+    
+    // Determine difficulty and time limit
+    const difficulty = this.calculateDifficulty(context.difficulty, template.complexity);
+    const timeLimit = this.generateTimeLimit(template.duration, difficulty);
+    
+    const mission: Mission = {
+      id: missionId,
+      title: this.generateMissionTitle(template, context),
+      description: this.generateMissionDescription(template, objectives),
+      type: template.type,
+      difficulty,
+      category: this.getCategoryFromType(template.type),
+      location,
+      requirements,
+      objectives,
+      rewards,
+      timeLimit,
+      failureConditions: this.generateFailureConditions(template, context),
+      successConditions: this.generateSuccessConditions(template, context),
+      prerequisites: [],
+      reputationRequirements: this.generateReputationRequirements(template, context),
+      legalStatusRequirements: 'clean',
+      cargoRestrictions: this.generateCargoRestrictions(template, context),
+      created: Date.now(),
+      expires: 0, // Will be set when accepted
+      active: false,
+      completed: false,
+      failed: false,
+      confidential: template.type === MissionType.SMUGGLING || template.type === MissionType.SABOTAGE
+    };
+    
+    return mission;
+  }
+
+  /**
+   * Generate storyline mission instance
+   */
+  private generateStorylineMissionInstance(lineage: MissionLineage, context: MissionGenerationContext): Mission | null {
+    // This would integrate with actual mission data
+    // For now, create a placeholder
+    return {
+      id: `storyline_${++this.missionCounter}`,
+      title: 'Storyline Mission',
+      description: 'A mission from the main storyline',
+      type: MissionType.DELIVERY,
+      difficulty: 'medium',
+      category: MissionCategory.SPECIAL,
+      location: { system: context.currentSystem, stations: [], coordinates: [], regions: [], jumpPoints: [], noFireZones: [], dangerousAreas: [] },
+      requirements: [],
+      objectives: [],
+      rewards: [],
+      timeLimit: 3600,
+      failureConditions: [],
+      successConditions: [],
+      prerequisites: lineage.prerequisites,
+      reputationRequirements: new Map(),
+      legalStatusRequirements: 'clean',
+      cargoRestrictions: [],
+      created: Date.now(),
+      expires: 0,
+      active: false,
+      completed: false,
+      failed: false,
+      confidential: false
+    };
+  }
+
+  /**
+   * Initialize storyline definitions
+   */
+  private initializeStorylines(): void {
+    const mainStoryline: MissionStoryline = {
+      id: 'main_story',
+      name: 'The Frontier Chronicles',
+      description: 'Epic journey through the galaxy\'s most dangerous regions',
+      missions: [
+        {
+          missionId: 'intro_001',
+          order: 1,
+          prerequisites: [],
+          dependencies: ['new_commander'],
+          unlocks: ['trade_networks']
+        },
+        {
+          missionId: 'discovery_001',
+          order: 2,
+          prerequisites: ['intro_001'],
+          dependencies: ['trade_networks', 'first_contact'],
+          unlocks: ['alien_encounters']
+        },
+        {
+          missionId: 'conflict_001',
+          order: 3,
+          prerequisites: ['discovery_001'],
+          dependencies: ['alien_encounters'],
+          unlocks: ['galactic_war']
+        }
+      ],
+      prerequisites: [],
+      rewards: [],
+      hiddenRequirements: [],
+      progressiveDifficulty: true,
+      maxMissions: 12,
+      branching: []
+    };
+    
+    this.storylines.set('main_story', mainStoryline);
+  }
+
+  /**
+   * Initialize procedural mission templates
+   */
+  private initializeProceduralTemplates(): void {
+    // Trading templates
+    const deliveryTemplate: ProceduralMissionTemplate = {
+      id: 'delivery_basic',
+      name: 'Delivery Contract',
+      type: MissionType.DELIVERY,
+      difficultyRange: { min: 1, max: 3 },
+      systemTypes: ['industrial', 'agricultural', 'mining'],
+      duration: { min: 600, max: 3600 },
+      complexity: 0.3,
+      rewardMultiplier: 1.0,
+      failureChance: 0.1,
+      parameters: {
+        cargoTypes: ['food', 'medicine', 'electronics', 'luxury'],
+        weaponTypes: ['none', 'light'],
+        locationTypes: ['station', 'outpost', 'settlement'],
+        factionTypes: ['federation', 'empire', 'alliance'],
+        eventTypes: ['patrol_check', 'pirate_encounter'],
+        complicationChance: 0.2,
+        assistanceAvailable: true,
+        timePressure: 0.3
+      }
+    };
+    
+    const combatTemplate: ProceduralMissionTemplate = {
+      id: 'pirate_hunt_basic',
+      name: 'Pirate Hunt',
+      type: MissionType.PIRATE_HUNT,
+      difficultyRange: { min: 2, max: 4 },
+      systemTypes: ['anarchy', 'feudal', 'low_tech'],
+      duration: { min: 1800, max: 7200 },
+      complexity: 0.6,
+      rewardMultiplier: 1.5,
+      failureChance: 0.2,
+      parameters: {
+        cargoTypes: [],
+        weaponTypes: ['military', 'heavy'],
+        locationTypes: ['space', 'navigation_beacon'],
+        factionTypes: ['pirate', 'anarchy'],
+        eventTypes: ['reinforcements', 'civilian_interference'],
+        complicationChance: 0.4,
+        assistanceAvailable: false,
+        timePressure: 0.5
+      }
+    };
+    
+    const explorationTemplate: ProceduralMissionTemplate = {
+      id: 'survey_basic',
+      name: 'System Survey',
+      type: MissionType.SURVEY,
+      difficultyRange: { min: 1, max: 3 },
+      systemTypes: ['unexplored', 'frontier', 'science'],
+      duration: { min: 3600, max: 10800 },
+      complexity: 0.5,
+      rewardMultiplier: 1.2,
+      failureChance: 0.05,
+      parameters: {
+        cargoTypes: ['scientific_equipment'],
+        weaponTypes: ['light', 'none'],
+        locationTypes: ['deep_space', 'anomaly'],
+        factionTypes: ['independent', 'scientist'],
+        eventTypes: ['equipment_failure', 'atmospheric_interference'],
+        complicationChance: 0.3,
+        assistanceAvailable: true,
+        timePressure: 0.2
+      }
+    };
+    
+    this.proceduralTemplates.set('delivery_basic', deliveryTemplate);
+    this.proceduralTemplates.set('pirate_hunt_basic', combatTemplate);
+    this.proceduralTemplates.set('survey_basic', explorationTemplate);
+  }
+
+  /**
+   * Select appropriate mission template
+   */
+  private selectMissionTemplate(context: MissionGenerationContext): ProceduralMissionTemplate | null {
+    const availableTemplates = Array.from(this.proceduralTemplates.values())
+      .filter(template => {
+        // Check difficulty range
+        if (context.missionRank < template.difficultyRange.min || context.missionRank > template.difficultyRange.max) {
+          return false;
+        }
+        
+        // Check if system type is suitable
+        if (!template.systemTypes.includes(context.currentSystem)) {
+          return false;
+        }
+        
+        // Check if player has required equipment (simplified)
+        if (template.parameters.weaponTypes.includes('military') && context.playerShip === ShipType.HAULER) {
+          return false;
+        }
+        
+        return true;
+      });
+    
+    if (availableTemplates.length === 0) return null;
+    
+    // Select based on context factors
+    const weights = availableTemplates.map(template => {
+      let weight = 1.0;
+      
+      // Prefer different mission types based on player history
+      const recentTypes = this.getRecentMissionTypes(context);
+      if (recentTypes.includes(template.type)) {
+        weight *= 0.7; // Reduce weight for recently done types
+      }
+      
+      // Economic conditions affect template selection
+      const economicBoost = this.getEconomicConditionBoost(template, context.economicConditions);
+      weight *= economicBoost;
+      
+      // Random factor
+      weight *= (0.8 + Math.random() * 0.4);
+      
+      return { template, weight };
+    });
+    
+    // Weighted random selection
+    const totalWeight = weights.reduce((sum, item) => sum + item.weight, 0);
+    let random = Math.random() * totalWeight;
+    
+    for (const item of weights) {
+      random -= item.weight;
+      if (random <= 0) {
+        return item.template;
+      }
+    }
+    
+    return weights[0].template;
+  }
+
+  /**
+   * Generate mission location
+   */
+  private generateMissionLocation(template: ProceduralMissionTemplate, context: MissionGenerationContext): MissionLocation {
+    const locationType = template.parameters.locationTypes[Math.floor(Math.random() * template.parameters.locationTypes.length)];
+    const faction = template.parameters.factionTypes[Math.floor(Math.random() * template.parameters.factionTypes.length)];
+    
+    return {
+      system: context.currentSystem,
+      stations: this.generateStations(locationType, faction),
+      coordinates: this.generateCoordinates(locationType),
+      regions: this.generateRegions(faction),
+      jumpPoints: this.generateJumpPoints(),
+      noFireZones: this.generateNoFireZones(locationType),
+      dangerousAreas: this.generateDangerousAreas(template.type)
+    };
+  }
+
+  /**
+   * Generate mission objectives
+   */
+  private generateObjectives(template: ProceduralMissionTemplate, context: MissionGenerationContext, location: MissionLocation): MissionObjective[] {
+    const objectives: MissionObjective[] = [];
+    const complexity = template.complexity;
+    
+    switch (template.type) {
+      case MissionType.DELIVERY:
+        objectives.push({
+          id: 'collect_cargo',
+          title: 'Collect Cargo',
+          description: 'Pick up cargo from departure point',
+          type: 'collect',
+          location: location.stations[0],
+          completed: false,
+          optional: false,
+          progress: 0,
+          dependencies: [],
+          conditions: []
+        });
+        
+        objectives.push({
+          id: 'deliver_cargo',
+          title: 'Deliver Cargo',
+          description: 'Deliver cargo to destination',
+          type: 'deliver',
+          location: location.stations[1] || 'drop_point',
+          completed: false,
+          optional: false,
+          progress: 0,
+          dependencies: ['collect_cargo'],
+          conditions: []
+        });
+        break;
+        
+      case MissionType.PIRATE_HUNT:
+        objectives.push({
+          id: 'locate_target',
+          title: 'Locate Pirate',
+          description: 'Find and track the pirate ship',
+          type: 'investigate',
+          location: 'navigation_beacon',
+          completed: false,
+          optional: false,
+          progress: 0,
+          dependencies: [],
+          conditions: []
+        });
+        
+        objectives.push({
+          id: 'destroy_target',
+          title: 'Eliminate Pirate',
+          description: 'Destroy the pirate ship',
+          type: 'destroy',
+          target: 'pirate_ship',
+          completed: false,
+          optional: false,
+          progress: 0,
+          dependencies: ['locate_target'],
+          conditions: []
+        });
+        break;
+        
+      case MissionType.SURVEY:
+        objectives.push({
+          id: 'scan_system',
+          title: 'Complete System Survey',
+          description: 'Scan all major celestial bodies',
+          type: 'scan',
+          quantity: location.coordinates.length,
+          completed: false,
+          optional: false,
+          progress: 0,
+          dependencies: [],
+          conditions: []
+        });
+        break;
+    }
+    
+    return objectives;
+  }
+
+  /**
+   * Generate mission requirements
+   */
+  private generateRequirements(template: ProceduralMissionTemplate, context: MissionGenerationContext): MissionRequirement[] {
+    const requirements: MissionRequirement[] = [];
+    
+    // Ship type requirements
+    if (template.parameters.weaponTypes.includes('military')) {
+      requirements.push({
+        type: 'ship_type',
+        value: ['Cobra Mk III', 'Viper', 'Krait'],
+        comparison: 'contains',
+        description: 'Military-grade ship required',
+        optional: false
+      });
+    }
+    
+    // Cargo capacity requirements for trading missions
+    if (template.type === MissionType.DELIVERY) {
+      requirements.push({
+        type: 'cargo_capacity',
+        value: 10,
+        comparison: '>=',
+        description: 'Minimum cargo space required',
+        optional: false
+      });
+    }
+    
+    return requirements;
+  }
+
+  /**
+   * Generate mission rewards
+   */
+  private generateRewards(template: ProceduralMissionTemplate, context: MissionGenerationContext): MissionReward[] {
+    const rewards: MissionReward[] = [];
+    const baseReward = this.calculateBaseReward(template, context);
+    
+    // Credits reward
+    rewards.push({
+      type: 'credits',
+      amount: Math.floor(baseReward),
+      description: 'Payment for mission completion',
+      rarity: 'common',
+      value: baseReward
+    });
+    
+    // Reputation reward
+    if (Math.random() < 0.8) {
+      rewards.push({
+        type: 'reputation',
+        amount: Math.floor(baseReward / 1000),
+        description: 'Faction standing improvement',
+        rarity: 'uncommon',
+        value: baseReward / 1000
+      });
+    }
+    
+    return rewards;
+  }
+
+  /**
+   * Helper methods for mission generation
+   */
+  private calculateDifficulty(playerDifficulty: string, complexity: number): 'easy' | 'medium' | 'hard' | 'extreme' {
+    const difficultyMap = { easy: 1, medium: 2, hard: 3, extreme: 4 };
+    const baseDifficulty = difficultyMap[playerDifficulty as keyof typeof difficultyMap] || 2;
+    const adjustedDifficulty = Math.min(4, Math.max(1, baseDifficulty + Math.floor(complexity * 2)));
+    
+    const reverseMap = ['', 'easy', 'medium', 'hard', 'extreme'];
+    return reverseMap[adjustedDifficulty] as 'easy' | 'medium' | 'hard' | 'extreme';
+  }
+
+  private generateTimeLimit(duration: {min: number; max: number}, difficulty: string): number {
+    let multiplier = 1.0;
+    switch (difficulty) {
+      case 'easy': multiplier = 1.5; break;
+      case 'medium': multiplier = 1.0; break;
+      case 'hard': multiplier = 0.8; break;
+      case 'extreme': multiplier = 0.6; break;
+    }
+    
+    return Math.floor((duration.min + Math.random() * (duration.max - duration.min)) * multiplier);
+  }
+
+  private generateMissionTitle(template: ProceduralMissionTemplate, context: MissionGenerationContext): string {
+    const titles = {
+      [MissionType.DELIVERY]: [
+        'Supply Delivery', 'Cargo Transport', 'Emergency Relief', 'Commercial Shipment'
+      ],
+      [MissionType.PIRATE_HUNT]: [
+        'Pirate Elimination', 'Bounty Hunting', 'Security Contract', 'Pirate Purge'
+      ],
+      [MissionType.SURVEY]: [
+        'System Analysis', 'Deep Space Survey', 'Planetary Study', 'Scientific Mission'
+      ]
+    };
+    
+    const typeTitles = titles[template.type] || ['Special Mission'];
+    return typeTitles[Math.floor(Math.random() * typeTitles.length)];
+  }
+
+  private generateMissionDescription(template: ProceduralMissionTemplate, objectives: MissionObjective[]): string {
+    return `Complete ${objectives.length} objectives in ${template.name.toLowerCase()} operation.`;
+  }
+
+  private getCategoryFromType(type: MissionType): MissionCategory {
+    switch (type) {
+      case MissionType.ASSASSINATION:
+      case MissionType.PIRATE_HUNT:
+      case MissionType.ESCORT:
+      case MissionType.INTERDICTION:
+        return MissionCategory.COMBAT;
+      case MissionType.DELIVERY:
+      case MissionType.COLLECTION:
+      case MissionType.SMUGGLING:
+      case MissionType.CARGO_TRANSPORT:
+        return MissionCategory.TRADING;
+      case MissionType.SURVEY:
+      case MissionType.EXPLORATION:
+      case MissionType.ANOMALY_INVESTIGATION:
+      case MissionType.XENOBiology:
+        return MissionCategory.EXPLORATION;
+      case MissionType.RESCUE:
+      case MissionType.TERRORIST_HUNT:
+      case MissionType.SABOTAGE:
+      case MissionType.DIPLOMATIC:
+        return MissionCategory.SPECIAL;
+      default:
+        return MissionCategory.SPECIAL;
+    }
+  }
+
+  private generateFailureConditions(template: ProceduralMissionTemplate, context: MissionGenerationContext): MissionFailureCondition[] {
+    return [
+      {
+        type: 'timeout',
+        trigger: 'mission_timeout',
+        penalty: { credits: -100 },
+        description: 'Mission expired due to time limit'
+      },
+      {
+        type: 'target_escaped',
+        trigger: 'primary_target_escaped',
+        penalty: { reputation: new Map([['faction', -10]]) },
+        description: 'Primary target escaped'
+      }
+    ];
+  }
+
+  private generateSuccessConditions(template: ProceduralMissionTemplate, context: MissionGenerationContext): MissionSuccessCondition[] {
+    return [
+      {
+        type: 'all_objectives',
+        parameters: {},
+        description: 'Complete all mission objectives'
+      }
+    ];
+  }
+
+  private generateReputationRequirements(template: ProceduralMissionTemplate, context: MissionGenerationContext): Map<string, number> {
+    const requirements = new Map<string, number>();
+    
+    if (template.type === MissionType.PIRATE_HUNT) {
+      requirements.set('legal_standing', 50);
+    } else if (template.type === MissionType.SMUGGLING) {
+      requirements.set('criminal_standing', 30);
+    }
+    
+    return requirements;
+  }
+
+  private generateCargoRestrictions(template: ProceduralMissionTemplate, context: MissionGenerationContext): CargoRestriction[] {
+    if (template.type !== MissionType.SMUGGLING) return [];
+    
+    return [
+      {
+        type: 'illegal_goods',
+        maxQuantity: 5,
+        allowed: true,
+        description: 'Illicit cargo transport'
+      }
+    ];
+  }
+
+  private generateStations(locationType: string, faction: string): string[] {
+    // Generate appropriate stations based on type and faction
+    return ['main_station', 'outpost'];
+  }
+
+  private generateCoordinates(locationType: string): Vector3D[] {
+    // Generate random coordinates in space
+    return [
+      { x: Math.random() * 1000, y: Math.random() * 1000, z: Math.random() * 1000 },
+      { x: Math.random() * 1000, y: Math.random() * 1000, z: Math.random() * 1000 }
+    ];
+  }
+
+  private generateRegions(faction: string): string[] {
+    return ['core_system', 'outer_rim'];
+  }
+
+  private generateJumpPoints(): string[] {
+    return ['primary_jump_point'];
+  }
+
+  private generateNoFireZones(locationType: string): string[] {
+    if (locationType === 'station') {
+      return ['station_exclusion_zone'];
+    }
+    return [];
+  }
+
+  private generateDangerousAreas(missionType: MissionType): string[] {
+    if (missionType === MissionType.PIRATE_HUNT) {
+      return ['pirate_hideout'];
+    }
+    return [];
+  }
+
+  private checkMissionRequirements(mission: Mission, context: MissionGenerationContext | null): boolean {
+    if (!context) return false;
+    
+    return mission.requirements.every(req => {
+      switch (req.type) {
+        case 'ship_type':
+          return req.comparison === 'contains' && req.value.includes(context.playerShip);
+        case 'cargo_capacity':
+          return this.compareValues(context.playerCredits, req.comparison, req.value);
+        case 'reputation':
+          const rep = context.playerReputation.get(req.value) || 0;
+          return this.compareValues(rep, req.comparison, req.value);
+        default:
+          return true;
+      }
+    });
+  }
+
+  private compareValues(value: any, comparator: string, target: any): boolean {
+    switch (comparator) {
+      case '==': return value == target;
+      case '!=': return value != target;
+      case '>': return value > target;
+      case '<': return value < target;
+      case '>=': return value >= target;
+      case '<=': return value <= target;
+      case 'contains': return target.includes(value);
+      case 'not_contains': return !target.includes(value);
+      default: return false;
+    }
+  }
+
+  private getRecentMissionTypes(context: MissionGenerationContext): MissionType[] {
+    // Get recent mission types from mission history
+    return context.completedMissions.slice(-5) as MissionType[];
+  }
+
+  private getEconomicConditionBoost(template: ProceduralMissionTemplate, conditions: EconomicCondition[]): number {
+    let boost = 1.0;
+    
+    conditions.forEach(condition => {
+      if (condition.affectedGoods.length > 0) {
+        boost *= 1.2; // Boost missions during economic events
+      }
+    });
+    
+    return boost;
+  }
+
+  private calculateBaseReward(template: ProceduralMissionTemplate, context: MissionGenerationContext): number {
+    let baseReward = 1000;
+    
+    // Scale by difficulty
+    const difficultyMultiplier = { easy: 1.0, medium: 1.5, hard: 2.0, extreme: 3.0 };
+    baseReward *= difficultyMultiplier[context.difficulty];
+    
+    // Scale by mission rank
+    baseReward *= (1 + context.missionRank * 0.2);
+    
+    // Apply template multiplier
+    baseReward *= template.rewardMultiplier;
+    
+    return baseReward;
+  }
+
+  private checkMissionCompletion(mission: Mission): void {
+    const completedObjectives = mission.objectives.filter(obj => obj.completed);
+    const requiredObjectives = mission.objectives.filter(obj => !obj.optional);
+    
+    if (completedObjectives.length === requiredObjectives.length) {
+      // All required objectives completed
+      this.completeMission(mission.id);
+    }
+  }
+
+  private triggerObjectiveConsequences(mission: Mission, objective: MissionObjective, data?: any): void {
+    // Trigger effects when objectives are completed
+    // This could unlock new missions, trigger events, etc.
+  }
+
+  private calculateFailurePenalty(mission: Mission, reason: string): MissionPenalty {
+    const penalty: MissionPenalty = {};
+    
+    // Base penalty
+    penalty.credits = -Math.floor(mission.rewards.reduce((sum, reward) => sum + (reward.amount || 0), 0) * 0.2);
+    
+    // Additional penalties based on failure reason
+    const failureCondition = mission.failureConditions.find(cond => cond.trigger === reason);
+    if (failureCondition) {
+      penalty.reputation = failureCondition.penalty.reputation || new Map();
+      penalty.legalStatus = failureCondition.penalty.legalStatus;
+      penalty.equipment = failureCondition.penalty.equipment;
+    }
+    
+    return penalty;
+  }
+
+  private triggerMissionFailureConsequences(mission: Mission, reason: string): void {
+    // Trigger effects when missions fail
+    // This could affect storylines, relationships, etc.
+  }
+
+  private calculateMissionRewards(mission: Mission): MissionReward[] {
+    return mission.rewards;
+  }
+
+  private triggerMissionCompletionConsequences(mission: Mission): void {
+    // Trigger effects when missions are completed
+    // This could unlock new storylines, increase reputation, etc.
+  }
+
+  private getNextStorylineMission(storyline: MissionStoryline, context: MissionGenerationContext): MissionLineage | null {
+    // Find next mission in storyline that player is eligible for
+    return storyline.missions.find(mission => {
+      // Check if prerequisites are met
+      return mission.prerequisites.every(prereq => context.completedMissions.includes(prereq));
+    }) || null;
+  }
+
+  /**
+   * Get mission by ID
+   */
+  getMission(missionId: string): Mission | undefined {
+    return this.missions.get(missionId);
+  }
+
+  /**
+   * Get all active missions
+   */
+  getActiveMissions(): Mission[] {
+    return Array.from(this.missions.values()).filter(mission => mission.active);
+  }
+
+  /**
+   * Get available missions (not active, completed, or failed)
+   */
+  getAvailableMissions(): Mission[] {
+    return Array.from(this.missions.values()).filter(mission => 
+      !mission.active && !mission.completed && !mission.failed
+    );
+  }
+
+  /**
+   * Get mission system status
+   */
+  getSystemStatus(): {
+    totalMissions: number;
+    activeMissions: number;
+    completedMissions: number;
+    failedMissions: number;
+    availableMissions: number;
+    storylines: number;
+    templates: number;
+  } {
+    const allMissions = Array.from(this.missions.values());
+    return {
+      totalMissions: allMissions.length,
+      activeMissions: allMissions.filter(m => m.active).length,
+      completedMissions: allMissions.filter(m => m.completed).length,
+      failedMissions: allMissions.filter(m => m.failed).length,
+      availableMissions: allMissions.filter(m => !m.active && !m.completed && !m.failed).length,
+      storylines: this.storylines.size,
+      templates: this.proceduralTemplates.size
+    };
+  }
+}
+
+// Type definitions for return values and Vector3D
+interface Vector3D {
+  x: number;
+  y: number;
+  z: number;
+}

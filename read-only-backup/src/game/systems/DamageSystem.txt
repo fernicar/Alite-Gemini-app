@@ -1,0 +1,466 @@
+/**
+ * Damage System - Comprehensive shield and hull damage calculation
+ * Handles all aspects of damage including shields, hull, penetration, and repair
+ */
+
+import { Vector3D } from '../../types/index.js';
+import { WeaponType } from '../models/Ship.js';
+
+export interface DamageEvent {
+  targetId: string;
+  attackerId: string;
+  damage: number;
+  type: WeaponType;
+  shieldDamage: number;
+  hullDamage: number;
+  timestamp: number;
+  location?: Vector3D;
+  critical: boolean;
+  penetrating: boolean;
+}
+
+export interface DamageCalculation {
+  totalDamage: number;
+  shieldDamage: number;
+  hullDamage: number;
+  penetration: boolean;
+  criticalHit: boolean;
+  damageType: WeaponType;
+}
+
+export interface RepairOperation {
+  targetId: string;
+  type: 'shield' | 'hull' | 'system';
+  amount: number;
+  rate: number; // Per second
+  cost: number;
+  duration: number;
+}
+
+export interface DamageResistance {
+  shield: number; // 0-1 (1.0 = full protection)
+  hull: number; // 0-1
+  penetration: number; // 0-1 (1.0 = full penetration)
+  typeResistances: Map<WeaponType, number>;
+}
+
+export interface CombatStats {
+  damageDealt: number;
+  damageReceived: number;
+  kills: number;
+  survivalTime: number;
+  combatEffectiveness: number; // 0-1
+}
+
+/**
+ * Advanced Damage System for Elite-style combat
+ */
+export class DamageSystem {
+  private damageEvents: DamageEvent[];
+  private repairOperations: Map<string, RepairOperation>;
+  private damageResistances: Map<string, DamageResistance>;
+  private combatStats: Map<string, CombatStats>;
+  private currentTime: number = 0;
+
+  constructor() {
+    this.damageEvents = [];
+    this.repairOperations = new Map();
+    this.damageResistances = new Map();
+    this.combatStats = new Map();
+  }
+
+  /**
+   * Apply damage to a target
+   */
+  applyDamage(targetId: string, damage: number, weaponType: WeaponType, attackerId?: string): DamageEvent {
+    const target = this.getDamageResistance(targetId);
+    const calculation = this.calculateDamage(damage, weaponType, target);
+    
+    const event: DamageEvent = {
+      targetId,
+      attackerId: attackerId || 'unknown',
+      damage,
+      type: weaponType,
+      shieldDamage: calculation.shieldDamage,
+      hullDamage: calculation.hullDamage,
+      timestamp: this.currentTime,
+      critical: calculation.criticalHit,
+      penetrating: calculation.penetration
+    };
+    
+    this.damageEvents.push(event);
+    this.updateCombatStats(targetId, attackerId, calculation);
+    
+    return event;
+  }
+
+  /**
+   * Apply penetration damage (ignores shields)
+   */
+  applyPenetrationDamage(targetId: string, penetrationPower: number): void {
+    const target = this.getDamageResistance(targetId);
+    const shieldDamage = 0;
+    const hullDamage = Math.max(0, penetrationPower - (target.hull * penetrationPower));
+    
+    const event: DamageEvent = {
+      targetId,
+      attackerId: 'penetration',
+      damage: hullDamage,
+      type: WeaponType.LASER, // Default type
+      shieldDamage,
+      hullDamage,
+      timestamp: this.currentTime,
+      critical: false,
+      penetrating: true
+    };
+    
+    this.damageEvents.push(event);
+    this.updateCombatStats(targetId, 'penetration', {
+      totalDamage: hullDamage,
+      shieldDamage,
+      hullDamage,
+      penetration: true,
+      criticalHit: false,
+      damageType: WeaponType.LASER
+    });
+  }
+
+  /**
+   * Apply area damage (splash damage)
+   */
+  applyAreaDamage(center: Vector3D, radius: number, damageFunction: (distance: number) => number): void {
+    // This would query entities within radius and apply damage
+    // For now, it's a placeholder that would be implemented with spatial queries
+    const targets = this.getTargetsInArea(center, radius);
+    
+    targets.forEach(target => {
+      const distance = this.calculateDistance(center, target.position);
+      const damage = damageFunction(distance);
+      if (damage > 0) {
+        this.applyDamage(target.id, damage, WeaponType.MISSILES);
+      }
+    });
+  }
+
+  /**
+   * Calculate damage with all modifiers
+   */
+  private calculateDamage(rawDamage: number, weaponType: WeaponType, resistance: DamageResistance): DamageCalculation {
+    // Base damage calculation
+    let totalDamage = rawDamage;
+    
+    // Weapon type damage modifiers
+    const weaponModifier = this.getWeaponTypeModifier(weaponType);
+    totalDamage *= weaponModifier;
+    
+    // Calculate shield damage
+    let shieldDamage = 0;
+    let remainingDamage = totalDamage;
+    
+    if (resistance.shield > 0) {
+      // Damage reduction based on shield strength
+      const shieldEffectiveness = Math.max(0, 1 - (resistance.shield * 0.5));
+      shieldDamage = remainingDamage * shieldEffectiveness;
+      remainingDamage -= shieldDamage;
+    }
+    
+    // Apply shield penetration
+    const shieldPenetration = 1 - resistance.shield;
+    if (shieldPenetration > 0) {
+      const penetrationDamage = totalDamage * shieldPenetration;
+      remainingDamage += penetrationDamage;
+    }
+    
+    // Calculate hull damage
+    let hullDamage = Math.max(0, remainingDamage);
+    
+    // Apply hull resistance
+    hullDamage *= (1 - resistance.hull);
+    
+    // Check for critical hit
+    const criticalHit = Math.random() < 0.05; // 5% base critical chance
+    if (criticalHit) {
+      hullDamage *= 2.0; // Double damage on critical
+    }
+    
+    // Check for penetration
+    const penetration = Math.random() < Math.min(0.3, resistance.penetration);
+    
+    return {
+      totalDamage,
+      shieldDamage,
+      hullDamage,
+      penetration,
+      criticalHit,
+      damageType: weaponType
+    };
+  }
+
+  /**
+   * Get weapon type damage modifiers
+   */
+  private getWeaponTypeModifier(weaponType: WeaponType): number {
+    switch (weaponType) {
+      case WeaponType.LASER:
+        return 1.0; // Baseline damage
+      case WeaponType.BALLISTICS:
+        return 0.8; // Slightly less damage but faster firing
+      case WeaponType.MISSILES:
+        return 1.5; // Higher damage but slower
+      case WeaponType.MINES:
+        return 2.0; // Explosive damage
+      default:
+        return 1.0;
+    }
+  }
+
+  /**
+   * Initialize or get damage resistance for entity
+   */
+  private getDamageResistance(entityId: string): DamageResistance {
+    if (!this.damageResistances.has(entityId)) {
+      this.damageResistances.set(entityId, {
+        shield: 0.5, // 50% damage reduction
+        hull: 0.2,   // 20% damage reduction
+        penetration: 0.1, // 10% penetration chance
+        typeResistances: new Map()
+      });
+    }
+    return this.damageResistances.get(entityId)!;
+  }
+
+  /**
+   * Update damage resistance values
+   */
+  updateDamageResistance(entityId: string, newResistance: Partial<DamageResistance>): void {
+    const current = this.getDamageResistance(entityId);
+    this.damageResistances.set(entityId, {
+      ...current,
+      ...newResistance
+    });
+  }
+
+  /**
+   * Initiate repair operation
+   */
+  initiateRepair(targetId: string, type: 'shield' | 'hull' | 'system', amount: number, rate: number, cost: number): string {
+    const repairId = `repair_${targetId}_${type}_${Date.now()}`;
+    
+    const operation: RepairOperation = {
+      targetId,
+      type,
+      amount,
+      rate,
+      cost,
+      duration: amount / rate
+    };
+    
+    this.repairOperations.set(repairId, operation);
+    return repairId;
+  }
+
+  /**
+   * Update repair operations
+   */
+  updateRepairOperations(deltaTime: number): RepairOperation[] {
+    const completed: RepairOperation[] = [];
+    
+    this.repairOperations.forEach((operation, id) => {
+      const repairAmount = operation.rate * deltaTime;
+      const actualRepair = Math.min(repairAmount, operation.amount);
+      
+      // Apply repair to target (this would integrate with actual ship repair)
+      // For now, just track completion
+      operation.amount -= actualRepair;
+      operation.duration -= deltaTime;
+      
+      if (operation.amount <= 0 || operation.duration <= 0) {
+        completed.push(operation);
+        this.repairOperations.delete(id);
+      }
+    });
+    
+    return completed;
+  }
+
+  /**
+   * Get damage history for entity
+   */
+  getDamageHistory(targetId: string, timeWindow?: number): DamageEvent[] {
+    const cutoffTime = timeWindow ? this.currentTime - timeWindow : 0;
+    return this.damageEvents.filter(event => 
+      event.targetId === targetId && event.timestamp >= cutoffTime
+    );
+  }
+
+  /**
+   * Get combat statistics for entity
+   */
+  getCombatStats(entityId: string): CombatStats {
+    if (!this.combatStats.has(entityId)) {
+      this.combatStats.set(entityId, {
+        damageDealt: 0,
+        damageReceived: 0,
+        kills: 0,
+        survivalTime: 0,
+        combatEffectiveness: 0
+      });
+    }
+    return this.combatStats.get(entityId)!;
+  }
+
+  /**
+   * Update combat statistics
+   */
+  private updateCombatStats(targetId: string, attackerId: string | undefined, calculation: DamageCalculation): void {
+    if (attackerId && this.combatStats.has(attackerId)) {
+      const stats = this.combatStats.get(attackerId)!;
+      stats.damageDealt += calculation.totalDamage;
+    }
+    
+    if (this.combatStats.has(targetId)) {
+      const stats = this.combatStats.get(targetId)!;
+      stats.damageReceived += calculation.totalDamage;
+    }
+  }
+
+  /**
+   * Update survival time for combat stats
+   */
+  updateSurvivalTime(entityId: string, deltaTime: number): void {
+    if (!this.combatStats.has(entityId)) return;
+    
+    const stats = this.combatStats.get(entityId)!;
+    stats.survivalTime += deltaTime;
+    
+    // Update combat effectiveness
+    if (stats.survivalTime > 0) {
+      stats.combatEffectiveness = Math.min(1.0, stats.damageDealt / (stats.damageReceived + 1));
+    }
+  }
+
+  /**
+   * Calculate kill credit
+   */
+  calculateKillCredits(attackerIds: string[], victimId: string, finalDamage: number): void {
+    // Simple proportional damage-based kill credit
+    const history = this.getDamageHistory(victimId);
+    const attackerDamages = new Map<string, number>();
+    
+    history.forEach(event => {
+      if (event.attackerId !== 'unknown' && event.attackerId !== 'penetration') {
+        const currentDamage = attackerDamages.get(event.attackerId) || 0;
+        attackerDamages.set(event.attackerId, currentDamage + event.damage);
+      }
+    });
+    
+    const totalDamage = Array.from(attackerDamages.values()).reduce((sum, damage) => sum + damage, 0);
+    
+    if (totalDamage > 0) {
+      attackerDamages.forEach((damage, attackerId) => {
+        if (this.combatStats.has(attackerId)) {
+          const stats = this.combatStats.get(attackerId)!;
+          stats.kills += (damage / totalDamage);
+        }
+      });
+    }
+  }
+
+  /**
+   * Get damage report for entity
+   */
+  getDamageReport(entityId: string): {
+    recentDamage: number;
+    damagePerSecond: number;
+    mostDamagingWeapon: WeaponType | null;
+    shieldStatus: 'healthy' | 'damaged' | 'destroyed';
+    hullStatus: 'healthy' | 'damaged' | 'critical' | 'destroyed';
+  } {
+    const recent = this.getDamageHistory(entityId, 60); // Last minute
+    const recentDamage = recent.reduce((sum, event) => sum + event.damage, 0);
+    const damagePerSecond = recentDamage / 60;
+    
+    // Find most damaging weapon type
+    const weaponDamage = new Map<WeaponType, number>();
+    recent.forEach(event => {
+      const current = weaponDamage.get(event.type) || 0;
+      weaponDamage.set(event.type, current + event.damage);
+    });
+    
+    let mostDamagingWeapon: WeaponType | null = null;
+    let maxDamage = 0;
+    weaponDamage.forEach((damage, weapon) => {
+      if (damage > maxDamage) {
+        maxDamage = damage;
+        mostDamagingWeapon = weapon;
+      }
+    });
+    
+    // This would integrate with actual ship shield/hull status
+    // For now, placeholder calculations
+    const shieldStatus = recentDamage < 100 ? 'healthy' : 
+                        recentDamage < 500 ? 'damaged' : 'destroyed';
+    const hullStatus = recentDamage < 200 ? 'healthy' :
+                      recentDamage < 600 ? 'damaged' :
+                      recentDamage < 1000 ? 'critical' : 'destroyed';
+    
+    return {
+      recentDamage,
+      damagePerSecond,
+      mostDamagingWeapon,
+      shieldStatus,
+      hullStatus
+    };
+  }
+
+  /**
+   * Update system time
+   */
+  update(deltaTime: number): void {
+    this.currentTime += deltaTime;
+  }
+
+  /**
+   * Placeholder methods for spatial queries
+   */
+  private getTargetsInArea(center: Vector3D, radius: number): Array<{ id: string; position: Vector3D }> {
+    // This would be implemented with spatial indexing for performance
+    // For now, return empty array
+    return [];
+  }
+
+  private calculateDistance(pos1: Vector3D, pos2: Vector3D): number {
+    const dx = pos2.x - pos1.x;
+    const dy = pos2.y - pos1.y;
+    const dz = pos2.z - pos1.z;
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  /**
+   * Clean up old damage events
+   */
+  cleanupOldEvents(maxAge: number = 3600): void { // Keep 1 hour of history
+    const cutoffTime = this.currentTime - maxAge;
+    this.damageEvents = this.damageEvents.filter(event => event.timestamp >= cutoffTime);
+  }
+
+  /**
+   * Get system summary
+   */
+  getSystemSummary(): {
+    totalDamageEvents: number;
+    activeRepairOperations: number;
+    entitiesWithDamageHistory: number;
+    averageDamagePerEvent: number;
+  } {
+    const totalDamage = this.damageEvents.reduce((sum, event) => sum + event.damage, 0);
+    const averageDamage = this.damageEvents.length > 0 ? totalDamage / this.damageEvents.length : 0;
+    
+    return {
+      totalDamageEvents: this.damageEvents.length,
+      activeRepairOperations: this.repairOperations.size,
+      entitiesWithDamageHistory: this.damageResistances.size,
+      averageDamagePerEvent: averageDamage
+    };
+  }
+}

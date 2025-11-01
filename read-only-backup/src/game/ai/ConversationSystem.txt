@@ -1,0 +1,1443 @@
+/**
+ * Conversation System - Advanced procedural dialogue and interaction system
+ * Handles NPC conversations, dialogue trees, and dynamic response generation
+ */
+
+import { NPCType } from './AIBehaviorSystem.js';
+
+export interface Conversation {
+  id: string;
+  participants: string[];
+  currentSpeaker: string;
+  currentTopic: ConversationTopic;
+  dialogueTree: DialogueNode;
+  state: ConversationState;
+  history: ConversationEntry[];
+  emotionalState: EmotionalState;
+  relationshipLevel: Map<string, number>;
+  trustLevel: Map<string, number>;
+  created: number;
+  lastActivity: number;
+  confidential: boolean;
+  recordingEnabled: boolean;
+}
+
+export interface ConversationTopic {
+  id: string;
+  title: string;
+  description: string;
+  priority: number;
+  context: TopicContext;
+  prerequisites: TopicPrerequisite[];
+  emotionalWeight: EmotionalWeight;
+}
+
+export interface TopicContext {
+  location: string;
+  timeOfDay: 'morning' | 'afternoon' | 'evening' | 'night';
+  situation: 'casual' | 'formal' | 'urgent' | 'confidential';
+  relationship: 'stranger' | 'acquaintance' | 'friend' | 'ally' | 'enemy';
+  recentEvents: string[];
+  factionRelations: Map<string, number>;
+  missionStatus: string;
+}
+
+export interface TopicPrerequisite {
+  type: 'relationship_level' | 'reputation' | 'mission_completed' | 'item_carried' | 'time_played';
+  value: any;
+  comparison: '>' | '>=' | '==' | '<=' | '<';
+  description: string;
+}
+
+export interface EmotionalWeight {
+  trust: number; // 0-1
+  respect: number; // 0-1
+  fear: number; // 0-1
+  greed: number; // 0-1
+  loyalty: number; // 0-1
+  curiosity: number; // 0-1
+}
+
+export interface DialogueNode {
+  id: string;
+  speaker: string;
+  content: DialogueContent;
+  responses: DialogueResponse[];
+  conditions: NodeCondition[];
+  consequences: NodeConsequence[];
+  emotionalEffect: EmotionalEffect;
+  nextNode?: string;
+  isTerminal: boolean;
+  priority: number;
+}
+
+export interface DialogueContent {
+  type: 'statement' | 'question' | 'request' | 'threat' | 'compliment' | 'information' | 'warning' | 'farewell';
+  text: string;
+  tone: DialogueTone;
+  emphasis: string[];
+  subtext: string;
+  facts: DialogueFact[];
+  topics: string[];
+}
+
+export interface DialogueTone {
+  formality: 'casual' | 'formal' | 'business' | 'military';
+  emotion: 'neutral' | 'happy' | 'sad' | 'angry' | 'excited' | 'worried' | 'suspicious';
+  attitude: 'friendly' | 'neutral' | 'hostile' | 'respectful' | 'dismissive';
+  urgency: 'low' | 'medium' | 'high' | 'critical';
+}
+
+export interface DialogueFact {
+  type: 'location' | 'person' | 'event' | 'item' | 'location' | 'relationship';
+  value: string;
+  accuracy: number; // 0-1
+  source: string;
+  timestamp: number;
+}
+
+export interface DialogueResponse {
+  id: string;
+  text: string;
+  type: 'agree' | 'disagree' | 'question' | 'request' | 'threat' | 'compliment' | 'information' | 'decline';
+  emotionalContent: EmotionalContent;
+  requirements: ResponseRequirement[];
+  consequences: ResponseConsequence[];
+  nextTopic?: string;
+  probability: number; // 0-1 (probability of this response being chosen)
+  successThreshold: number; // 0-1 (success probability for this response)
+}
+
+export interface EmotionalContent {
+  confidence: number; // 0-1
+  friendliness: number; // -1 to 1
+  aggression: number; // 0-1
+  curiosity: number; // 0-1
+  suspicion: number; // 0-1
+}
+
+export interface ResponseRequirement {
+  type: 'reputation' | 'relationship' | 'item' | 'mission' | 'credits';
+  value: any;
+  comparison: '>' | '>=' | '==' | '<=' | '<';
+  description: string;
+  failureMessage: string;
+}
+
+export interface ResponseConsequence {
+  type: 'reputation_change' | 'relationship_change' | 'unlock_mission' | 'give_item' | 'trade_offer' | 'trust_change';
+  target: string;
+  value: any;
+  duration?: number;
+  description: string;
+}
+
+export interface NodeCondition {
+  type: 'relationship_level' | 'reputation' | 'time_of_day' | 'location' | 'faction_standing' | 'mission_status';
+  value: any;
+  comparison: string;
+  description: string;
+  weight: number;
+}
+
+export interface NodeConsequence {
+  type: 'reputation_change' | 'trust_change' | 'unlock_topic' | 'end_conversation' | 'call_backup' | 'generate_mission';
+  parameters: any;
+  description: string;
+  probability: number;
+}
+
+export interface EmotionalEffect {
+  speakerEmotion: EmotionalState;
+  listenerEffect: EmotionalState;
+  trustChange: number;
+  relationshipChange: number;
+  suspicionChange: number;
+}
+
+export interface EmotionalState {
+  happiness: number; // 0-1
+  anger: number; // 0-1
+  fear: number; // 0-1
+  trust: number; // 0-1
+  respect: number; // 0-1
+  greed: number; // 0-1
+  curiosity: number; // 0-1
+  aggression: number; // 0-1
+}
+
+export interface ConversationEntry {
+  id: string;
+  speaker: string;
+  content: string;
+  type: 'speech' | 'action' | 'emotion' | 'event';
+  timestamp: number;
+  emotionalState: EmotionalState;
+  context: EntryContext;
+  archived: boolean;
+}
+
+export interface EntryContext {
+  location: string;
+  timeSinceStart: number;
+  topic: string;
+  recentEvents: string[];
+  relationshipAtTime: Map<string, number>;
+}
+
+export interface ConversationState {
+  phase: 'opening' | 'main' | 'closing' | 'conflict' | 'resolution';
+  tension: number; // 0-1
+  progress: number; // 0-1
+  goalAchieved: boolean;
+  complications: string[];
+  interruptions: string[];
+  duration: number;
+  maxDuration: number;
+}
+
+export interface ConversationTemplate {
+  id: string;
+  name: string;
+  type: NPCType;
+  context: TemplateContext;
+  topics: TemplateTopic[];
+  responsePatterns: ResponsePattern[];
+  emotionalTriggers: EmotionalTrigger[];
+  culturalAspects: CulturalAspect[];
+}
+
+export interface TemplateContext {
+  location: string;
+  faction: string;
+  profession: string;
+  relationship: string;
+  situation: string;
+  urgency: number;
+}
+
+export interface TemplateTopic {
+  id: string;
+  title: string;
+  description: string;
+  weight: number;
+  exclusivity: boolean;
+  emotionalRequirement: EmotionalRequirement;
+}
+
+export interface EmotionalRequirement {
+  minimumTrust: number;
+  maximumSuspicion: number;
+  requiredEmotions: string[];
+  forbiddenEmotions: string[];
+}
+
+export interface ResponsePattern {
+  trigger: string;
+  responses: string[];
+  probability: number;
+  conditions: PatternCondition[];
+}
+
+export interface PatternCondition {
+  type: string;
+  value: any;
+  comparison: string;
+}
+
+export interface EmotionalTrigger {
+  emotion: string;
+  threshold: number;
+  response: string;
+  duration: number;
+}
+
+export interface CulturalAspect {
+  category: string;
+  rules: CulturalRule[];
+  taboos: string[];
+  preferredTopics: string[];
+  communicationStyle: string;
+}
+
+export interface CulturalRule {
+  description: string;
+  type: 'obligation' | 'preference' | 'taboo';
+  context: string;
+  violation: ViolationConsequence;
+}
+
+export interface ViolationConsequence {
+  reputationLoss: number;
+  trustLoss: number;
+  responseType: 'warning' | 'anger' | 'exit' | 'complication';
+  message: string;
+}
+
+/**
+ * Advanced Conversation System for Elite-style NPC interactions
+ */
+export class ConversationSystem {
+  private conversations: Map<string, Conversation>;
+  private templates: Map<string, ConversationTemplate>;
+  private dialogueLibrary: Map<string, DialogueLibrary>;
+  private conversationCounter: number = 0;
+  private activeConversations: Set<string>;
+  private npcPersonalities: Map<string, NPCPersonality>;
+  private conversationHistory: string[]; // Track conversations for analytics
+
+  constructor() {
+    this.conversations = new Map();
+    this.templates = new Map();
+    this.dialogueLibrary = new Map();
+    this.activeConversations = new Set();
+    this.npcPersonalities = new Map();
+    this.conversationHistory = [];
+    
+    this.initializeTemplates();
+    this.initializeDialogueLibrary();
+  }
+
+  /**
+   * Start conversation with NPC
+   */
+  startConversation(npcId: string, playerId: string, context: ConversationContext): string | null {
+    // Check if conversation is appropriate
+    if (!this.canStartConversation(npcId, playerId, context)) {
+      return null;
+    }
+
+    const conversationId = `conv_${++this.conversationCounter}`;
+    const template = this.templates.get(this.getNPCTemplate(npcId));
+    
+    if (!template) return null;
+
+    // Create conversation
+    const conversation = this.createConversation(conversationId, npcId, playerId, template, context);
+    this.conversations.set(conversationId, conversation);
+    this.activeConversations.add(conversationId);
+
+    // Start with opening dialogue
+    this.processConversationTurn(conversationId, 'opening');
+
+    return conversationId;
+  }
+
+  /**
+   * Process player input in conversation
+   */
+  processPlayerInput(conversationId: string, playerResponse: string): ConversationUpdate {
+    const conversation = this.conversations.get(conversationId);
+    if (!conversation || !this.activeConversations.has(conversationId)) {
+      return this.createErrorUpdate('Invalid conversation');
+    }
+
+    // Parse player response
+    const response = this.parsePlayerResponse(playerResponse, conversation);
+    
+    // Update emotional state based on response
+    this.updateEmotionalState(conversation, 'player', response.emotionalContent);
+    
+    // Process consequences of player response
+    this.processResponseConsequences(conversation, response);
+    
+    // Generate NPC response
+    const npcResponse = this.generateNPCResponse(conversation, response);
+    
+    // Update conversation state
+    this.updateConversationState(conversation);
+    
+    // Check for conversation end conditions
+    const shouldEnd = this.checkConversationEndConditions(conversation);
+    
+    const update: ConversationUpdate = {
+      conversationId,
+      npcResponse: npcResponse.content,
+      emotionalChange: npcResponse.emotionalEffect,
+      newTopics: this.getAvailableTopics(conversation),
+      relationshipChange: this.calculateRelationshipChange(conversation, response),
+      trustChange: this.calculateTrustChange(conversation, response),
+      missionOffers: this.checkForMissionOffers(conversation),
+      tradeOffers: this.checkForTradeOffers(conversation),
+      endConversation: shouldEnd,
+      conversationState: conversation.state
+    };
+
+    return update;
+  }
+
+  /**
+   * End conversation
+   */
+  endConversation(conversationId: string, reason: string): ConversationSummary {
+    const conversation = this.conversations.get(conversationId);
+    if (!conversation) {
+      return this.createErrorSummary('Invalid conversation');
+    }
+
+    // Archive conversation
+    this.archiveConversation(conversation);
+    
+    // Remove from active conversations
+    this.activeConversations.delete(conversationId);
+    
+    // Calculate final statistics
+    const summary = this.generateConversationSummary(conversation, reason);
+    
+    // Trigger final consequences
+    this.processConversationEnd(conversation, reason);
+    
+    return summary;
+  }
+
+  /**
+   * Update conversation state (called every frame for active conversations)
+   */
+  updateConversations(deltaTime: number): void {
+    this.activeConversations.forEach(conversationId => {
+      const conversation = this.conversations.get(conversationId);
+      if (!conversation) return;
+
+      // Update conversation timer
+      conversation.state.duration += deltaTime;
+      conversation.lastActivity = Date.now();
+
+      // Check for timeouts
+      if (conversation.state.duration > conversation.state.maxDuration) {
+        this.endConversation(conversationId, 'timeout');
+        return;
+      }
+
+      // Update emotional states
+      this.updateEmotionalDecay(conversation, deltaTime);
+
+      // Process any queued events or interruptions
+      this.processInterruptions(conversation);
+
+      // Update relationship and trust levels based on conversation progress
+      this.updateRelationshipProgression(conversation, deltaTime);
+    });
+  }
+
+  /**
+   * Create conversation from template
+   */
+  private createConversation(
+    conversationId: string, 
+    npcId: string, 
+    playerId: string, 
+    template: ConversationTemplate, 
+    context: any
+  ): Conversation {
+    const conversation: Conversation = {
+      id: conversationId,
+      participants: [npcId, playerId],
+      currentSpeaker: npcId,
+      currentTopic: this.selectInitialTopic(template, context),
+      dialogueTree: this.buildDialogueTree(template, context),
+      state: {
+        phase: 'opening',
+        tension: 0,
+        progress: 0,
+        goalAchieved: false,
+        complications: [],
+        interruptions: [],
+        duration: 0,
+        maxDuration: 300 // 5 minutes default
+      },
+      history: [],
+      emotionalState: this.initializeEmotionalState(template),
+      relationshipLevel: new Map([[playerId, 0.5]]), // Start neutral
+      trustLevel: new Map([[playerId, 0.3]]), // Start with low trust
+      created: Date.now(),
+      lastActivity: Date.now(),
+      confidential: context.situation === 'confidential',
+      recordingEnabled: true
+    };
+
+    // Add opening entry to history
+    this.addConversationEntry(conversation, {
+      speaker: npcId,
+      content: this.generateOpeningGreeting(template, context),
+      type: 'speech',
+      timestamp: Date.now(),
+      emotionalState: conversation.emotionalState,
+      context: this.createEntryContext(conversation, 'greeting')
+    });
+
+    return conversation;
+  }
+
+  /**
+   * Process conversation turn
+   */
+  private processConversationTurn(conversationId: string, phase: 'opening' | 'main' | 'closing'): void {
+    const conversation = this.conversations.get(conversationId);
+    if (!conversation) return;
+
+    const currentNode = conversation.dialogueTree;
+    if (!currentNode.isTerminal) {
+      // Generate dialogue based on current node
+      const npcDialogue = this.generateNPCDialogue(currentNode, conversation);
+      
+      // Add to conversation history
+      this.addConversationEntry(conversation, {
+        speaker: conversation.currentSpeaker,
+        content: npcDialogue.content.text,
+        type: 'speech',
+        timestamp: Date.now(),
+        emotionalState: conversation.emotionalState,
+        context: this.createEntryContext(conversation, npcDialogue.content.type)
+      });
+
+      // Apply emotional effects
+      this.applyEmotionalEffects(conversation, npcDialogue.emotionalEffect);
+    }
+  }
+
+  /**
+   * Parse player response
+   */
+  private parsePlayerResponse(responseText: string, conversation: Conversation): DialogueResponse {
+    // Simple response parsing - in a full implementation, this would use NLP
+    const normalizedText = responseText.toLowerCase().trim();
+    
+    // Determine response type based on keywords
+    let responseType: string = 'information';
+    let emotionalContent: EmotionalContent = { confidence: 0.5, friendliness: 0, aggression: 0, curiosity: 0, suspicion: 0 };
+    
+    // Response type detection
+    if (normalizedText.includes('yes') || normalizedText.includes('agree') || normalizedText.includes('accept')) {
+      responseType = 'agree';
+      emotionalContent.friendliness = 0.3;
+    } else if (normalizedText.includes('no') || normalizedText.includes('disagree') || normalizedText.includes('decline')) {
+      responseType = 'disagree';
+      emotionalContent.friendliness = -0.2;
+    } else if (normalizedText.includes('?') || normalizedText.includes('how') || normalizedText.includes('what')) {
+      responseType = 'question';
+      emotionalContent.curiosity = 0.5;
+    } else if (normalizedText.includes('buy') || normalizedText.includes('sell') || normalizedText.includes('trade')) {
+      responseType = 'request';
+      emotionalContent.friendliness = 0.1;
+    }
+    
+    // Emotional content analysis (simplified)
+    if (normalizedText.includes('threat') || normalizedText.includes('danger') || normalizedText.includes('warning')) {
+      emotionalContent.aggression = 0.4;
+      emotionalContent.suspicion = 0.3;
+    }
+    
+    if (normalizedText.includes('thank') || normalizedText.includes('appreciate')) {
+      emotionalContent.friendliness = 0.4;
+    }
+    
+    return {
+      id: `response_${Date.now()}`,
+      text: responseText,
+      type: responseType as any,
+      emotionalContent,
+      requirements: [],
+      consequences: [],
+      probability: 0.8,
+      successThreshold: 0.6
+    };
+  }
+
+  /**
+   * Generate NPC response to player
+   */
+  private generateNPCResponse(conversation: Conversation, playerResponse: DialogueResponse): {
+    content: DialogueContent;
+    emotionalEffect: EmotionalEffect;
+  } {
+    const template = this.getNPCTemplate(conversation.participants[0]);
+    const responsePatterns = this.templates.get(template)?.responsePatterns || [];
+    
+    // Select response based on player input and conversation context
+    const selectedPattern = this.selectResponsePattern(responsePatterns, playerResponse, conversation);
+    const responseText = this.generateResponseText(selectedPattern, conversation, playerResponse);
+    
+    // Determine emotional state
+    const npcEmotion = this.calculateNPCEmotion(conversation, playerResponse);
+    
+    // Create dialogue content
+    const content: DialogueContent = {
+      type: this.determineContentType(playerResponse),
+      text: responseText,
+      tone: this.generateTone(npcEmotion, conversation.state),
+      emphasis: this.selectEmphasis(playerResponse.emotionalContent),
+      subtext: this.generateSubtext(npcEmotion, conversation.relationshipLevel),
+      facts: this.extractFacts(responseText),
+      topics: this.extractTopics(responseText)
+    };
+    
+    // Calculate emotional effect on conversation
+    const emotionalEffect = this.calculateEmotionalEffect(conversation, npcEmotion, playerResponse);
+    
+    return { content, emotionalEffect };
+  }
+
+  /**
+   * Initialize conversation templates
+   */
+  private initializeTemplates(): void {
+    // Trader template
+    const traderTemplate: ConversationTemplate = {
+      id: 'trader_template',
+      name: 'Commercial Dialogue',
+      type: NPCType.TRADER,
+      context: {
+        location: 'station',
+        faction: 'commercial',
+        profession: 'trader',
+        relationship: 'business',
+        situation: 'formal',
+        urgency: 0.3
+      },
+      topics: [
+        {
+          id: 'trade_opportunities',
+          title: 'Trade Opportunities',
+          description: 'Discuss potential trading routes and partnerships',
+          weight: 0.9,
+          exclusivity: false,
+          emotionalRequirement: {
+            minimumTrust: 0.3,
+            maximumSuspicion: 0.6,
+            requiredEmotions: ['neutral', 'friendly'],
+            forbiddenEmotions: ['hostile', 'suspicious']
+          }
+        },
+        {
+          id: 'market_conditions',
+          title: 'Market Analysis',
+          description: 'Current economic situation and commodity prices',
+          weight: 0.7,
+          exclusivity: false,
+          emotionalRequirement: {
+            minimumTrust: 0.4,
+            maximumSuspicion: 0.4,
+            requiredEmotions: ['professional'],
+            forbiddenEmotions: []
+          }
+        }
+      ],
+      responsePatterns: [
+        {
+          trigger: 'greeting',
+          responses: [
+            'Good day, commander. What brings you to my office today?',
+            'Welcome. I hope you have profitable business on your mind.',
+            'Greetings. Business has been... challenging lately.'
+          ],
+          probability: 1.0,
+          conditions: []
+        },
+        {
+          trigger: 'trade_request',
+          responses: [
+            'I have a few routes that might interest you...',
+            'The markets are volatile right now, but I can offer you something special.',
+            'My contacts have been asking for reliable pilots. Are you interested?'
+          ],
+          probability: 0.8,
+          conditions: []
+        }
+      ],
+      emotionalTriggers: [
+        {
+          emotion: 'greed',
+          threshold: 0.7,
+          response: 'Now that\'s the kind of profitable venture I like to hear about!',
+          duration: 30
+        }
+      ],
+      culturalAspects: [
+        {
+          category: 'business',
+          rules: [
+            {
+              description: 'Always negotiate prices fairly',
+              type: 'obligation',
+              context: 'trade',
+              violation: {
+                reputationLoss: 10,
+                trustLoss: 0.3,
+                responseType: 'warning',
+                message: 'I don\'t appreciate being taken advantage of.'
+              }
+            }
+          ],
+          taboos: ['illegal_goods', 'lowball_offers'],
+          preferredTopics: ['profit', 'reliability', 'partnerships'],
+          communicationStyle: 'professional'
+        }
+      ]
+    };
+
+    // Police template
+    const policeTemplate: ConversationTemplate = {
+      id: 'police_template',
+      name: 'Law Enforcement Dialogue',
+      type: NPCType.POLICE,
+      context: {
+        location: 'station',
+        faction: 'law_enforcement',
+        profession: 'officer',
+        relationship: 'authoritative',
+        situation: 'formal',
+        urgency: 0.5
+      },
+      topics: [
+        {
+          id: 'legal_matters',
+          title: 'Legal Status',
+          description: 'Check on legal standing and regulations',
+          weight: 0.8,
+          exclusivity: false,
+          emotionalRequirement: {
+            minimumTrust: 0.5,
+            maximumSuspicion: 0.3,
+            requiredEmotions: ['respectful', 'compliant'],
+            forbiddenEmotions: ['defiant', 'hostile']
+          }
+        },
+        {
+          id: 'law_enforcement',
+          title: 'Crime and Punishment',
+          description: 'Information about law enforcement activities',
+          weight: 0.9,
+          exclusivity: false,
+          emotionalRequirement: {
+            minimumTrust: 0.6,
+            maximumSuspicion: 0.2,
+            requiredEmotions: ['respectful'],
+            forbiddenEmotions: ['suspicious', 'defiant']
+          }
+        }
+      ],
+      responsePatterns: [
+        {
+          trigger: 'greeting',
+          responses: [
+            'Officer on duty. State your business.',
+            'Identification, please. What brings you here?',
+            'We maintain order in these systems. What can I help you with?'
+          ],
+          probability: 1.0,
+          conditions: []
+        }
+      ],
+      emotionalTriggers: [
+        {
+          emotion: 'defiance',
+          threshold: 0.6,
+          response: 'I suggest you watch your tone, citizen.',
+          duration: 60
+        }
+      ],
+      culturalAspects: [
+        {
+          category: 'law',
+          rules: [
+            {
+              description: 'Always show proper respect to law enforcement',
+              type: 'obligation',
+              context: 'police_interaction',
+              violation: {
+                reputationLoss: 20,
+                trustLoss: 0.5,
+                responseType: 'anger',
+                message: 'That kind of attitude won\'t help your case.'
+              }
+            }
+          ],
+          taboos: ['defiance', 'illegal_suggestions', 'bribery'],
+          preferredTopics: ['law', 'order', 'citizenship'],
+          communicationStyle: 'authoritative'
+        }
+      ]
+    };
+
+    // Pirate template
+    const pirateTemplate: ConversationTemplate = {
+      id: 'pirate_template',
+      name: 'Criminal Dialogue',
+      type: NPCType.PIRATE,
+      context: {
+        location: 'neutral_space',
+        faction: 'criminal',
+        profession: 'pirate',
+        relationship: 'hostile',
+        situation: 'tense',
+        urgency: 0.8
+      },
+      topics: [
+        {
+          id: 'criminal_enterprise',
+          title: 'Business Proposals',
+          description: 'Opportunities in the criminal underworld',
+          weight: 0.9,
+          exclusivity: false,
+          emotionalRequirement: {
+            minimumTrust: 0.2,
+            maximumSuspicion: 0.8,
+            requiredEmotions: ['neutral', 'aggressive'],
+            forbiddenEmotions: ['respectful', 'law_abiding']
+          }
+        },
+        {
+          id: 'territory',
+          title: 'Territorial Matters',
+          description: 'Discuss territorial claims and conflicts',
+          weight: 0.8,
+          exclusivity: false,
+          emotionalRequirement: {
+            minimumTrust: 0.4,
+            maximumSuspicion: 0.6,
+            requiredEmotions: ['neutral'],
+            forbiddenEmotions: ['fearful', 'submissive']
+          }
+        }
+      ],
+      responsePatterns: [
+        {
+          trigger: 'greeting',
+          responses: [
+            'Well, well... what do we have here?',
+            'You look like you might have something valuable.',
+            'This is my territory. State your business.'
+          ],
+          probability: 1.0,
+          conditions: []
+        }
+      ],
+      emotionalTriggers: [
+        {
+          emotion: 'greed',
+          threshold: 0.8,
+          response: 'I like the way you think. This could be profitable...',
+          duration: 45
+        }
+      ],
+      culturalAspects: [
+        {
+          category: 'criminal_code',
+          rules: [
+            {
+              description: 'Honor among thieves',
+              type: 'preference',
+              context: 'criminal_deal',
+              violation: {
+                reputationLoss: 15,
+                trustLoss: 0.4,
+                responseType: 'anger',
+                message: 'Nobody cheats the Pirate Code and gets away with it.'
+              }
+            }
+          ],
+          taboos: ['law_enforcement', 'betrayal', 'weakness'],
+          preferredTopics: ['profit', 'territory', 'respect'],
+          communicationStyle: 'aggressive'
+        }
+      ]
+    };
+
+    this.templates.set('trader_template', traderTemplate);
+    this.templates.set('police_template', policeTemplate);
+    this.templates.set('pirate_template', pirateTemplate);
+  }
+
+  /**
+   * Initialize dialogue library
+   */
+  private initializeDialogueLibrary(): void {
+    // Initialize with common phrases and responses
+    const library = new Map<string, string[]>();
+    
+    library.set('greetings_formal', [
+      'Good day, commander.',
+      'Greetings. How may I assist you?',
+      'Welcome. What brings you here today?'
+    ]);
+    
+    library.set('greetings_casual', [
+      'Hey there!',
+      'What\'s up?',
+      'Well hello there!'
+    ]);
+    
+    library.set('farewells', [
+      'Safe travels.',
+      'Until next time.',
+      'Goodbye and good luck.'
+    ]);
+    
+    this.dialogueLibrary.set('common', library);
+  }
+
+  /**
+   * Helper methods for conversation processing
+   */
+  private canStartConversation(npcId: string, playerId: string, context: any): boolean {
+    // Check if NPCs are available and willing to talk
+    return true; // Simplified check
+  }
+
+  private getNPCTemplate(npcId: string): string {
+    // Determine template based on NPC type
+    return 'trader_template'; // Simplified
+  }
+
+  private selectInitialTopic(template: ConversationTemplate, context: any): ConversationTopic {
+    const availableTopics = template.topics.filter(topic => 
+      this.checkTopicPrerequisites(topic, context)
+    );
+    
+    if (availableTopics.length === 0) {
+      return this.createFallbackTopic();
+    }
+    
+    // Select topic with weighted probability
+    const totalWeight = availableTopics.reduce((sum, topic) => sum + topic.weight, 0);
+    let random = Math.random() * totalWeight;
+    
+    for (const topic of availableTopics) {
+      random -= topic.weight;
+      if (random <= 0) {
+        return this.convertTemplateTopic(topic);
+      }
+    }
+    
+    return this.convertTemplateTopic(availableTopics[0]);
+  }
+
+  private buildDialogueTree(template: ConversationTemplate, context: any): DialogueNode {
+    return {
+      id: 'root',
+      speaker: 'npc',
+      content: {
+        type: 'statement',
+        text: 'Hello, commander.',
+        tone: { formality: 'formal', emotion: 'neutral', attitude: 'neutral', urgency: 'low' },
+        emphasis: [],
+        subtext: '',
+        facts: [],
+        topics: []
+      },
+      responses: [],
+      conditions: [],
+      consequences: [],
+      emotionalEffect: {
+        speakerEmotion: this.initializeEmotionalState(template),
+        listenerEffect: this.initializeEmotionalState(template),
+        trustChange: 0,
+        relationshipChange: 0,
+        suspicionChange: 0
+      },
+      isTerminal: false,
+      priority: 1
+    };
+  }
+
+  private initializeEmotionalState(template: ConversationTemplate): EmotionalState {
+    return {
+      happiness: 0.5,
+      anger: 0.1,
+      fear: 0.2,
+      trust: 0.4,
+      respect: 0.5,
+      greed: 0.3,
+      curiosity: 0.4,
+      aggression: 0.2
+    };
+  }
+
+  private generateOpeningGreeting(template: ConversationTemplate, context: any): string {
+    const greetings = this.dialogueLibrary.get('common')?.get('greetings_formal') || ['Hello.'];
+    return greetings[Math.floor(Math.random() * greetings.length)];
+  }
+
+  private addConversationEntry(conversation: Conversation, entry: Omit<ConversationEntry, 'id' | 'archived'>): void {
+    const fullEntry: ConversationEntry = {
+      ...entry,
+      id: `entry_${Date.now()}_${Math.random()}`,
+      archived: false
+    };
+    
+    conversation.history.push(fullEntry);
+    
+    // Keep only recent entries
+    if (conversation.history.length > 100) {
+      conversation.history = conversation.history.slice(-50);
+    }
+  }
+
+  private createEntryContext(conversation: Conversation, topic: string): EntryContext {
+    return {
+      location: 'station',
+      timeSinceStart: conversation.state.duration,
+      topic,
+      recentEvents: [],
+      relationshipAtTime: new Map(conversation.relationshipLevel)
+    };
+  }
+
+  private updateEmotionalState(conversation: Conversation, participant: string, emotionalContent: EmotionalContent): void {
+    // Update emotional state based on response content
+    if (participant === 'player') {
+      // Affect NPC's emotional state based on player response
+      conversation.emotionalState.happiness += (emotionalContent.friendliness * 0.1);
+      conversation.emotionalState.aggression += (emotionalContent.aggression * 0.1);
+      conversation.emotionalState.suspicion += (emotionalContent.suspicion * 0.1);
+      
+      // Clamp values
+      Object.keys(conversation.emotionalState).forEach(key => {
+        const value = conversation.emotionalState[key as keyof EmotionalState];
+        conversation.emotionalState[key as keyof EmotionalState] = Math.max(0, Math.min(1, value));
+      });
+    }
+  }
+
+  private processResponseConsequences(conversation: Conversation, response: DialogueResponse): void {
+    // Process any consequences defined for this response
+    response.consequences.forEach(consequence => {
+      switch (consequence.type) {
+        case 'reputation_change':
+          this.adjustReputation(conversation, consequence.target, consequence.value);
+          break;
+        case 'relationship_change':
+          this.adjustRelationship(conversation, consequence.target, consequence.value);
+          break;
+        case 'unlock_mission':
+          this.unlockMission(conversation, consequence.value);
+          break;
+      }
+    });
+  }
+
+  private generateNPCDialogue(node: DialogueNode, conversation: Conversation): {
+    content: DialogueContent;
+    emotionalEffect: EmotionalEffect;
+  } {
+    // Generate dialogue based on current node and conversation state
+    const baseText = node.content.text;
+    const personalizedText = this.personalizeDialogue(baseText, conversation);
+    
+    const content: DialogueContent = {
+      ...node.content,
+      text: personalizedText
+    };
+    
+    return {
+      content,
+      emotionalEffect: node.emotionalEffect
+    };
+  }
+
+  private applyEmotionalEffects(conversation: Conversation, effect: EmotionalEffect): void {
+    // Apply emotional effects to conversation state
+    conversation.emotionalState.trust += effect.trustChange;
+    conversation.emotionalState.trust = Math.max(0, Math.min(1, conversation.emotionalState.trust));
+  }
+
+  private checkConversationEndConditions(conversation: Conversation): boolean {
+    // Check if conversation should end
+    return conversation.state.phase === 'closing' || conversation.state.progress >= 1.0;
+  }
+
+  private updateConversationState(conversation: Conversation): void {
+    // Update conversation progress and phase
+    conversation.state.progress = Math.min(1.0, conversation.state.progress + 0.1);
+    
+    if (conversation.state.progress >= 1.0) {
+      conversation.state.phase = 'closing';
+    }
+  }
+
+  private updateEmotionalDecay(conversation: Conversation, deltaTime: number): void {
+    // Gradually return emotions to baseline
+    const decayRate = 0.1;
+    Object.keys(conversation.emotionalState).forEach(key => {
+      const value = conversation.emotionalState[key as keyof EmotionalState];
+      const target = 0.5; // Neutral baseline
+      conversation.emotionalState[key as keyof EmotionalState] += (target - value) * decayRate * deltaTime;
+    });
+  }
+
+  private processInterruptions(conversation: Conversation): void {
+    // Check for and process any interruptions
+    // This could include other NPCs joining, emergencies, etc.
+  }
+
+  private updateRelationshipProgression(conversation: Conversation, deltaTime: number): void {
+    // Gradually adjust relationship based on conversation flow
+    const playerId = conversation.participants[1];
+    const currentRelationship = conversation.relationshipLevel.get(playerId) || 0.5;
+    
+    // Progress affects relationship positively
+    const relationshipChange = conversation.state.progress * 0.01 * deltaTime;
+    conversation.relationshipLevel.set(playerId, Math.max(0, Math.min(1, currentRelationship + relationshipChange)));
+  }
+
+  private selectResponsePattern(patterns: ResponsePattern[], playerResponse: DialogueResponse, conversation: Conversation): ResponsePattern {
+    // Select appropriate pattern based on player response
+    return patterns[0]; // Simplified selection
+  }
+
+  private generateResponseText(pattern: ResponsePattern, conversation: Conversation, playerResponse: DialogueResponse): string {
+    const responses = pattern.responses;
+    return responses[Math.floor(Math.random() * responses.length)];
+  }
+
+  private calculateNPCEmotion(conversation: Conversation, playerResponse: DialogueResponse): EmotionalState {
+    // Calculate NPC emotional response to player
+    const emotion = { ...conversation.emotionalState };
+    
+    // Adjust based on player response
+    if (playerResponse.emotionalContent.friendliness > 0) {
+      emotion.happiness += 0.1;
+      emotion.trust += 0.05;
+    }
+    
+    if (playerResponse.emotionalContent.aggression > 0) {
+      emotion.aggression += 0.1;
+      emotion.suspicion += 0.1;
+    }
+    
+    // Clamp values
+    Object.keys(emotion).forEach(key => {
+      emotion[key as keyof EmotionalState] = Math.max(0, Math.min(1, emotion[key as keyof EmotionalState]));
+    });
+    
+    return emotion;
+  }
+
+  private determineContentType(playerResponse: DialogueResponse): any {
+    return 'statement'; // Simplified
+  }
+
+  private generateTone(emotion: EmotionalState, state: ConversationState): DialogueTone {
+    return {
+      formality: state.phase === 'opening' ? 'formal' : 'casual',
+      emotion: emotion.happiness > 0.7 ? 'happy' : emotion.aggression > 0.6 ? 'angry' : 'neutral',
+      attitude: emotion.trust > 0.6 ? 'friendly' : emotion.suspicion > 0.5 ? 'suspicious' : 'neutral',
+      urgency: state.tension > 0.7 ? 'high' : state.tension > 0.4 ? 'medium' : 'low'
+    };
+  }
+
+  private selectEmphasis(emotionalContent: EmotionalContent): string[] {
+    const emphasis: string[] = [];
+    
+    if (emotionalContent.aggression > 0.6) {
+      emphasis.push('bold');
+    }
+    
+    if (emotionalContent.suspicion > 0.5) {
+      emphasis.push('cautious');
+    }
+    
+    return emphasis;
+  }
+
+  private generateSubtext(emotion: EmotionalState, relationships: Map<string, number>): string {
+    // Generate implied meaning based on emotional state
+    if (emotion.suspicion > 0.6) {
+      return 'There seems to be hidden agenda here.';
+    }
+    
+    if (emotion.trust > 0.7) {
+      return 'The speaker appears genuine and trustworthy.';
+    }
+    
+    return '';
+  }
+
+  private extractFacts(text: string): DialogueFact[] {
+    // Extract factual claims from dialogue
+    return []; // Simplified
+  }
+
+  private extractTopics(text: string): string[] {
+    // Extract topics mentioned in dialogue
+    const topics: string[] = [];
+    
+    if (text.toLowerCase().includes('trade')) topics.push('trade');
+    if (text.toLowerCase().includes('mission')) topics.push('mission');
+    if (text.toLowerCase().includes('money') || text.toLowerCase().includes('credit')) topics.push('credits');
+    
+    return topics;
+  }
+
+  private calculateEmotionalEffect(conversation: Conversation, npcEmotion: EmotionalState, playerResponse: DialogueResponse): EmotionalEffect {
+    return {
+      speakerEmotion: npcEmotion,
+      listenerEffect: conversation.emotionalState,
+      trustChange: npcEmotion.trust - 0.5,
+      relationshipChange: npcEmotion.happiness - 0.5,
+      suspicionChange: npcEmotion.suspicion - 0.5
+    };
+  }
+
+  private checkTopicPrerequisites(topic: TemplateTopic, context: any): boolean {
+    // Check if player meets prerequisites for this topic
+    return true; // Simplified
+  }
+
+  private createFallbackTopic(): ConversationTopic {
+    return {
+      id: 'general_discussion',
+      title: 'General Discussion',
+      description: 'Casual conversation',
+      priority: 1,
+      context: {
+        location: 'station',
+        timeOfDay: 'afternoon',
+        situation: 'casual',
+        relationship: 'neutral',
+        recentEvents: [],
+        factionRelations: new Map(),
+        missionStatus: 'none'
+      },
+      prerequisites: [],
+      emotionalWeight: {
+        trust: 0.5,
+        respect: 0.5,
+        fear: 0.5,
+        greed: 0.5,
+        loyalty: 0.5,
+        curiosity: 0.5
+      }
+    };
+  }
+
+  private convertTemplateTopic(templateTopic: TemplateTopic): ConversationTopic {
+    return {
+      id: templateTopic.id,
+      title: templateTopic.title,
+      description: templateTopic.description,
+      priority: templateTopic.weight,
+      context: {
+        location: 'station',
+        timeOfDay: 'afternoon',
+        situation: 'casual',
+        relationship: 'neutral',
+        recentEvents: [],
+        factionRelations: new Map(),
+        missionStatus: 'none'
+      },
+      prerequisites: [],
+      emotionalWeight: {
+        trust: 0.5,
+        respect: 0.5,
+        fear: 0.5,
+        greed: 0.5,
+        loyalty: 0.5,
+        curiosity: 0.5
+      }
+    };
+  }
+
+  private personalizeDialogue(baseText: string, conversation: Conversation): string {
+    // Add personalization based on relationship and context
+    const playerId = conversation.participants[1];
+    const relationship = conversation.relationshipLevel.get(playerId) || 0.5;
+    
+    let personalizedText = baseText;
+    
+    if (relationship > 0.7) {
+      personalizedText = personalizedText.replace('commander', 'old friend');
+    } else if (relationship < 0.3) {
+      personalizedText = personalizedText.replace('commander', 'stranger');
+    }
+    
+    return personalizedText;
+  }
+
+  private adjustReputation(conversation: Conversation, faction: string, change: number): void {
+    // Adjust faction reputation
+    // This would integrate with reputation system
+  }
+
+  private adjustRelationship(conversation: Conversation, participant: string, change: number): void {
+    const current = conversation.relationshipLevel.get(participant) || 0.5;
+    conversation.relationshipLevel.set(participant, Math.max(0, Math.min(1, current + change)));
+  }
+
+  private unlockMission(conversation: Conversation, missionId: string): void {
+    // Unlock mission for player
+    // This would integrate with mission framework
+  }
+
+  private getAvailableTopics(conversation: Conversation): string[] {
+    return ['trade', 'missions', 'general'];
+  }
+
+  private calculateRelationshipChange(conversation: Conversation, response: DialogueResponse): number {
+    return response.emotionalContent.friendliness * 0.1;
+  }
+
+  private calculateTrustChange(conversation: Conversation, response: DialogueResponse): number {
+    return (response.emotionalContent.confidence - 0.5) * 0.1;
+  }
+
+  private checkForMissionOffers(conversation: Conversation): string[] {
+    // Check if NPC has missions to offer
+    return []; // Simplified
+  }
+
+  private checkForTradeOffers(conversation: Conversation): any[] {
+    // Check if NPC has trade offers
+    return []; // Simplified
+  }
+
+  private archiveConversation(conversation: Conversation): void {
+    // Mark conversation as archived
+    conversation.history.forEach(entry => {
+      entry.archived = true;
+    });
+  }
+
+  private generateConversationSummary(conversation: Conversation, reason: string): ConversationSummary {
+    return {
+      conversationId: conversation.id,
+      participants: conversation.participants,
+      duration: conversation.state.duration,
+      topicsDiscussed: this.getDiscussedTopics(conversation),
+      relationshipChanges: this.calculateOverallRelationshipChanges(conversation),
+      trustChanges: this.calculateOverallTrustChanges(conversation),
+      emotionalArc: this.analyzeEmotionalArc(conversation),
+      ended: reason,
+      archived: true
+    };
+  }
+
+  private processConversationEnd(conversation: Conversation, reason: string): void {
+    // Trigger any end-of-conversation effects
+    this.conversationHistory.push(conversation.id);
+  }
+
+  private getDiscussedTopics(conversation: Conversation): string[] {
+    const topics = new Set<string>();
+    conversation.history.forEach(entry => {
+      if (entry.context.topic) {
+        topics.add(entry.context.topic);
+      }
+    });
+    return Array.from(topics);
+  }
+
+  private calculateOverallRelationshipChanges(conversation: Conversation): Map<string, number> {
+    const changes = new Map<string, number>();
+    conversation.participants.forEach(participant => {
+      changes.set(participant, 0); // Simplified
+    });
+    return changes;
+  }
+
+  private calculateOverallTrustChanges(conversation: Conversation): Map<string, number> {
+    const changes = new Map<string, number>();
+    conversation.participants.forEach(participant => {
+      changes.set(participant, 0); // Simplified
+    });
+    return changes;
+  }
+
+  private analyzeEmotionalArc(conversation: Conversation): any {
+    // Analyze emotional progression through conversation
+    return {
+      startEmotion: { happiness: 0.5, trust: 0.5 },
+      endEmotion: conversation.emotionalState,
+      volatility: 0.3,
+      overallDirection: 'positive'
+    };
+  }
+
+  // Error handling methods
+  private createErrorUpdate(message: string): ConversationUpdate {
+    return {
+      conversationId: '',
+      npcResponse: { type: 'statement', text: message, tone: { formality: 'formal', emotion: 'neutral', attitude: 'neutral', urgency: 'low' }, emphasis: [], subtext: '', facts: [], topics: [] },
+      emotionalChange: { speakerEmotion: this.initializeEmotionalState({} as any), listenerEffect: this.initializeEmotionalState({} as any), trustChange: 0, relationshipChange: 0, suspicionChange: 0 },
+      newTopics: [],
+      relationshipChange: 0,
+      trustChange: 0,
+      missionOffers: [],
+      tradeOffers: [],
+      endConversation: true,
+      conversationState: { phase: 'closing', tension: 0, progress: 0, goalAchieved: false, complications: [], interruptions: [], duration: 0, maxDuration: 0 }
+    };
+  }
+
+  private createErrorSummary(message: string): ConversationSummary {
+    return {
+      conversationId: '',
+      participants: [],
+      duration: 0,
+      topicsDiscussed: [],
+      relationshipChanges: new Map(),
+      trustChanges: new Map(),
+      emotionalArc: { startEmotion: {} as any, endEmotion: {} as any, volatility: 0, overallDirection: 'neutral' },
+      ended: 'error',
+      archived: true
+    };
+  }
+
+  /**
+   * Get conversation system status
+   */
+  getSystemStatus(): {
+    totalConversations: number;
+    activeConversations: number;
+    archivedConversations: number;
+    templates: number;
+    librarySize: number;
+  } {
+    const allConversations = Array.from(this.conversations.values());
+    return {
+      totalConversations: allConversations.length,
+      activeConversations: this.activeConversations.size,
+      archivedConversations: allConversations.filter(c => c.history.every(h => h.archived)).length,
+      templates: this.templates.size,
+      librarySize: Array.from(this.dialogueLibrary.values()).reduce((sum, lib) => sum + lib.size, 0)
+    };
+  }
+}
+
+// Type definitions for return values and context
+interface ConversationContext {
+  location: string;
+  situation: string;
+  urgency: number;
+  relationship: string;
+}
+
+interface ConversationUpdate {
+  conversationId: string;
+  npcResponse: DialogueContent;
+  emotionalChange: EmotionalEffect;
+  newTopics: string[];
+  relationshipChange: number;
+  trustChange: number;
+  missionOffers: string[];
+  tradeOffers: any[];
+  endConversation: boolean;
+  conversationState: ConversationState;
+}
+
+interface ConversationSummary {
+  conversationId: string;
+  participants: string[];
+  duration: number;
+  topicsDiscussed: string[];
+  relationshipChanges: Map<string, number>;
+  trustChanges: Map<string, number>;
+  emotionalArc: any;
+  ended: string;
+  archived: boolean;
+}
+
+interface NPCPersonality {
+  name: string;
+  traits: string[];
+}

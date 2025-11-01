@@ -1,0 +1,1404 @@
+/**
+ * Help Screen - Game controls and tutorial information
+ * Provides information about game mechanics and controls
+ */
+
+import { BaseScreen, UIManager, ScreenId } from '../ui/UIManager';
+import { UIPanel, UIButton, UIText, UIButtonOptions, UIPanelOptions } from '../ui/components/UIBasicComponents';
+
+export class HelpScreen extends BaseScreen {
+  private contentPanel: UIPanel;
+  private navigationPanel: UIPanel;
+  private controlPanel: UIPanel;
+  private currentSection: string = 'controls';
+  private contentSections: Map<string, UIText[]> = new Map();
+
+  constructor() {
+    const rootComponent = new UIPanel('help-root', {
+      width: 800,
+      height: 600,
+      backgroundColor: '#1a202c',
+      borderWidth: 0,
+      shadow: false,
+      opacity: 1.0
+    });
+
+    super('help', 'Help', rootComponent);
+
+    this.initializeUI();
+    this.createContentSections();
+  }
+
+  private initializeUI(): void {
+    const root = this.component as UIPanel;
+
+    // Content Panel (main area)
+    this.contentPanel = new UIPanel('content', {
+      width: 600,
+      height: 480,
+      backgroundColor: '#2d3748',
+      borderColor: '#40e0ff',
+      borderWidth: 2,
+      cornerRadius: 0,
+      shadow: true,
+      opacity: 0.9
+    });
+    this.contentPanel.position = { x: 20, y: 20 };
+
+    // Navigation Panel (right side)
+    this.navigationPanel = new UIPanel('navigation', {
+      width: 160,
+      height: 480,
+      backgroundColor: '#2d3748',
+      borderColor: '#40e0ff',
+      borderWidth: 2,
+      cornerRadius: 0,
+      shadow: true,
+      opacity: 0.9
+    });
+    this.navigationPanel.position = { x: 640, y: 20 };
+
+    // Control Panel (bottom)
+    this.controlPanel = new UIPanel('controls', {
+      width: 780,
+      height: 80,
+      backgroundColor: '#2d3748',
+      borderColor: '#40e0ff',
+      borderWidth: 2,
+      cornerRadius: 0,
+      shadow: true,
+      opacity: 0.9
+    });
+    this.controlPanel.position = { x: 10, y: 500 };
+
+    // Initialize panels
+    this.initializeNavigationPanel();
+    this.initializeControlPanel();
+
+    // Add panels to root
+    root.addChild(this.contentPanel);
+    root.addChild(this.navigationPanel);
+    root.addChild(this.controlPanel);
+  }
+
+  private initializeNavigationPanel(): void {
+    // Title
+    const title = new UIText('help-title', 'HELP TOPICS', {
+      fontSize: 16,
+      fontFamily: 'Arial, sans-serif',
+      color: '#40e0ff',
+      textAlign: 'center',
+      bold: true
+    });
+    title.position = { x: 10, y: 15 };
+    title.size = { x: 140, y: 30 };
+    this.navigationPanel.addChild(title);
+
+    // Navigation buttons
+    const sections = [
+      { id: 'controls', label: 'Controls' },
+      { id: 'combat', label: 'Combat' },
+      { id: 'trading', label: 'Trading' },
+      { id: 'navigation', label: 'Navigation' },
+      { id: 'missions', label: 'Missions' },
+      { id: 'ships', label: 'Ships' },
+      { id: 'galaxy', label: 'Galaxy Info' },
+      { id: 'troubleshooting', label: 'Help' },
+      { id: 'tips', label: 'Tips & Tricks' }
+    ];
+
+    sections.forEach((section, index) => {
+      const button = new UIButton(`nav-${section.id}`, section.label, {
+        width: 140,
+        height: 40,
+        backgroundColor: section.id === 'controls' ? '#4a5568' : '#2d3748',
+        textColor: '#ffffff',
+        fontSize: 12,
+        borderColor: '#40e0ff',
+        borderWidth: 1
+      }, () => this.loadSection(section.id));
+      
+      button.position = { x: 10, y: 60 + index * 50 };
+      this.navigationPanel.addChild(button);
+    });
+  }
+
+  private initializeControlPanel(): void {
+    // Back button
+    const backButton = new UIButton('back', 'BACK TO MENU', {
+      width: 150,
+      height: 35,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#40e0ff',
+      borderWidth: 1,
+      cornerRadius: 5
+    }, () => this.backToMenu());
+    backButton.position = { x: 20, y: 20 };
+    this.controlPanel.addChild(backButton);
+
+    // Previous section button
+    const prevButton = new UIButton('prev', 'PREVIOUS', {
+      width: 100,
+      height: 35,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.previousSection());
+    prevButton.position = { x: 200, y: 20 };
+    this.controlPanel.addChild(prevButton);
+
+    // Next section button
+    const nextButton = new UIButton('next', 'NEXT', {
+      width: 100,
+      height: 35,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.nextSection());
+    nextButton.position = { x: 310, y: 20 };
+    this.controlPanel.addChild(nextButton);
+
+    // Tutorial button
+    const tutorialButton = new UIButton('tutorial', 'START TUTORIAL', {
+      width: 150,
+      height: 35,
+      backgroundColor: '#48bb78',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#38a169',
+      borderWidth: 1
+    }, () => this.startTutorial());
+    tutorialButton.position = { x: 440, y: 20 };
+    this.controlPanel.addChild(tutorialButton);
+
+    // Help info
+    const helpInfo = new UIText('help-info', 'Press ESC to return to game', {
+      fontSize: 12,
+      color: '#888888'
+    });
+    helpInfo.position = { x: 20, y: 60 };
+    helpInfo.size = { x: 300, y: 15 };
+    this.controlPanel.addChild(helpInfo);
+  }
+
+  private createContentSections(): void {
+    // Enhanced Controls section
+    this.contentSections.set('controls', [
+      new UIText('controls-title', 'GAME CONTROLS', {
+        fontSize: 20,
+        color: '#40e0ff',
+        bold: true
+      }),
+      new UIText('controls-subtitle', 'Desktop Controls:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('movement', '• Movement: Arrow Keys or WASD', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('fire', '• Fire Weapons: SPACE bar or Left Click', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('target', '• Target Next: TAB or Right Click', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('missiles', '• Launch Missiles: SHIFT or Middle Click', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('dock', '• Request Docking: D key', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('map', '• System Map: M key', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('galaxy', '• Galaxy Map: G key', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('inventory', '• Inventory: I key', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('market', '• Market/Trading: R key', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('controls-mobile', 'Mobile Controls:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('touch-movement', '• Touch Movement: Drag to steer', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('touch-fire', '• Fire: Tap screen', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('touch-gestures', '• Gestures: Swipe, pinch for map controls', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('pause', '• Pause/Resume: ESC key or menu button', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('settings', '• Settings: F1 key or menu', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('quick-save', '• Quick Save: Ctrl+S', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('fullscreen', '• Fullscreen: F11 key', {
+        fontSize: 14,
+        color: '#ffffff'
+      })
+    ]);
+
+    // Enhanced Combat section
+    this.contentSections.set('combat', [
+      new UIText('combat-title', 'COMBAT GUIDE', {
+        fontSize: 20,
+        color: '#40e0ff',
+        bold: true
+      }),
+      new UIText('combat-basics', 'Combat Basics:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('combat-1', '• Combat is real-time and skill-based', {
+        fontSize: 14,
+        color: '#ffffff',
+        wordWrap: true,
+        maxWidth: 560
+      }),
+      new UIText('combat-2', '• Use shields first, then hull when shields are down', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('combat-3', '• Manage energy between weapons, shields, and engines', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('weapon-types', 'Weapon Types:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('lasers', '• Pulse Lasers: Fast firing, continuous damage', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('beam-lasers', '• Beam Lasers: Sustained energy beams', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('missiles', '• Missiles: High damage, limited ammo', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('missile-types', '• ECMs: Electronic countermeasures', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('combat-strategy', 'Combat Strategy:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('strategy-1', '• Keep moving to avoid enemy fire', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('strategy-2', '• Attack when shields are down', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('strategy-3', '• Use afterburner to escape when outgunned', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('strategy-4', '• Dock at stations for safety when critical', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('energy-management', 'Energy Management:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('energy-1', '• 50% Shields, 30% Weapons, 20% Engines (recommended)', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('energy-2', '• Boost shields when taking damage', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('energy-3', '• Reduce shields to fire more weapons', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('enemy-types', 'Enemy Types:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('traders', '• Traders: Rich cargo, weak defenses', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('police', '• Police: Government enforcers, strong shields', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('pirates', '• Pirates: Hostile raiders, variable equipment', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('military', '• Military: Elite combat units, extreme danger', {
+        fontSize: 14,
+        color: '#ffffff'
+      })
+    ]);
+
+    // Enhanced Trading section
+    this.contentSections.set('trading', [
+      new UIText('trading-title', 'TRADING GUIDE', {
+        fontSize: 20,
+        color: '#40e0ff',
+        bold: true
+      }),
+      new UIText('trading-basics', 'Trading Basics:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('trading-1', '• Buy low, sell high - the fundamental rule', {
+        fontSize: 14,
+        color: '#ffffff',
+        wordWrap: true,
+        maxWidth: 560
+      }),
+      new UIText('trading-2', '• Each system has unique prices and availability', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('trading-3', '• Monitor market fluctuations and trends', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('trading-4', '• Plan profitable trade routes between systems', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('commodities', 'Commodity Types:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('basic-goods', '• Food, Textiles, Liquor, Furs: Basic trade goods', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('industrial', '• Computers, Machinery, Metal, Plastics: Industrial', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('luxury', '• Luxury Goods, Art, Gems, Spices: High value items', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('fuel-resources', '• Fuel, Ore, Alien Items: Essential resources', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('market-factors', 'Market Factors:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('government', '• Government Type: Feudal = luxury, Communist = basic', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('police-activity', '• Police Activity: High = more expensive, safer', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('pirate-activity', '• Pirate Activity: Higher profits, higher risk', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('supply-demand', '• Supply & Demand: Production vs consumption', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('illegal-goods', 'Illegal Goods:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('illegal-1', '• Higher profit margins but police attention', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('illegal-2', '• Require bribe money or legal cargo for camouflage', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('illegal-3', '• Aggressive selling can trigger police scans', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('trading-tips', 'Trading Tips:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('cargo-planning', '• Plan cargo capacity before jumping', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('fuel-costs', '• Consider fuel costs in profit calculations', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('route-planning', '• Use established trade routes for safety', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('price-timing', '• Buy during shortages, sell during surpluses', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('cargo-insurance', '• Consider insurance for valuable cargo', {
+        fontSize: 14,
+        color: '#ffffff'
+      })
+    ]);
+
+    // Enhanced Navigation section
+    this.contentSections.set('navigation', [
+      new UIText('nav-title', 'NAVIGATION GUIDE', {
+        fontSize: 20,
+        color: '#40e0ff',
+        bold: true
+      }),
+      new UIText('nav-basics', 'Navigation Basics:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('nav-1', '• Use hyperspace drive for interstellar travel', {
+        fontSize: 14,
+        color: '#ffffff',
+        wordWrap: true,
+        maxWidth: 560
+      }),
+      new UIText('nav-2', '• Plan routes using the galactic map', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('nav-3', '• Monitor fuel levels before long jumps', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('nav-4', '• Navigate within systems using normal flight', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('hyperspace', 'Hyperspace Travel:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('jump-costs', '• Fuel consumption varies with jump distance', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('jump-safety', '• Safe jumps require fuel, time, and planning', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('emergency-jumps', '• Emergency jumps possible but costly', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('fuel-scoops', '• Fuel scoops allow refueling from stars', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('docking', 'Docking Procedures:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('dock-clearance', '• Request docking clearance from stations', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('dock-timing', '• Wait for green light before entering', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('dock-speed', '• Approach slowly and follow approach vectors', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('dock-security', '• Security scanners may inspect cargo', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('collision-avoidance', 'Collision Avoidance:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('planetary-orbits', '• Planets and moons have gravity wells', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('asteroid-fields', '• Asteroid fields require careful navigation', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('traffic-zones', '• Busy stations have designated traffic zones', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('emergency-stop', '• Emergency stop with reverse thrusters', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('navigation-tools', 'Navigation Tools:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('scanner', '• Scanners detect nearby objects and threats', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('gps', '• GPS system tracks current position', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('chart-plotter', '• Chart plotter marks waypoints', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('long-range-sensor', '• Long-range scanners extend detection range', {
+        fontSize: 14,
+        color: '#ffffff'
+      })
+    ]);
+
+    // Enhanced Missions section
+    this.contentSections.set('missions', [
+      new UIText('missions-title', 'MISSIONS GUIDE', {
+        fontSize: 20,
+        color: '#40e0ff',
+        bold: true
+      }),
+      new UIText('missions-basics', 'Mission Basics:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('missions-1', '• Accept missions from station bulletin boards', {
+        fontSize: 14,
+        color: '#ffffff',
+        wordWrap: true,
+        maxWidth: 560
+      }),
+      new UIText('missions-2', '• Complete objectives to earn rewards', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('missions-3', '• Missions vary in difficulty and rewards', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('missions-4', '• Build reputation through successful missions', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('mission-types', 'Mission Types:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('delivery', '• Delivery: Transport packages between locations', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('combat', '• Combat: Eliminate specific targets', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('escort', '• Escort: Protect valuable cargo or passengers', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('reconnaissance', '• Reconnaissance: Survey and report on areas', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('smuggling', '• Smuggling: Transport illegal goods covertly', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('passenger', '• Passenger: Transport NPCs safely', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('mission-rewards', 'Mission Rewards:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('credits', '• Credits: Primary mission currency', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('reputation', '• Reputation: Improve standing with factions', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('equipment', '• Equipment: Special weapons and upgrades', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('ship-vouchers', '• Ship Vouchers: Discounts on new vessels', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('mission-management', 'Mission Management:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('multiple-missions', '• Accept multiple missions at once', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('mission-timer', '• Some missions have time limits', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('mission-failure', '• Abandon missions to avoid penalties', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('mission-progress', '• Track progress in mission log', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('advanced-missions', 'Advanced Missions:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('chain-missions', '• Chain missions unlock exclusive rewards', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('faction-missions', '• Faction-specific missions require standing', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('illegal-missions', '• Illegal missions offer high rewards, high risk', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('rank-missions', '• Rank missions advance your status', {
+        fontSize: 14,
+        color: '#ffffff'
+      })
+    ]);
+
+    // Enhanced Tips section
+    this.contentSections.set('tips', [
+      new UIText('tips-title', 'TIPS & TRICKS', {
+        fontSize: 20,
+        color: '#40e0ff',
+        bold: true
+      }),
+      new UIText('survival-tips', 'Survival Tips:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('tips-1', '• Save frequently! Manual saves are not automatic', {
+        fontSize: 14,
+        color: '#ffffff',
+        wordWrap: true,
+        maxWidth: 560
+      }),
+      new UIText('tips-2', '• Always have an escape route planned', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('tips-3', '• Keep some credits in reserve for emergencies', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('tips-4', '• Dock at stations when critically damaged', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('combat-tips', 'Combat Tips:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('combat-1', '• Practice in safe areas before real combat', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('combat-2', '• Energy distribution: 50% shields, 30% weapons, 20% engines', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('combat-3', '• Fire when enemy shields are down for maximum damage', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('combat-4', '• Use afterburner to escape when outgunned', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('trading-tips', 'Trading Tips:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('trade-1', '• Research prices in multiple systems before trading', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('trade-2', '• Consider fuel costs in profit calculations', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('trade-3', '• Illegal goods require careful navigation and bribes', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('trade-4', '• Insurance protects valuable cargo from loss', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('navigation-tips', 'Navigation Tips:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('nav-1', '• Plot routes carefully - wrong jumps waste fuel', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('nav-2', '• Fuel scoops allow refueling near stars safely', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('nav-3', '• Emergency jumps consume extra fuel but save your life', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('nav-4', '• Use the galactic map to plan long-distance routes', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('progression-tips', 'Progression Tips:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('prog-1', '• Start with small ships and upgrade gradually', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('prog-2', '• Focus on one skill area before diversifying', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('prog-3', '• Complete missions to build reputation fast', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('prog-4', '• Buy the best equipment you can afford', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('economy-tips', 'Economic Tips:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('econ-1', '• Anarchy systems have cheaper equipment but more danger', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('econ-2', '• Communist systems have low prices but limited luxury goods', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('econ-3', '• Corporate systems balance cost and availability', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('econ-4', '• Feudal systems favor luxury and exotic goods', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('advanced-tips', 'Advanced Tips:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('adv-1', '• Market manipulation requires large capital but high profits', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('adv-2', '• Multiple ship ownership enables specialization', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('adv-3', '• Network trading with other players increases opportunities', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('adv-4', '• Explore undiscovered systems for rare opportunities', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('legal-tips', 'Legal Considerations:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('legal-1', '• Legal cargo acts as camouflage for illegal goods', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('legal-2', '• High reputation allows faster clearance at stations', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('legal-3', '• Police scanners can be avoided with proper preparation', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('legal-4', '• Criminal record affects missions and system access', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('resource-tips', 'Resource Management:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('res-1', '• Monitor fuel levels and plan refueling stops', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('res-2', '• Cargo space is precious - choose cargo carefully', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('res-3', '• Equipment maintenance prevents system failures', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('res-4', '• Export save files as backup against data loss', {
+        fontSize: 14,
+        color: '#ffffff'
+      })
+    ]);
+
+    // Ships section
+    this.contentSections.set('ships', [
+      new UIText('ships-title', 'SHIP MANAGEMENT', {
+        fontSize: 20,
+        color: '#40e0ff',
+        bold: true
+      }),
+      new UIText('ship-basics', 'Ship Basics:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('ship-1', '• Each ship has unique stats and capabilities', {
+        fontSize: 14,
+        color: '#ffffff',
+        wordWrap: true,
+        maxWidth: 560
+      }),
+      new UIText('ship-2', '• Ships can be upgraded with better equipment', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('ship-3', '• Ship condition affects performance', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('ship-4', '• Multiple ships enable different play styles', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('ship-systems', 'Ship Systems:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('shields', '• Shields: Energy-based protection system', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('hull', '• Hull: Structural integrity of the ship', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('weapons', '• Weapons: Primary combat systems', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('engines', '• Engines: Thrust and maneuvering capability', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('fuel', '• Fuel: Required for hyperspace jumps', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('cargo', '• Cargo: Storage for goods and equipment', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('ship-types', 'Ship Classes:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('small-craft', '• Small Craft: Fast scouts and light fighters', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('medium-vessels', '• Medium Vessels: Balanced traders and fighters', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('large-ships', '• Large Ships: Heavy freighters and capital ships', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('equipment', 'Equipment Types:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('weapons-eq', '• Weapons: Lasers, cannons, missiles', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('shields-eq', '• Shields: Defense systems', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('cargo-eq', '• Cargo: Expansion and optimization', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('utility-eq', '• Utility: Fuel scoops, auto-repair, etc.', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('ship-maint', 'Maintenance:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('maint-1', '• Regular maintenance prevents system failures', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('maint-2', '• Auto Field Maintenance Units repair hull damage', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('maint-3', '• Station services offer full repairs and upgrades', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('maint-4', '• Equipment degradation affects performance', {
+        fontSize: 14,
+        color: '#ffffff'
+      })
+    ]);
+
+    // Galaxy Info section
+    this.contentSections.set('galaxy', [
+      new UIText('galaxy-title', 'GALAXY INFORMATION', {
+        fontSize: 20,
+        color: '#40e0ff',
+        bold: true
+      }),
+      new UIText('galaxy-structure', 'Galaxy Structure:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('galaxy-1', '• 8 galaxies with 256 systems each', {
+        fontSize: 14,
+        color: '#ffffff',
+        wordWrap: true,
+        maxWidth: 560
+      }),
+      new UIText('galaxy-2', '• Each system contains planets, stations, and trade routes', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('galaxy-3', '• Procedurally generated for infinite replayability', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('galaxy-4', '• Government types affect economy and laws', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('government-types', 'Government Types:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('anarchy', '• Anarchy: No laws, high profits, high danger', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('communist', '• Communist: State control, low prices, limited goods', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('feudal', '• Feudal: Noble houses, luxury preference', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('capitalist', '• Capitalist: Free market, competitive prices', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('corporate', '• Corporate: Corporate rule, balanced economy', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('confederacy', '• Confederacy: Democratic, moderate regulations', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('theocracy', '• Theocracy: Religious rule, restricted goods', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('dictatorship', '• Dictatorship: Central authority, controlled economy', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('police-state', '• Police State: Heavy regulation, low crime', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('system-features', 'System Features:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('planets', '• Planets: Surface worlds with bases', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('stations', '• Stations: Orbital facilities for commerce', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('asteroids', '• Asteroid Fields: Mining and hiding spots', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('trade-routes', '• Trade Routes: Established shipping lanes', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('dangers', '• Danger Zones: Pirate-infested areas', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('galaxy-maps', 'Galaxy Maps:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('galactic-map', '• Galactic Map: Galaxy overview for route planning', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('system-map', '• System Map: Local area with detailed view', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('navigation-data', '• Navigation Data: Scanned system information', {
+        fontSize: 14,
+        color: '#ffffff'
+      })
+    ]);
+
+    // Troubleshooting section
+    this.contentSections.set('troubleshooting', [
+      new UIText('help-title-text', 'TROUBLESHOOTING & HELP', {
+        fontSize: 20,
+        color: '#40e0ff',
+        bold: true
+      }),
+      new UIText('common-issues', 'Common Issues:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('issue-1', '• Game won\'t load: Clear browser cache and refresh', {
+        fontSize: 14,
+        color: '#ffffff',
+        wordWrap: true,
+        maxWidth: 560
+      }),
+      new UIText('issue-2', '• No sound: Check browser audio permissions', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('issue-3', '• Low FPS: Reduce graphics quality in settings', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('issue-4', '• Save not working: Ensure local storage is enabled', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('controls-problems', 'Control Issues:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('control-1', '• Keyboard not responding: Check browser focus', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('control-2', '• Touch not working: Clean screen and restart browser', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('control-3', '• Slow response: Enable hardware acceleration', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('performance-help', 'Performance Help:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('perf-1', '• Close other browser tabs to free memory', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('perf-2', '• Restart browser if performance degrades', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('perf-3', '• Use lower quality settings on older devices', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('perf-4', '• Check available system memory', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('getting-help', 'Getting Help:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('help-1', '• Check console for error messages (F12)', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('help-2', '• Try different browser if issues persist', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('help-3', '• Update browser to latest version', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('help-4', '• Export save data before major changes', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('browser-compat', 'Browser Compatibility:', {
+        fontSize: 16,
+        color: '#48bb78',
+        bold: true
+      }),
+      new UIText('chrome', '• Chrome: Best overall compatibility', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('firefox', '• Firefox: Good performance, some limitations', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('safari', '• Safari: Limited features, iOS recommended', {
+        fontSize: 14,
+        color: '#ffffff'
+      }),
+      new UIText('edge', '• Edge: Similar to Chrome, Windows optimized', {
+        fontSize: 14,
+        color: '#ffffff'
+      })
+    ]);
+
+    // Load initial section
+    this.loadSection('controls');
+  }
+
+  private loadSection(sectionId: string): void {
+    this.currentSection = sectionId;
+
+    // Clear existing content
+    this.contentPanel.children.forEach(child => {
+      this.contentPanel.removeChild(child);
+    });
+
+    // Add section content
+    const content = this.contentSections.get(sectionId);
+    if (content) {
+      let yPos = 20;
+      content.forEach(textElement => {
+        // Adjust position for each element
+        const adjustedText = { ...textElement };
+        adjustedText.position = { x: textElement.position.x, y: yPos };
+        this.contentPanel.addChild(adjustedText);
+        yPos += textElement.size.y + 10;
+      });
+    }
+
+    // Update navigation button colors
+    const navButtons = this.navigationPanel.children.filter(child => child.id.startsWith('nav-'));
+    navButtons.forEach(button => {
+      if (button instanceof UIButton) {
+        button.options.backgroundColor = button.id === `nav-${sectionId}` ? '#4a5568' : '#2d3748';
+      }
+    });
+  }
+
+  private previousSection(): void {
+    const sections = Array.from(this.contentSections.keys());
+    const currentIndex = sections.indexOf(this.currentSection);
+    const previousIndex = currentIndex > 0 ? currentIndex - 1 : sections.length - 1;
+    this.loadSection(sections[previousIndex]);
+  }
+
+  private nextSection(): void {
+    const sections = Array.from(this.contentSections.keys());
+    const currentIndex = sections.indexOf(this.currentSection);
+    const nextIndex = currentIndex < sections.length - 1 ? currentIndex + 1 : 0;
+    this.loadSection(sections[nextIndex]);
+  }
+
+  private startTutorial(): void {
+    if (confirm('Start the tutorial? This will guide you through the basics of Alite.\n\nThe tutorial will cover:\n• Basic movement and controls\n• Combat fundamentals\n• Trading basics\n• Navigation and hyperspace\n• Ship management\n\nWould you like to proceed?')) {
+      // Enhanced tutorial information
+      const tutorialSteps = [
+        'Step 1: Complete basic movement tutorial',
+        'Step 2: Practice weapon firing in safe zone',
+        'Step 3: Learn to dock at a station',
+        'Step 4: Complete your first trade',
+        'Step 5: Accept and complete a mission',
+        'Step 6: Navigate to a new system'
+      ];
+
+      let tutorialMessage = 'Interactive Tutorial Features:\n\n';
+      tutorialMessage += '🎮 PRACTICE MODE:\n';
+      tutorialMessage += '• Safe training area with no consequences\n';
+      tutorialMessage += '• Interactive control hints\n';
+      tutorialMessage += '• Progress tracking\n\n';
+      
+      tutorialMessage += '📚 LEARNING PATH:\n';
+      tutorialSteps.forEach((step, index) => {
+        tutorialMessage += `${index + 1}. ${step}\n`;
+      });
+
+      tutorialMessage += '\n🎯 SUCCESS CRITERIA:\n';
+      tutorialMessage += '• Master basic controls (movement, firing)\n';
+      tutorialMessage += '• Successfully dock at a station\n';
+      tutorialMessage += '• Complete a profitable trade\n';
+      tutorialMessage += '• Accept and finish a delivery mission\n';
+      tutorialMessage += '• Navigate to a new star system\n\n';
+      
+      tutorialMessage += '📖 The tutorial is designed for new players to learn core mechanics safely.\n\n';
+      tutorialMessage += 'Would you like to start the tutorial now?';
+
+      alert(tutorialMessage);
+    }
+  }
+
+  private backToMenu(): void {
+    this.navigateToScreen('main-menu');
+  }
+
+  private navigateToScreen(screenId: ScreenId): void {
+    const uiManager = UIManager.getInstance();
+    uiManager.showScreen(screenId);
+  }
+
+  handleKeyDown(key: string): boolean {
+    if (!this.isVisible || !this.isEnabled) {
+      return false;
+    }
+
+    switch (key.toLowerCase()) {
+      case 'escape':
+        this.backToMenu();
+        return true;
+      case 'arrowleft':
+      case 'a':
+        this.previousSection();
+        return true;
+      case 'arrowright':
+      case 'd':
+        this.nextSection();
+        return true;
+      case ' ':
+      case 'enter':
+        this.startTutorial();
+        return true;
+    }
+
+    return super.handleKeyDown(key);
+  }
+}

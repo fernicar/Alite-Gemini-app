@@ -1,0 +1,722 @@
+/**
+ * Commander class - Player character and progression system
+ * Implements the core player data model with credits, legal status, combat rating,
+ * current ship, inventory, cargo, location, and mission tracking.
+ */
+
+import { Vector2D } from '../../types/index.js';
+
+// Combat rating levels in Elite Universe
+export enum CombatRating {
+  HARMLESS = 'HARMLESS',
+  MOSTLY_HARMLESS = 'MOSTLY_HARMLESS',
+  BEGINNER = 'BEGINNER',
+  EXPERIENCED = 'EXPERIENCED',
+  COMPETENT = 'COMPETENT',
+  DANGEROUS = 'DANGEROUS',
+  DEADLY = 'DEADLY',
+  ELITE = 'ELITE'
+}
+
+// Legal status levels
+export enum LegalStatus {
+  CLEAN = 'CLEAN',
+  OFFENDER = 'OFFENDER',
+  CRIMINAL = 'CRIMINAL',
+  FUGITIVE = 'FUGITIVE',
+  PUBLIC_ENEMY = 'PUBLIC_ENEMY'
+}
+
+// Inventory item types
+export enum InventoryItemType {
+  EQUIPMENT = 'EQUIPMENT',
+  WEAPON = 'WEAPON',
+  CARGO = 'CARGO',
+  MISC = 'MISC'
+}
+
+// Mission priority levels
+export enum MissionPriority {
+  LOW = 'LOW',
+  MEDIUM = 'MEDIUM',
+  HIGH = 'HIGH',
+  CRITICAL = 'CRITICAL'
+}
+
+// Extended cargo item with additional properties
+export interface ExtendedCargoItem {
+  good: string;
+  quantity: number;
+  category: string;
+  basePrice: number;
+  currentPrice: number;
+}
+
+// Extended inventory item
+export interface InventoryItem {
+  id: string;
+  name: string;
+  type: InventoryItemType;
+  quantity: number;
+  description: string;
+  value: number;
+  equipped: boolean;
+}
+
+// Ship reference
+export interface ShipReference {
+  id: string;
+  name: string;
+  type: string;
+  location: string; // Station or planet name where ship is located
+}
+
+// Mission progress tracking
+export interface MissionProgress {
+  missionId: string;
+  title: string;
+  priority: MissionPriority;
+  currentObjective: number;
+  totalObjectives: number;
+  rewards: {
+    credits: number;
+    equipment?: string[];
+    reputation?: { faction: string; change: number };
+  };
+  failures: {
+    timeLimit?: number;
+    conditions?: string[];
+  };
+  progress: Map<string, any>;
+}
+
+// Location in galaxy and system
+export interface CurrentLocation {
+  galaxy: number;
+  galaxyName: string;
+  system: number;
+  systemName: string;
+  coordinates: Vector2D; // Position within system
+  locationType: 'PLANET' | 'STATION' | 'DEEP_SPACE';
+  locationName: string;
+  dockedAt?: string; // If at a station or planet
+}
+
+// Combat statistics
+export interface CombatStatistics {
+  kills: {
+    pirates: number;
+    police: number;
+    traders: number;
+    military: number;
+    other: number;
+  };
+  reputation: Map<string, number>; // Faction relationships
+  bountyEarned: number;
+  finesPaid: number;
+  criminalRecord: {
+    crimes: string[];
+    lastOffense: number;
+    prisonTime: number;
+  };
+}
+
+// Trade statistics
+export interface TradeStatistics {
+  goodsTraded: Map<string, number>; // good -> quantity
+  totalProfit: number;
+  totalLoss: number;
+  tradesCompleted: number;
+  planetsVisited: number;
+  stationsVisited: number;
+}
+
+/**
+ * Commander class - Central player character data and progression
+ */
+export class Commander {
+  // Basic identification
+  private name: string;
+  private playerId: string;
+  private createdAt: number;
+  private lastActive: number;
+
+  // Financial and legal status
+  private credits: number;
+  private legalStatus: LegalStatus;
+  private legalStatusValue: number; // Numeric representation (-100 to 100)
+  private combatRating: CombatRating;
+  private score: number;
+
+  // Mission and progression
+  private missionsCompleted: number;
+  private missionsFailed: number;
+  private missionProgress: Map<string, MissionProgress>;
+  private shipsOwned: Map<string, ShipReference>;
+  private currentShipId: string;
+
+  // Inventory and cargo
+  private inventory: Map<string, InventoryItem>;
+  private cargoHold: Map<string, ExtendedCargoItem>;
+  private cargoUsed: number;
+  private cargoCapacity: number;
+
+  // Location and navigation
+  private currentLocation: CurrentLocation;
+  private visitedSystems: Set<string>; // galaxy:system format
+  private hyperspaceTarget?: {
+    galaxy: number;
+    system: number;
+    jumpDistance: number;
+  };
+
+  // Statistics and achievements
+  private combatStats: CombatStatistics;
+  private tradeStats: TradeStatistics;
+  private achievementUnlocked: Set<string>;
+  private playTime: number; // Total playtime in seconds
+
+  // Ship equipment and loadout
+  private equippedWeapons: string[];
+  private equippedEquipment: string[];
+  private availableDockingCodes: Set<string>;
+
+  // Create a new Commander
+  constructor(name: string, startLocation: CurrentLocation) {
+    this.name = name;
+    this.playerId = this.generatePlayerId();
+    this.createdAt = Date.now();
+    this.lastActive = Date.now();
+
+    // Initialize with default values
+    this.credits = 1000; // Starting credits
+    this.legalStatus = LegalStatus.CLEAN;
+    this.legalStatusValue = 0;
+    this.combatRating = CombatRating.HARMLESS;
+    this.score = 0;
+
+    this.missionsCompleted = 0;
+    this.missionsFailed = 0;
+    this.missionProgress = new Map();
+    this.shipsOwned = new Map();
+    this.currentShipId = 'cobra_mk3'; // Default starting ship
+
+    // Inventory initialization
+    this.inventory = new Map();
+    this.cargoHold = new Map();
+    this.cargoUsed = 0;
+    this.cargoCapacity = 20; // Default for Cobra Mk3
+
+    // Location and navigation
+    this.currentLocation = startLocation;
+    this.visitedSystems = new Set();
+    this.recordSystemVisit();
+
+    // Statistics
+    this.combatStats = {
+      kills: {
+        pirates: 0,
+        police: 0,
+        traders: 0,
+        military: 0,
+        other: 0
+      },
+      reputation: new Map(),
+      bountyEarned: 0,
+      finesPaid: 0,
+      criminalRecord: {
+        crimes: [],
+        lastOffense: 0,
+        prisonTime: 0
+      }
+    };
+
+    this.tradeStats = {
+      goodsTraded: new Map(),
+      totalProfit: 0,
+      totalLoss: 0,
+      tradesCompleted: 0,
+      planetsVisited: 0,
+      stationsVisited: 0
+    };
+
+    this.achievementUnlocked = new Set();
+    this.playTime = 0;
+
+    // Equipment
+    this.equippedWeapons = [];
+    this.equippedEquipment = [];
+    this.availableDockingCodes = new Set();
+
+    // Initialize default cargo with basic supplies
+    this.initializeStartingCargo();
+  }
+
+  /**
+   * Generate unique player ID
+   */
+  private generatePlayerId(): string {
+    return 'player_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
+  }
+
+  /**
+   * Initialize starting cargo and basic items
+   */
+  private initializeStartingCargo(): void {
+    // Basic food supplies
+    this.addCargo('Food Cartridges', 10, 'consumer', 15);
+    this.addCargo('Liquor', 5, 'consumer', 75);
+    this.addCargo('Luxuries', 2, 'consumer', 250);
+    
+    // Starting equipment
+    this.addInventoryItem('Laser Cannon', InventoryItemType.WEAPON, 1, 5000, true);
+    this.addInventoryItem('Fuel Scoops', InventoryItemType.EQUIPMENT, 1, 1000, false);
+  }
+
+  // Basic getter methods
+  getName(): string { return this.name; }
+  getPlayerId(): string { return this.playerId; }
+  getCredits(): number { return this.credits; }
+  getCombatRating(): CombatRating { return this.combatRating; }
+  getLegalStatus(): LegalStatus { return this.legalStatus; }
+  getScore(): number { return this.score; }
+  getCargoCapacity(): number { return this.cargoCapacity; }
+  getCargoUsed(): number { return this.cargoUsed; }
+  getMissionsCompleted(): number { return this.missionsCompleted; }
+  getCurrentLocation(): CurrentLocation { return { ...this.currentLocation }; }
+
+  /**
+   * Add credits to the commander
+   */
+  addCredits(amount: number, reason?: string): void {
+    this.credits += amount;
+    this.lastActive = Date.now();
+    
+    if (amount > 0) {
+      this.score += Math.floor(amount / 10); // Score increases with profit
+    }
+  }
+
+  /**
+   * Spend credits
+   */
+  spendCredits(amount: number, reason?: string): boolean {
+    if (this.credits >= amount) {
+      this.credits -= amount;
+      this.lastActive = Date.now();
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Update legal status
+   */
+  updateLegalStatus(newStatus: LegalStatus, value: number): void {
+    this.legalStatus = newStatus;
+    this.legalStatusValue = Math.max(-100, Math.min(100, value));
+    this.lastActive = Date.now();
+
+    if (newStatus === LegalStatus.FUGITIVE || newStatus === LegalStatus.PUBLIC_ENEMY) {
+      this.score = Math.max(0, this.score - 100); // Penalty for crimes
+    }
+  }
+
+  /**
+   * Check if commander is wanted
+   */
+  isWanted(): boolean {
+    return this.legalStatusValue < -20 || this.legalStatus === LegalStatus.FUGITIVE;
+  }
+
+  /**
+   * Calculate bounty based on crimes
+   */
+  calculateBounty(): number {
+    if (this.legalStatusValue >= -20) return 0;
+    
+    const crimeSeverity = Math.abs(this.legalStatusValue);
+    return Math.floor(crimeSeverity * crimeSeverity * 10);
+  }
+
+  /**
+   * Add cargo to cargo hold
+   */
+  addCargo(good: string, quantity: number, category: string, price: number): boolean {
+    const currentQuantity = this.cargoHold.get(good)?.quantity || 0;
+    const totalQuantity = currentQuantity + quantity;
+    
+    if (this.cargoUsed + quantity > this.cargoCapacity) {
+      return false; // Not enough space
+    }
+
+    const item: ExtendedCargoItem = {
+      good,
+      quantity: totalQuantity,
+      category,
+      basePrice: price,
+      currentPrice: price
+    };
+
+    this.cargoHold.set(good, item);
+    this.cargoUsed += quantity;
+    this.updateTradeStats(good, quantity, 'buy', price);
+    
+    return true;
+  }
+
+  /**
+   * Remove cargo from hold
+   */
+  removeCargo(good: string, quantity: number): boolean {
+    const item = this.cargoHold.get(good);
+    if (!item || item.quantity < quantity) {
+      return false;
+    }
+
+    item.quantity -= quantity;
+    if (item.quantity === 0) {
+      this.cargoHold.delete(good);
+    }
+
+    this.cargoUsed -= quantity;
+    return true;
+  }
+
+  /**
+   * Get all cargo items
+   */
+  getCargoItems(): Map<string, ExtendedCargoItem> {
+    return new Map(this.cargoHold);
+  }
+
+  /**
+   * Add item to inventory
+   */
+  addInventoryItem(name: string, type: InventoryItemType, quantity: number, value: number, equipped: boolean = false): void {
+    const existing = this.inventory.get(name);
+    
+    if (existing) {
+      existing.quantity += quantity;
+    } else {
+      const item: InventoryItem = {
+        id: this.generateItemId(),
+        name,
+        type,
+        quantity,
+        description: this.generateItemDescription(name),
+        value,
+        equipped
+      };
+      this.inventory.set(name, item);
+    }
+
+    // Auto-equip weapons if no other weapons equipped
+    if (type === InventoryItemType.WEAPON && equipped) {
+      this.equippedWeapons.push(name);
+    }
+  }
+
+  /**
+   * Generate unique item ID
+   */
+  private generateItemId(): string {
+    return 'item_' + Math.random().toString(36).substr(2, 9);
+  }
+
+  /**
+   * Generate item description
+   */
+  private generateItemDescription(itemName: string): string {
+    const descriptions: { [key: string]: string } = {
+      'Laser Cannon': 'Basic military grade laser weapon',
+      'Fuel Scoops': 'Allows fuel collection from stars',
+      'Escape Pod': 'Emergency escape system',
+      'Fuel Tank': 'Extended fuel capacity'
+    };
+    return descriptions[itemName] || 'Standard equipment';
+  }
+
+  /**
+   * Get inventory items
+   */
+  getInventory(): Map<string, InventoryItem> {
+    return new Map(this.inventory);
+  }
+
+  /**
+   * Update combat rating based on combat statistics
+   */
+  updateCombatRating(): void {
+    const totalKills = Object.values(this.combatStats.kills).reduce((sum, count) => sum + count, 0);
+    
+    if (totalKills >= 1000) {
+      this.combatRating = CombatRating.ELITE;
+    } else if (totalKills >= 500) {
+      this.combatRating = CombatRating.DEADLY;
+    } else if (totalKills >= 200) {
+      this.combatRating = CombatRating.DANGEROUS;
+    } else if (totalKills >= 100) {
+      this.combatRating = CombatRating.COMPETENT;
+    } else if (totalKills >= 50) {
+      this.combatRating = CombatRating.EXPERIENCED;
+    } else if (totalKills >= 20) {
+      this.combatRating = CombatRating.BEGINNER;
+    } else if (totalKills >= 5) {
+      this.combatRating = CombatRating.MOSTLY_HARMLESS;
+    }
+  }
+
+  /**
+   * Record a kill and update statistics
+   */
+  recordKill(targetType: keyof CombatStatistics['kills']): void {
+    this.combatStats.kills[targetType]++;
+    this.score += 10;
+    this.updateCombatRating();
+    this.lastActive = Date.now();
+  }
+
+  /**
+   * Update faction reputation
+   */
+  updateFactionReputation(faction: string, change: number): void {
+    const currentRep = this.combatStats.reputation.get(faction) || 0;
+    const newRep = Math.max(-100, Math.min(100, currentRep + change));
+    this.combatStats.reputation.set(faction, newRep);
+  }
+
+  /**
+   * Get faction reputation
+   */
+  getFactionReputation(faction: string): number {
+    return this.combatStats.reputation.get(faction) || 0;
+  }
+
+  /**
+   * Record system visit
+   */
+  recordSystemVisit(): void {
+    const systemKey = `${this.currentLocation.galaxy}:${this.currentLocation.system}`;
+    this.visitedSystems.add(systemKey);
+    
+    if (this.currentLocation.locationType === 'PLANET') {
+      this.tradeStats.planetsVisited++;
+    } else if (this.currentLocation.locationType === 'STATION') {
+      this.tradeStats.stationsVisited++;
+    }
+  }
+
+  /**
+   * Check if system has been visited
+   */
+  hasVisitedSystem(galaxy: number, system: number): boolean {
+    return this.visitedSystems.has(`${galaxy}:${system}`);
+  }
+
+  /**
+   * Change location
+   */
+  changeLocation(newLocation: CurrentLocation): void {
+    this.currentLocation = newLocation;
+    this.recordSystemVisit();
+    this.lastActive = Date.now();
+  }
+
+  /**
+   * Set hyperspace target
+   */
+  setHyperspaceTarget(galaxy: number, system: number, jumpDistance: number): void {
+    this.hyperspaceTarget = { galaxy, system, jumpDistance };
+  }
+
+  /**
+   * Execute hyperspace jump
+   */
+  executeHyperspaceJump(): boolean {
+    if (!this.hyperspaceTarget) return false;
+
+    // Check if enough fuel (simplified - would need actual fuel cost calculation)
+    if (this.credits < this.hyperspaceTarget.jumpDistance * 2) {
+      return false; // Not enough credits for fuel
+    }
+
+    // Spend fuel cost
+    this.spendCredits(this.hyperspaceTarget.jumpDistance * 2, 'Hyperspace fuel');
+
+    // Update location
+    this.currentLocation.galaxy = this.hyperspaceTarget.galaxy;
+    this.currentLocation.system = this.hyperspaceTarget.system;
+    this.recordSystemVisit();
+
+    this.hyperspaceTarget = undefined;
+    return true;
+  }
+
+  /**
+   * Update trade statistics
+   */
+  private updateTradeStats(good: string, quantity: number, type: 'buy' | 'sell', price: number): void {
+    const current = this.tradeStats.goodsTraded.get(good) || 0;
+    this.tradeStats.goodsTraded.set(good, current + quantity);
+    
+    if (type === 'sell') {
+      this.tradeStats.totalProfit += price * quantity;
+      this.tradeStats.totalLoss += 0;
+    } else {
+      this.tradeStats.totalLoss += price * quantity;
+      this.tradeStats.totalProfit += 0;
+    }
+    
+    this.tradeStats.tradesCompleted++;
+  }
+
+  /**
+   * Add mission progress
+   */
+  addMissionProgress(missionId: string, progress: MissionProgress): void {
+    this.missionProgress.set(missionId, progress);
+  }
+
+  /**
+   * Complete mission
+   */
+  completeMission(missionId: string): void {
+    const mission = this.missionProgress.get(missionId);
+    if (mission) {
+      // Award rewards
+      if (mission.rewards.credits) {
+        this.addCredits(mission.rewards.credits, `Mission reward: ${mission.title}`);
+      }
+      
+      // Update combat stats
+      this.missionsCompleted++;
+      
+      // Remove mission
+      this.missionProgress.delete(missionId);
+    }
+  }
+
+  /**
+   * Fail mission
+   */
+  failMission(missionId: string): void {
+    if (this.missionProgress.has(missionId)) {
+      this.missionProgress.delete(missionId);
+      this.missionsFailed++;
+    }
+  }
+
+  /**
+   * Get active missions
+   */
+  getActiveMissions(): MissionProgress[] {
+    return Array.from(this.missionProgress.values());
+  }
+
+  /**
+   * Calculate total playtime
+   */
+  calculatePlayTime(): number {
+    const currentTime = Date.now();
+    const sessionTime = (currentTime - this.lastActive) / 1000;
+    return this.playTime + sessionTime;
+  }
+
+  /**
+   * Serialize commander data for saving
+   */
+  serialize(): object {
+    return {
+      name: this.name,
+      playerId: this.playerId,
+      createdAt: this.createdAt,
+      credits: this.credits,
+      legalStatus: this.legalStatus,
+      legalStatusValue: this.legalStatusValue,
+      combatRating: this.combatRating,
+      score: this.score,
+      missionsCompleted: this.missionsCompleted,
+      missionsFailed: this.missionsFailed,
+      currentShipId: this.currentShipId,
+      cargoCapacity: this.cargoCapacity,
+      cargoUsed: this.cargoUsed,
+      currentLocation: this.currentLocation,
+      combatStats: {
+        ...this.combatStats,
+        reputation: Array.from(this.combatStats.reputation.entries()),
+        criminalRecord: this.combatStats.criminalRecord
+      },
+      tradeStats: {
+        ...this.tradeStats,
+        goodsTraded: Array.from(this.tradeStats.goodsTraded.entries())
+      },
+      achievementUnlocked: Array.from(this.achievementUnlocked),
+      playTime: this.playTime,
+      equippedWeapons: this.equippedWeapons,
+      equippedEquipment: this.equippedEquipment,
+      availableDockingCodes: Array.from(this.availableDockingCodes),
+      // Convert Maps to arrays for JSON serialization
+      cargoHold: Array.from(this.cargoHold.entries()),
+      inventory: Array.from(this.inventory.entries()),
+      missionProgress: Array.from(this.missionProgress.entries()),
+      shipsOwned: Array.from(this.shipsOwned.entries()),
+      visitedSystems: Array.from(this.visitedSystems)
+    };
+  }
+
+  /**
+   * Deserialize commander data from save
+   */
+  static deserialize(data: any): Commander {
+    const commander = new Commander(data.name, data.currentLocation);
+    
+    // Restore all properties
+    commander.playerId = data.playerId;
+    commander.createdAt = data.createdAt;
+    commander.credits = data.credits;
+    commander.legalStatus = data.legalStatus;
+    commander.legalStatusValue = data.legalStatusValue;
+    commander.combatRating = data.combatRating;
+    commander.score = data.score;
+    commander.missionsCompleted = data.missionsCompleted;
+    commander.missionsFailed = data.missionsFailed;
+    commander.currentShipId = data.currentShipId;
+    commander.cargoCapacity = data.cargoCapacity;
+    commander.cargoUsed = data.cargoUsed;
+    commander.playTime = data.playTime;
+    commander.equippedWeapons = data.equippedWeapons || [];
+    commander.equippedEquipment = data.equippedEquipment || [];
+    
+    // Restore Maps and Sets
+    commander.combatStats.reputation = new Map(data.combatStats?.reputation || []);
+    commander.combatStats.criminalRecord = data.combatStats?.criminalRecord || commander.combatStats.criminalRecord;
+    commander.tradeStats.goodsTraded = new Map(data.tradeStats?.goodsTraded || []);
+    commander.achievementUnlocked = new Set(data.achievementUnlocked || []);
+    commander.availableDockingCodes = new Set(data.availableDockingCodes || []);
+    commander.cargoHold = new Map(data.cargoHold || []);
+    commander.inventory = new Map(data.inventory || []);
+    commander.missionProgress = new Map(data.missionProgress || []);
+    commander.shipsOwned = new Map(data.shipsOwned || []);
+    commander.visitedSystems = new Set(data.visitedSystems || []);
+    
+    return commander;
+  }
+
+  /**
+   * Get debug information
+   */
+  getDebugInfo(): object {
+    return {
+      name: this.name,
+      credits: this.credits,
+      combatRating: this.combatRating,
+      legalStatus: this.legalStatus,
+      location: `${this.currentLocation.galaxyName}/${this.currentLocation.systemName}`,
+      cargo: `${this.cargoUsed}/${this.cargoCapacity}`,
+      missions: this.missionProgress.size,
+      shipsOwned: this.shipsOwned.size,
+      score: this.score
+    };
+  }
+}

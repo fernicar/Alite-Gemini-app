@@ -1,0 +1,776 @@
+/**
+ * Planet and Station Generation System
+ * Creates detailed celestial objects and space stations for star systems
+ */
+
+import { NameGenerator } from './NameGenerator.js';
+import { EconomyType, GovernmentType, StarType, DockingFacilities } from '../models/Galaxy.js';
+import { SeededRandomGenerator } from './SeededRandomGenerator.js';
+
+/**
+ * Planet types with distinct characteristics
+ */
+export enum PlanetType {
+  ROCKY = 'Rocky',
+  DESERT = 'Desert',
+  ICE = 'Ice',
+  GAS_GIANT = 'Gas Giant',
+  OCEAN = 'Ocean',
+  FOREST = 'Forest',
+  JUNGLE = 'Jungle',
+  TERRESTRIAL = 'Terrestrial',
+  BAREN = 'Barren',
+  VOLCANIC = 'Volcanic'
+}
+
+/**
+ * Atmospheric composition
+ */
+export enum AtmosphereType {
+  NONE = 'None',
+  THIN = 'Thin',
+  BREATHABLE = 'Breathable',
+  TOXIC = 'Toxic',
+  CORROSIVE = 'Corrosive',
+  AMMONIA = 'Ammonia',
+  METHANE = 'Methane',
+  CARBON_DIOXIDE = 'Carbon Dioxide',
+  HELIUM = 'Helium'
+}
+
+/**
+ * Station types
+ */
+export enum StationType {
+  ORBITAL_STATION = 'Orbital Station',
+  PLANETARY_BASE = 'Planetary Base',
+  SPACE_PORT = 'Space Port',
+  MINING_OUTPOST = 'Mining Outpost',
+  RESEARCH_FACILITY = 'Research Facility',
+  MILITARY_BASE = 'Military Base',
+  TRADE_HUB = 'Trade Hub',
+  REFUGEE_CAMP = 'Refugee Camp'
+}
+
+/**
+ * Station services
+ */
+export interface StationServices {
+  market: boolean;
+  shipyard: boolean;
+  equipment: boolean;
+  medical: boolean;
+  bank: boolean;
+  legal: boolean;
+  entertainment: boolean;
+  fuel: boolean;
+  repairs: boolean;
+  missions: boolean;
+}
+
+/**
+ * Detailed planet data
+ */
+export interface PlanetData {
+  name: string;
+  type: PlanetType;
+  radius: number; // km
+  mass: number; // Earth masses
+  gravity: number; // G
+  atmosphere: AtmosphereType;
+  temperature: number; // Celsius
+  population: number;
+  
+  // Orbital characteristics
+  orbitalDistance: number; // AU
+  orbitalPeriod: number; // days
+  rotationPeriod: number; // hours
+  axialTilt: number; // degrees
+  
+  // Resources and economy
+  resources: string[];
+  economyType: EconomyType;
+  techLevel: number;
+  
+  // Special features
+  hasMoons: boolean;
+  moonCount: number;
+  specialFeatures: string[];
+  
+  // Generation seed for consistency
+  generationSeed: string;
+}
+
+/**
+ * Detailed station data
+ */
+export interface StationData {
+  name: string;
+  type: StationType;
+  position: { x: number; y: number; z: number };
+  
+  // Station characteristics
+  size: number; // Relative size (1-10)
+  capacity: number; // Max ships
+  dockingFee: number;
+  
+  // Services available
+  services: StationServices;
+  
+  // Security level
+  securityLevel: number; // 0-100
+  
+  // Economy data
+  economyType: EconomyType;
+  governmentType: GovernmentType;
+  
+  // Special characteristics
+  specialFeatures: string[];
+  
+  // Generation seed
+  generationSeed: string;
+}
+
+/**
+ * Planetary body generation system
+ */
+export class PlanetGenerator {
+  private nameGenerator: NameGenerator;
+  private random: SeededRandomGenerator;
+
+  constructor(seed: number | string) {
+    this.nameGenerator = new NameGenerator(seed);
+    this.random = new SeededRandomGenerator(seed + '_planet');
+  }
+
+  /**
+   * Generate planets for a star system
+   */
+  generatePlanets(
+    starType: StarType,
+    economyType: EconomyType,
+    techLevel: number,
+    targetPopulation: number,
+    count?: number
+  ): PlanetData[] {
+    const planetCount = count || this.random.nextInt(1, 5);
+    const planets: PlanetData[] = [];
+
+    // Generate main planets
+    for (let i = 0; i < planetCount; i++) {
+      const seed = `planet_${starType}_${i}_${starType}_${techLevel}`;
+      const planetRandom = new SeededRandomGenerator(seed);
+      const planet = this.generatePlanet(i, planetRandom, starType, economyType, techLevel);
+      planets.push(planet);
+    }
+
+    // Add moons for larger planets
+    planets.forEach(planet => {
+      if (planet.radius > 5000 && planetRandom.next() < 0.7) {
+        planet.hasMoons = true;
+        planet.moonCount = planetRandom.nextInt(1, 6);
+      }
+    });
+
+    return planets;
+  }
+
+  /**
+   * Generate individual planet
+   */
+  private generatePlanet(
+    index: number,
+    random: SeededRandomGenerator,
+    starType: StarType,
+    economyType: EconomyType,
+    techLevel: number
+  ): PlanetData {
+    const planetType = this.choosePlanetType(random, starType, economyType);
+    const atmosphere = this.determineAtmosphere(random, planetType);
+    const name = this.generatePlanetName(index, random);
+
+    // Calculate physical properties based on type
+    const radius = this.calculateRadius(random, planetType);
+    const mass = this.calculateMass(random, radius, planetType);
+    const gravity = this.calculateGravity(mass, radius);
+    const temperature = this.calculateTemperature(random, starType, planetType);
+    
+    // Orbital characteristics
+    const orbitalDistance = this.calculateOrbitalDistance(random, index, starType);
+    const orbitalPeriod = this.calculateOrbitalPeriod(orbitalDistance);
+    const rotationPeriod = this.calculateRotationPeriod(random, planetType);
+    const axialTilt = random.next() * 60; // 0-60 degrees
+
+    // Economy and population
+    const population = this.calculatePopulation(random, planetType, techLevel, targetPopulation);
+    const economyType = this.adjustEconomyType(economyType, planetType, techLevel);
+    
+    // Resources based on planet type and economy
+    const resources = this.generateResources(random, planetType, economyType);
+
+    return {
+      name,
+      type: planetType,
+      radius,
+      mass,
+      gravity,
+      atmosphere,
+      temperature,
+      population,
+      orbitalDistance,
+      orbitalPeriod,
+      rotationPeriod,
+      axialTilt,
+      resources,
+      economyType,
+      techLevel: this.adjustTechLevel(techLevel, planetType),
+      hasMoons: false,
+      moonCount: 0,
+      specialFeatures: this.generateSpecialFeatures(random, planetType),
+      generationSeed: random.getSeed().toString()
+    };
+  }
+
+  /**
+   * Choose planet type based on stellar characteristics
+   */
+  private choosePlanetType(
+    random: SeededRandomGenerator,
+    starType: StarType,
+    economyType: EconomyType
+  ): PlanetType {
+    const typeWeights = this.getTypeWeights(starType, economyType);
+    
+    return random.weightedChoice(
+      Object.entries(typeWeights).map(([type, weight]) => ({
+        item: type as PlanetType,
+        weight
+      }))
+    );
+  }
+
+  /**
+   * Get weighted probabilities for planet types based on conditions
+   */
+  private getTypeWeights(starType: StarType, economyType: EconomyType): Record<PlanetType, number> {
+    const baseWeights: Record<PlanetType, number> = {
+      [PlanetType.ROCKY]: 1.0,
+      [PlanetType.DESERT]: 0.8,
+      [PlanetType.ICE]: 0.6,
+      [PlanetType.GAS_GIANT]: 0.4,
+      [PlanetType.OCEAN]: 1.2,
+      [PlanetType.FOREST]: 1.0,
+      [PlanetType.JUNGLE]: 0.8,
+      [PlanetType.TERRESTRIAL]: 1.5,
+      [PlanetType.BAREN]: 0.3,
+      [PlanetType.VOLCANIC]: 0.5
+    };
+
+    // Adjust weights based on economy type
+    switch (economyType) {
+      case EconomyType.AGRICULTURAL:
+        baseWeights[PlanetType.FOREST] *= 1.5;
+        baseWeights[PlanetType.JUNGLE] *= 1.3;
+        baseWeights[PlanetType.OCEAN] *= 1.2;
+        break;
+      case EconomyType.INDUSTRIAL:
+        baseWeights[PlanetType.ROCKY] *= 1.3;
+        baseWeights[PlanetType.VOLCANIC] *= 1.2;
+        break;
+      case EconomyType.MINING:
+        baseWeights[PlanetType.ROCKY] *= 1.4;
+        baseWeights[PlanetType.DESERT] *= 1.2;
+        baseWeights[PlanetType.BAREN] *= 1.1;
+        break;
+    }
+
+    // Adjust based on star type
+    switch (starType) {
+      case StarType.RED_GIANT:
+        baseWeights[PlanetType.DESERT] *= 1.5;
+        baseWeights[PlanetType.BAREN] *= 1.3;
+        break;
+      case StarType.WHITE_DWARF:
+        baseWeights[PlanetType.ICE] *= 1.4;
+        baseWeights[PlanetType.BAREN] *= 1.3;
+        break;
+      case StarType.NEUTRON:
+        baseWeights[PlanetType.ROCKY] *= 1.2;
+        baseWeights[PlanetType.BAREN] *= 1.1;
+        break;
+    }
+
+    return baseWeights;
+  }
+
+  /**
+   * Determine atmospheric composition
+   */
+  private determineAtmosphere(random: SeededRandomGenerator, planetType: PlanetType): AtmosphereType {
+    const atmosphereWeights = this.getAtmosphereWeights(planetType);
+    
+    return random.weightedChoice(
+      Object.entries(atmosphereWeights).map(([type, weight]) => ({
+        item: type as AtmosphereType,
+        weight
+      }))
+    );
+  }
+
+  /**
+   * Get atmospheric composition weights by planet type
+   */
+  private getAtmosphereWeights(planetType: PlanetType): Record<AtmosphereType, number> {
+    const weights: Record<AtmosphereType, number> = {
+      [AtmosphereType.NONE]: 0.1,
+      [AtmosphereType.THIN]: 0.8,
+      [AtmosphereType.BREATHABLE]: 1.0,
+      [AtmosphereType.TOXIC]: 0.3,
+      [AtmosphereType.CORROSIVE]: 0.1,
+      [AtmosphereType.AMMONIA]: 0.05,
+      [AtmosphereType.METHANE]: 0.1,
+      [AtmosphereType.CARBON_DIOXIDE]: 0.4,
+      [AtmosphereType.HELIUM]: 0.02
+    };
+
+    switch (planetType) {
+      case PlanetType.GAS_GIANT:
+        weights[AtmosphereType.METHANE] *= 2.0;
+        weights[AtmosphereType.HELIUM] *= 3.0;
+        weights[AtmosphereType.THIN] *= 0.5;
+        break;
+      case PlanetType.OCEAN:
+        weights[AtmosphereType.BREATHABLE] *= 2.0;
+        weights[AtmosphereType.THIN] *= 1.2;
+        break;
+      case PlanetType.DESERT:
+        weights[AtmosphereType.THIN] *= 1.5;
+        weights[AtmosphereType.TOXIC] *= 1.3;
+        break;
+      case PlanetType.ICE:
+        weights[AtmosphereType.THIN] *= 1.8;
+        weights[AtmosphereType.CORROSIVE] *= 1.1;
+        break;
+      case PlanetType.VOLCANIC:
+        weights[AtmosphereType.TOXIC] *= 1.4;
+        weights[AtmosphereType.CORROSIVE] *= 1.6;
+        break;
+    }
+
+    return weights;
+  }
+
+  /**
+   * Generate planet name
+   */
+  private generatePlanetName(index: number, random: SeededRandomGenerator): string {
+    if (random.next() < 0.2) { // 20% chance for roman numeral
+      const numerals = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
+      return numerals[Math.min(index, numerals.length - 1)];
+    } else if (random.next() < 0.3) { // 30% chance for greek letter
+      const letters = ['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon', 'Zeta', 'Eta', 'Theta', 'Iota', 'Kappa'];
+      return letters[index % letters.length];
+    } else {
+      // Generate unique name
+      const nameGen = new NameGenerator(random.getSeed());
+      return nameGen.generatePlanetNames(1)[0];
+    }
+  }
+
+  /**
+   * Calculate physical properties
+   */
+  private calculateRadius(random: SeededRandomGenerator, planetType: PlanetType): number {
+    const baseSizes = {
+      [PlanetType.ROCKY]: { min: 1000, max: 8000 },
+      [PlanetType.DESERT]: { min: 2000, max: 10000 },
+      [PlanetType.ICE]: { min: 1500, max: 9000 },
+      [PlanetType.GAS_GIANT]: { min: 50000, max: 150000 },
+      [PlanetType.OCEAN]: { min: 4000, max: 12000 },
+      [PlanetType.FOREST]: { min: 3500, max: 11000 },
+      [PlanetType.JUNGLE]: { min: 3000, max: 10000 },
+      [PlanetType.TERRESTRIAL]: { min: 5000, max: 13000 },
+      [PlanetType.BAREN]: { min: 800, max: 6000 },
+      [PlanetType.VOLCANIC]: { min: 2000, max: 8000 }
+    };
+
+    const range = baseSizes[planetType];
+    return random.nextInt(range.min, range.max);
+  }
+
+  private calculateMass(random: SeededRandomGenerator, radius: number, planetType: PlanetType): number {
+    // Simplified mass calculation based on density
+    const densities = {
+      [PlanetType.ROCKY]: 5.5,
+      [PlanetType.DESERT]: 3.8,
+      [PlanetType.ICE]: 1.1,
+      [PlanetType.GAS_GIANT]: 1.3,
+      [PlanetType.OCEAN]: 5.0,
+      [PlanetType.FOREST]: 4.2,
+      [PlanetType.JUNGLE]: 4.0,
+      [PlanetType.TERRESTRIAL]: 5.2,
+      [PlanetType.BAREN]: 2.5,
+      [PlanetType.VOLCANIC]: 4.8
+    };
+
+    const density = densities[planetType];
+    return (radius * radius * radius) * density * 0.000001; // Approximate in Earth masses
+  }
+
+  private calculateGravity(mass: number, radius: number): number {
+    // Simplified gravity calculation
+    return (mass / (radius * radius)) * 50; // Normalized
+  }
+
+  private calculateTemperature(random: SeededRandomGenerator, starType: StarType, planetType: PlanetType): number {
+    const baseTemps = {
+      [PlanetType.ROCKY]: -50,
+      [PlanetType.DESERT]: 80,
+      [PlanetType.ICE]: -100,
+      [PlanetType.GAS_GIANT]: -150,
+      [PlanetType.OCEAN]: 20,
+      [PlanetType.FOREST]: 25,
+      [PlanetType.JUNGLE]: 30,
+      [PlanetType.TERRESTRIAL]: 15,
+      [PlanetType.BAREN]: -20,
+      [PlanetType.VOLCANIC]: 120
+    };
+
+    return baseTemps[planetType] + random.nextInt(-20, 20);
+  }
+
+  private calculateOrbitalDistance(random: SeededRandomGenerator, planetIndex: number, starType: StarType): number {
+    // Base orbital distances in AU
+    const baseDistances = [0.3, 0.6, 1.2, 2.4, 4.8, 9.6, 19.2];
+    const index = Math.min(planetIndex, baseDistances.length - 1);
+    const baseDistance = baseDistances[index];
+    
+    // Apply random variation
+    const variation = random.next() * 0.3 + 0.85; // 0.85-1.15
+    return baseDistance * variation;
+  }
+
+  private calculateOrbitalPeriod(orbitalDistance: number): number {
+    // Kepler's third law simplified
+    return Math.sqrt(orbitalDistance * orbitalDistance * orbitalDistance) * 365;
+  }
+
+  private calculateRotationPeriod(random: SeededRandomGenerator, planetType: PlanetType): number {
+    const basePeriods = {
+      [PlanetType.ROCKY]: random.nextInt(12, 40),
+      [PlanetType.DESERT]: random.nextInt(15, 50),
+      [PlanetType.ICE]: random.nextInt(8, 30),
+      [PlanetType.GAS_GIANT]: random.nextInt(8, 16),
+      [PlanetType.OCEAN]: random.nextInt(16, 32),
+      [PlanetType.FOREST]: random.nextInt(18, 36),
+      [PlanetType.JUNGLE]: random.nextInt(20, 40),
+      [PlanetType.TERRESTRIAL]: random.nextInt(16, 28),
+      [PlanetType.BAREN]: random.nextInt(10, 25),
+      [PlanetType.VOLCANIC]: random.nextInt(12, 35)
+    };
+
+    return basePeriods[planetType];
+  }
+
+  private calculatePopulation(random: SeededRandomGenerator, planetType: PlanetType, techLevel: number, targetPopulation: number): number {
+    // Base population factors
+    const populationMultipliers = {
+      [PlanetType.ROCKY]: 0.8,
+      [PlanetType.DESERT]: 0.6,
+      [PlanetType.ICE]: 0.4,
+      [PlanetType.GAS_GIANT]: 0.1,
+      [PlanetType.OCEAN]: 1.2,
+      [PlanetType.FOREST]: 1.0,
+      [PlanetType.JUNGLE]: 0.9,
+      [PlanetType.TERRESTRIAL]: 1.3,
+      [PlanetType.BAREN]: 0.2,
+      [PlanetType.VOLCANIC]: 0.7
+    };
+
+    const multiplier = populationMultipliers[planetType];
+    const techFactor = 1 + (techLevel * 0.1);
+    const randomFactor = random.next() * 2 + 0.5; // 0.5-2.5
+    
+    return Math.floor(targetPopulation * multiplier * techFactor * randomFactor);
+  }
+
+  private adjustEconomyType(economyType: EconomyType, planetType: PlanetType, techLevel: number): EconomyType {
+    // Adjust economy based on planet characteristics
+    if (planetType === PlanetType.GAS_GIANT || planetType === PlanetType.BAREN) {
+      return EconomyType.MINING;
+    }
+    
+    if (planetType === PlanetType.JUNGLE || planetType === PlanetType.FOREST) {
+      if (techLevel < 8 && economyType === EconomyType.INDUSTRIAL) {
+        return EconomyType.AGRICULTURAL;
+      }
+    }
+    
+    return economyType;
+  }
+
+  private adjustTechLevel(techLevel: number, planetType: PlanetType): number {
+    // Gas giants and barren worlds typically have lower tech levels
+    if (planetType === PlanetType.GAS_GIANT || planetType === PlanetType.BAREN) {
+      return Math.max(1, techLevel - 2);
+    }
+    
+    return techLevel;
+  }
+
+  private generateResources(random: SeededRandomGenerator, planetType: PlanetType, economyType: EconomyType): string[] {
+    const resourceTypes = {
+      [PlanetType.ROCKY]: ['Iron', 'Copper', 'Nickel', 'Silicon'],
+      [PlanetType.DESERT]: ['Silicon', 'Rare Minerals', 'Hydrocarbon'],
+      [PlanetType.ICE]: ['Water Ice', 'Ammonia', 'Methane'],
+      [PlanetType.GAS_GIANT]: ['Hydrogen', 'Helium', 'Methane'],
+      [PlanetType.OCEAN]: ['Water', 'Marine Life', 'Organic Compounds'],
+      [PlanetType.FOREST]: ['Timber', 'Organic Materials', 'Spices'],
+      [PlanetType.JUNGLE]: ['Rare Plants', 'Medicinal Compounds', 'Food Crops'],
+      [PlanetType.TERRESTRIAL]: ['Mixed Resources', 'Agricultural Products', 'Minerals'],
+      [PlanetType.BAREN]: ['Radioactives', 'Rare Elements'],
+      [PlanetType.VOLCANIC]: ['Precious Metals', 'Volcanic Glass', 'Rare Minerals']
+    };
+
+    const availableResources = resourceTypes[planetType] || ['Generic Materials'];
+    const resourceCount = random.nextInt(2, 5);
+    
+    return random.sample(availableResources, resourceCount);
+  }
+
+  private generateSpecialFeatures(random: SeededRandomGenerator, planetType: PlanetType): string[] {
+    const features: string[] = [];
+    
+    if (random.next() < 0.3) {
+      const typeFeatures = {
+        [PlanetType.ROCKY]: ['Ancient Ruins', 'Mineral Deposits', 'Cave Systems'],
+        [PlanetType.DESERT]: ['Dust Storms', 'Oasis Systems', 'Fossil Finds'],
+        [PlanetType.ICE]: ['Glacier Networks', 'Subsurface Oceans', 'Ice Crystals'],
+        [PlanetType.GAS_GIANT]: ['Storm Systems', 'Magnetic Fields', 'Radiation Belts'],
+        [PlanetType.OCEAN]: ['Deep Trenches', 'Atoll Systems', 'Coral Reefs'],
+        [PlanetType.FOREST]: ['Ancient Trees', 'Natural Beauty', 'Wildlife Preserves'],
+        [PlanetType.JUNGLE]: ['Dense Vegetation', 'Exotic Species', 'Lost Civilizations'],
+        [PlanetType.TERRESTRIAL]: ['Perfect Climate', 'Balanced Ecosystems', 'Natural Resources'],
+        [PlanetType.BAREN]: ['Ruthless Environment', 'Mineral Wealth', 'Strategic Location'],
+        [PlanetType.VOLCANIC]: ['Active Volcanoes', 'Geothermal Energy', 'Obsidian Formations']
+      };
+      
+      const available = typeFeatures[planetType] || ['Notable Geography'];
+      features.push(random.choice(available));
+    }
+    
+    return features;
+  }
+}
+
+/**
+ * Station generation system
+ */
+export class StationGenerator {
+  private nameGenerator: NameGenerator;
+  private random: SeededRandomGenerator;
+
+  constructor(seed: number | string) {
+    this.nameGenerator = new NameGenerator(seed);
+    this.random = new SeededRandomGenerator(seed + '_station');
+  }
+
+  /**
+   * Generate stations for a system
+   */
+  generateStations(
+    planets: PlanetData[],
+    economyType: EconomyType,
+    governmentType: GovernmentType,
+    techLevel: number,
+    population: number
+  ): StationData[] {
+    const stations: StationData[] = [];
+
+    // Always generate a main station
+    const mainStation = this.generateMainStation(economyType, governmentType, techLevel, population);
+    stations.push(mainStation);
+
+    // Generate additional stations based on population and tech level
+    const additionalStations = Math.floor(population / 1000000) + Math.floor(techLevel / 3);
+    
+    for (let i = 0; i < additionalStations; i++) {
+      const type = this.chooseStationType(this.random, economyType, governmentType);
+      const station = this.generateSecondaryStation(type, economyType, governmentType, techLevel);
+      stations.push(station);
+    }
+
+    return stations;
+  }
+
+  /**
+   * Generate main orbital station
+   */
+  private generateMainStation(
+    economyType: EconomyType,
+    governmentType: GovernmentType,
+    techLevel: number,
+    population: number
+  ): StationData {
+    const size = this.calculateStationSize(population, techLevel);
+    const capacity = size * 20;
+    const dockingFee = this.calculateDockingFee(techLevel, governmentType);
+    
+    return {
+      name: this.nameGenerator.generateStationName('Main Station', governmentType),
+      type: StationType.ORBITAL_STATION,
+      position: { x: 1000, y: 1000, z: 0 }, // Orbital position
+      size,
+      capacity,
+      dockingFee,
+      services: this.generateServices(techLevel, governmentType, economyType),
+      securityLevel: this.calculateSecurityLevel(governmentType, techLevel),
+      economyType,
+      governmentType,
+      specialFeatures: this.generateStationFeatures(techLevel, governmentType),
+      generationSeed: this.random.getSeed().toString()
+    };
+  }
+
+  /**
+   * Generate secondary station
+   */
+  private generateSecondaryStation(
+    stationType: StationType,
+    economyType: EconomyType,
+    governmentType: GovernmentType,
+    techLevel: number
+  ): StationData {
+    const baseFeatures = {
+      [StationType.MINING_OUTPOST]: {
+        size: 1,
+        position: { x: 500 + this.random.nextInt(-200, 200), y: 500, z: 0 },
+        specialFeatures: ['Mining Equipment', 'Cargo Processing', 'Resource Storage']
+      },
+      [StationType.RESEARCH_FACILITY]: {
+        size: 2,
+        position: { x: -800, y: 200, z: 0 },
+        specialFeatures: ['Research Labs', 'Scientific Equipment', 'Data Center']
+      },
+      [StationType.MILITARY_BASE]: {
+        size: 3,
+        position: { x: 0, y: 1200, z: 0 },
+        specialFeatures: ['Defense Systems', 'Fleet Operations', 'Training Facility']
+      },
+      [StationType.TRADE_HUB]: {
+        size: 2,
+        position: { x: -500, y: -500, z: 0 },
+        specialFeatures: ['Commercial Center', 'Warehouse District', 'Trade Authority']
+      }
+    };
+
+    const features = baseFeatures[stationType] || {
+      size: 1,
+      position: { x: this.random.nextInt(-1000, 1000), y: this.random.nextInt(-1000, 1000), z: 0 },
+      specialFeatures: ['Standard Facilities']
+    };
+
+    return {
+      name: this.nameGenerator.generateStationName(stationType, governmentType),
+      type: stationType,
+      position: features.position,
+      size: features.size + this.random.nextInt(0, 2),
+      capacity: (features.size + this.random.nextInt(0, 2)) * 15,
+      dockingFee: this.calculateDockingFee(techLevel, governmentType) * 0.8,
+      services: this.generateServices(techLevel, governmentType, economyType),
+      securityLevel: this.calculateSecurityLevel(governmentType, techLevel),
+      economyType,
+      governmentType,
+      specialFeatures: features.specialFeatures,
+      generationSeed: this.random.getSeed().toString()
+    };
+  }
+
+  private chooseStationType(
+    random: SeededRandomGenerator,
+    economyType: EconomyType,
+    governmentType: GovernmentType
+  ): StationType {
+    const typeWeights: Record<StationType, number> = {
+      [StationType.ORBITAL_STATION]: 1.0,
+      [StationType.PLANETARY_BASE]: 0.3,
+      [StationType.SPACE_PORT]: 0.2,
+      [StationType.MINING_OUTPOST]: economyType === EconomyType.MINING ? 1.5 : 0.3,
+      [StationType.RESEARCH_FACILITY]: economyType === EconomyType.HIGH_TECH ? 1.2 : 0.4,
+      [StationType.MILITARY_BASE]: governmentType === GovernmentType.IMPLANTED_EMPIRE ? 1.5 : 0.2,
+      [StationType.TRADE_HUB]: economyType === EconomyType.INDUSTRIAL ? 1.3 : 0.5,
+      [StationType.REFUGEE_CAMP]: 0.1
+    };
+
+    return random.weightedChoice(
+      Object.entries(typeWeights).map(([type, weight]) => ({
+        item: type as StationType,
+        weight
+      }))
+    );
+  }
+
+  private calculateStationSize(population: number, techLevel: number): number {
+    const size = Math.log10(population + 1) + (techLevel / 5);
+    return Math.max(1, Math.min(10, Math.floor(size)));
+  }
+
+  private calculateDockingFee(techLevel: number, governmentType: GovernmentType): number {
+    const baseFee = techLevel * 10;
+    const governmentMultiplier = {
+      [GovernmentType.ANARCHY]: 0.5,
+      [GovernmentType.FEUDAL]: 1.2,
+      [GovernmentType.MULTI_GOVERNMENT]: 1.1,
+      [GovernmentType.DICTATORSHIP]: 1.5,
+      [GovernmentType.COMMUNIST]: 0.8,
+      [GovernmentType.CONFEDERATE]: 1.0,
+      [GovernmentType.DEMOCRACY]: 1.0,
+      [GovernmentType.CORPORATE_STATE]: 1.8,
+      [GovernmentType.IMPLANTED_EMPIRE]: 2.0
+    };
+
+    return baseFee * (governmentMultiplier[governmentType] || 1.0);
+  }
+
+  private generateServices(techLevel: number, governmentType: GovernmentType, economyType: EconomyType): StationServices {
+    return {
+      market: true, // Always available
+      shipyard: techLevel >= 4,
+      equipment: techLevel >= 6,
+      medical: techLevel >= 3 || governmentType === GovernmentType.DEMOCRACY,
+      bank: techLevel >= 7 || economyType === EconomyType.HIGH_TECH,
+      legal: governmentType !== GovernmentType.ANARCHY,
+      entertainment: population > 100000,
+      fuel: true,
+      repairs: techLevel >= 2,
+      missions: population > 50000
+    };
+  }
+
+  private calculateSecurityLevel(governmentType: GovernmentType, techLevel: number): number {
+    const baseSecurity = {
+      [GovernmentType.ANARCHY]: 0,
+      [GovernmentType.FEUDAL]: 40,
+      [GovernmentType.MULTI_GOVERNMENT]: 60,
+      [GovernmentType.DICTATORSHIP]: 80,
+      [GovernmentType.COMMUNIST]: 70,
+      [GovernmentType.CONFEDERATE]: 50,
+      [GovernmentType.DEMOCRACY]: 65,
+      [GovernmentType.CORPORATE_STATE]: 75,
+      [GovernmentType.IMPLANTED_EMPIRE]: 90
+    };
+
+    return Math.min(100, baseSecurity[governmentType] || 50 + (techLevel * 3));
+  }
+
+  private generateStationFeatures(techLevel: number, governmentType: GovernmentType): string[] {
+    const features: string[] = [];
+    
+    if (techLevel >= 8) features.push('Advanced Life Support');
+    if (techLevel >= 10) features.push('Quantum Communications');
+    if (governmentType === GovernmentType.IMPLANTED_EMPIRE) features.push('Imperial Authority');
+    if (governmentType === GovernmentType.CORPORATE_STATE) features.push('Commercial District');
+    
+    return features;
+  }
+}

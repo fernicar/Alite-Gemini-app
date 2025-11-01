@@ -1,0 +1,694 @@
+/**
+ * Enhanced Market Price Calculation Algorithms
+ * Advanced dynamic pricing system with multiple economic factors
+ */
+
+import { EconomyType, GovernmentType } from '../models/Galaxy.js';
+import { MarketRandom } from './SeededRandomGenerator.js';
+
+/**
+ * Economic indicators affecting market prices
+ */
+export interface EconomicIndicators {
+  growthRate: number; // -0.5 to +0.5 (annual growth rate)
+  inflationRate: number; // 0 to 0.2 (inflation rate)
+  tradeVolume: number; // 0.5 to 2.0 (trade multiplier)
+  politicalStability: number; // 0 to 100
+  resourceAbundance: number; // 0 to 100
+  demandIndex: number; // 0.5 to 1.5
+  supplyIndex: number; // 0.5 to 1.5
+}
+
+/**
+ * Market shock events
+ */
+export interface MarketShock {
+  type: 'war' | 'shortage' | 'surplus' | 'disaster' | 'discovery' | 'embargo';
+  affectedGoods: string[];
+  magnitude: number; // -2 to +2 (price multiplier)
+  duration: number; // days
+  remainingDuration: number;
+  description: string;
+  startedBy?: string; // What caused the shock
+}
+
+/**
+ * Global market data for galactic price coordination
+ */
+export interface GlobalMarketData {
+  galacticAveragePrice: Map<string, number>;
+  galacticSupplyLevel: Map<string, number>;
+  galacticDemandLevel: Map<string, number>;
+  lastUpdateTime: number;
+  priceMemoryDays: number;
+}
+
+/**
+ * Advanced market pricing engine
+ */
+export class AdvancedMarketPricing {
+  private random: MarketRandom;
+  private economicIndicators: EconomicIndicators;
+  private marketShocks: MarketShock[];
+  private globalMarketData: GlobalMarketData;
+  
+  // Price elasticity data for different goods
+  private priceElasticityData: Map<string, number>;
+  private demandResponsiveness: Map<string, number>;
+  private supplyResponsiveness: Map<string, number>;
+
+  constructor(seed: number | string) {
+    this.random = new MarketRandom(seed);
+    this.economicIndicators = this.generateEconomicIndicators();
+    this.marketShocks = [];
+    this.globalMarketData = {
+      galacticAveragePrice: new Map(),
+      galacticSupplyLevel: new Map(),
+      galacticDemandLevel: new Map(),
+      lastUpdateTime: Date.now(),
+      priceMemoryDays: 30
+    };
+    
+    this.initializePriceData();
+  }
+
+  /**
+   * Initialize price elasticity and responsiveness data
+   */
+  private initializePriceData(): void {
+    // Price elasticity (how much demand changes with price)
+    this.priceElasticityData = new Map([
+      ['Food Cartridges', -1.2],    // Very elastic
+      ['Grain', -1.1],
+      ['Vegetables', -1.0],
+      ['Meat', -0.8],
+      
+      ['Liquor', -0.7],            // Moderately elastic
+      ['Textiles', -0.9],
+      ['Luxuries', -0.5],          // Less elastic (luxury items)
+      
+      ['Metals', -0.6],            // Industrial goods
+      ['Minerals', -0.7],
+      ['Precious Stones', -0.4],   // Rare goods
+      ['Chemicals', -0.8],
+      
+      ['Computers', -0.3],         // High-tech goods (inelastic)
+      ['Software', -0.2],
+      ['Weapons', -0.4],
+      ['Military Equipment', -0.3],
+      
+      ['Narcotics', -0.1],         // Illegal goods (very inelastic)
+      ['Contraband', -0.1]
+    ]);
+
+    // Demand responsiveness (how fast demand adjusts)
+    this.demandResponsiveness = new Map([
+      ['Food Cartridges', 0.8],
+      ['Grain', 0.7],
+      ['Liquor', 0.5],
+      ['Luxuries', 0.3],
+      ['Computers', 0.2],
+      ['Weapons', 0.4],
+      ['Narcotics', 0.1]
+    ]);
+
+    // Supply responsiveness (how fast supply adjusts)
+    this.supplyResponsiveness = new Map([
+      ['Food Cartridges', 0.6],
+      ['Grain', 0.8],
+      ['Liquor', 0.4],
+      ['Luxuries', 0.3],
+      ['Computers', 0.2],
+      ['Weapons', 0.3],
+      ['Narcotics', 0.1]
+    ]);
+  }
+
+  /**
+   * Generate economic indicators for a system
+   */
+  private generateEconomicIndicators(): EconomicIndicators {
+    return {
+      growthRate: this.random.nextGaussian(0, 0.1),
+      inflationRate: Math.max(0, this.random.nextGaussian(0.05, 0.03)),
+      tradeVolume: this.random.next() + 0.5, // 0.5-1.5
+      politicalStability: this.random.nextInt(40, 90),
+      resourceAbundance: this.random.nextInt(20, 80),
+      demandIndex: 0.8 + this.random.next() * 0.4, // 0.8-1.2
+      supplyIndex: 0.8 + this.random.next() * 0.4 // 0.8-1.2
+    };
+  }
+
+  /**
+   * Calculate advanced price considering all factors
+   */
+  calculateAdvancedPrice(
+    goodName: string,
+    basePrice: number,
+    systemData: {
+      economyType: EconomyType;
+      governmentType: GovernmentType;
+      techLevel: number;
+      population: number;
+      recentTransactionVolume?: number;
+      lastKnownPrice?: number;
+    }
+  ): {
+    currentPrice: number;
+    priceFactors: PriceFactorBreakdown;
+    availability: number;
+    demandLevel: number;
+    supplyLevel: number;
+  } {
+    
+    // Base economic calculation
+    let price = basePrice;
+    const factors: PriceFactorBreakdown = {
+      base: basePrice,
+      economy: 1.0,
+      government: 1.0,
+      technology: 1.0,
+      distance: 1.0,
+      demandSupply: 1.0,
+      marketShocks: 1.0,
+      global: 1.0,
+      trend: 1.0,
+      random: 1.0
+    };
+
+    // 1. Economy type effects
+    const economyMultiplier = this.getEconomyMultiplier(goodName, systemData.economyType);
+    factors.economy = economyMultiplier;
+    price *= economyMultiplier;
+
+    // 2. Government type effects
+    const governmentMultiplier = this.getGovernmentMultiplier(goodName, systemData.governmentType);
+    factors.government = governmentMultiplier;
+    price *= governmentMultiplier;
+
+    // 3. Technology level effects
+    const techMultiplier = this.getTechMultiplier(goodName, systemData.techLevel);
+    factors.technology = techMultiplier;
+    price *= techMultiplier;
+
+    // 4. Distance from galactic core effects
+    const distanceMultiplier = this.getDistanceMultiplier(systemData.population, systemData.economyType);
+    factors.distance = distanceMultiplier;
+    price *= distanceMultiplier;
+
+    // 5. Supply and demand calculation
+    const supplyDemand = this.calculateSupplyDemand(goodName, systemData);
+    factors.demandSupply = supplyDemand.multiplier;
+    price *= supplyDemand.multiplier;
+
+    // 6. Market shock effects
+    const shockMultiplier = this.applyMarketShocks(goodName);
+    factors.marketShocks = shockMultiplier;
+    price *= shockMultiplier;
+
+    // 7. Global market coordination
+    const globalMultiplier = this.applyGlobalMarket(goodName, price);
+    factors.global = globalMultiplier;
+    price *= globalMultiplier;
+
+    // 8. Trend and momentum
+    const trendMultiplier = this.calculateTrendMultiplier(goodName, systemData.lastKnownPrice, price);
+    factors.trend = trendMultiplier;
+    price *= trendMultiplier;
+
+    // 9. Random market fluctuations
+    const randomMultiplier = this.calculateRandomFluctuation(goodName, systemData.recentTransactionVolume);
+    factors.random = randomMultiplier;
+    price *= randomMultiplier;
+
+    // Final price calculation with elasticity
+    const elasticity = this.priceElasticityData.get(goodName) || -0.5;
+    const finalPrice = Math.max(0.1, price * (1 + elasticity * this.random.nextGaussian(0, 0.1)));
+
+    // Calculate availability and demand/supply levels
+    const availability = Math.max(0, Math.min(100, this.calculateAvailability(goodName, systemData)));
+    const demandLevel = this.calculateDemandLevel(goodName, systemData);
+    const supplyLevel = this.calculateSupplyLevel(goodName, systemData);
+
+    return {
+      currentPrice: Math.round(finalPrice * 100) / 100,
+      priceFactors: factors,
+      availability,
+      demandLevel,
+      supplyLevel
+    };
+  }
+
+  /**
+   * Get economy type price multiplier
+   */
+  private getEconomyMultiplier(goodName: string, economyType: EconomyType): number {
+    const multipliers: Record<EconomyType, Record<string, number>> = {
+      [EconomyType.AGRICULTURAL]: {
+        'Food Cartridges': 0.7,
+        'Grain': 0.6,
+        'Vegetables': 0.7,
+        'Meat': 0.8,
+        'Liquor': 1.1,
+        'Luxuries': 1.3,
+        'Metals': 1.2,
+        'Computers': 1.4,
+        'Weapons': 1.5
+      },
+      [EconomyType.INDUSTRIAL]: {
+        'Food Cartridges': 1.1,
+        'Grain': 1.2,
+        'Liquor': 1.0,
+        'Luxuries': 1.2,
+        'Metals': 0.8,
+        'Minerals': 0.7,
+        'Computers': 0.9,
+        'Weapons': 0.9,
+        'Chemicals': 0.8
+      },
+      [EconomyType.HIGH_TECH]: {
+        'Food Cartridges': 1.2,
+        'Grain': 1.3,
+        'Liquor': 1.0,
+        'Luxuries': 0.9,
+        'Computers': 0.7,
+        'Software': 0.6,
+        'Weapons': 0.8,
+        'Military Equipment': 0.8
+      },
+      [EconomyType.MINING]: {
+        'Food Cartridges': 1.4,
+        'Grain': 1.5,
+        'Liquor': 1.3,
+        'Luxuries': 1.4,
+        'Metals': 0.6,
+        'Minerals': 0.5,
+        'Precious Stones': 0.4,
+        'Weapons': 1.2
+      },
+      [EconomyType.TOURISM]: {
+        'Food Cartridges': 1.0,
+        'Grain': 1.1,
+        'Liquor': 0.8,
+        'Luxuries': 0.7,
+        'Computers': 1.1,
+        'Weapons': 1.3
+      },
+      [EconomyType.MILITARY]: {
+        'Food Cartridges': 1.0,
+        'Grain': 1.1,
+        'Liquor': 1.2,
+        'Luxuries': 1.3,
+        'Metals': 1.0,
+        'Weapons': 0.6,
+        'Military Equipment': 0.5,
+        'Computers': 0.8
+      }
+    };
+
+    return multipliers[economyType]?.[goodName] || 1.0;
+  }
+
+  /**
+   * Get government type price multiplier
+   */
+  private getGovernmentMultiplier(goodName: string, governmentType: GovernmentType): number {
+    const multipliers: Record<GovernmentType, Record<string, number>> = {
+      [GovernmentType.ANARCHY]: {
+        'default': 0.8, // Lower prices due to lack of regulation
+        'Weapons': 0.7,
+        'Narcotics': 0.6,
+        'Military Equipment': 0.9
+      },
+      [GovernmentType.FEUDAL]: {
+        'default': 1.1, // Slightly higher prices
+        'Luxuries': 1.2,
+        'Weapons': 1.0
+      },
+      [GovernmentType.MULTI_GOVERNMENT]: {
+        'default': 1.0, // Balanced prices
+        'Luxuries': 1.1,
+        'Weapons': 0.9
+      },
+      [GovernmentType.DICTATORSHIP]: {
+        'default': 1.3, // Higher prices due to control
+        'Luxuries': 1.4,
+        'Weapons': 0.7, // Restricted but cheaper for military
+        'Narcotics': 2.0
+      },
+      [GovernmentType.COMMUNIST]: {
+        'default': 0.9, // Lower prices but limited availability
+        'Food Cartridges': 0.8,
+        'Luxuries': 1.5, // Rare luxuries
+        'Weapons': 1.2
+      },
+      [GovernmentType.CONFEDERATE]: {
+        'default': 1.0, // Standard prices
+        'Weapons': 1.1,
+        'Luxuries': 1.0
+      },
+      [GovernmentType.DEMOCRACY]: {
+        'default': 1.0, // Standard market prices
+        'Narcotics': 1.8
+      },
+      [GovernmentType.CORPORATE_STATE]: {
+        'default': 1.2, // Higher prices for profit
+        'Computers': 1.3,
+        'Software': 1.4,
+        'Weapons': 1.1
+      },
+      [GovernmentType.IMPLANTED_EMPIRE]: {
+        'default': 1.4, // High prices due to imperial control
+        'Weapons': 0.6, // Cheaper for military
+        'Luxuries': 1.5,
+        'Narcotics': 2.5
+      }
+    };
+
+    const govMultipliers = multipliers[governmentType] || { default: 1.0 };
+    return govMultipliers[goodName] || govMultipliers['default'] || 1.0;
+  }
+
+  /**
+   * Get technology level price multiplier
+   */
+  private getTechMultiplier(goodName: string, techLevel: number): number {
+    const techThresholds = {
+      computers: 8,
+      software: 7,
+      weapons: 5,
+      military: 6,
+      advanced_manufacturing: 9
+    };
+
+    const baseMultiplier = 1.0;
+    let multiplier = baseMultiplier;
+
+    // High-tech goods become cheaper with higher tech levels
+    if (goodName.includes('Computer') || goodName.includes('Software')) {
+      multiplier *= Math.max(0.3, 1.0 - (techLevel - 5) * 0.05);
+    }
+
+    // Basic goods become more expensive with higher tech levels
+    if (goodName === 'Food Cartridges' || goodName === 'Grain') {
+      multiplier *= 1.0 + (techLevel - 5) * 0.02;
+    }
+
+    return Math.max(0.1, multiplier);
+  }
+
+  /**
+   * Get distance from galactic core multiplier
+   */
+  private getDistanceMultiplier(population: number, economyType: EconomyType): number {
+    // Use population as proxy for distance from core (larger populations near core)
+    const coreProximity = Math.log10(population + 1) / 7; // Normalized 0-1
+    const distanceFromCore = 1 - coreProximity;
+
+    let multiplier = 1.0;
+
+    // Luxury goods more expensive in outer systems
+    if (economyType === EconomyType.TOURISM) {
+      multiplier += distanceFromCore * 0.3;
+    }
+
+    // Industrial goods cheaper in outer mining systems
+    if (economyType === EconomyType.MINING) {
+      multiplier -= distanceFromCore * 0.2;
+    }
+
+    return Math.max(0.1, multiplier);
+  }
+
+  /**
+   * Calculate supply and demand effects
+   */
+  private calculateSupplyDemand(
+    goodName: string,
+    systemData: {
+      economyType: EconomyType;
+      techLevel: number;
+      population: number;
+      recentTransactionVolume?: number;
+    }
+  ): { multiplier: number; demand: number; supply: number } {
+    
+    const demandMultiplier = this.economicIndicators.demandIndex;
+    const supplyMultiplier = this.economicIndicators.supplyIndex;
+
+    // Calculate system-specific demand based on population and economy
+    let systemDemand = Math.log10(systemData.population + 1) * 0.1;
+    
+    // Adjust based on economy type
+    if (systemData.economyType === EconomyType.AGRICULTURAL && goodName.includes('Food')) {
+      systemDemand *= 1.5;
+    } else if (systemData.economyType === EconomyType.INDUSTRIAL && 
+               (goodName.includes('Metal') || goodName.includes('Mineral'))) {
+      systemDemand *= 1.3;
+    } else if (systemData.economyType === EconomyType.HIGH_TECH && 
+               (goodName.includes('Computer') || goodName.includes('Software'))) {
+      systemDemand *= 1.4;
+    }
+
+    // Supply based on economy and recent activity
+    let systemSupply = this.economicIndicators.resourceAbundance / 100;
+    if (systemData.recentTransactionVolume) {
+      const activityFactor = systemData.recentTransactionVolume / 1000;
+      systemSupply *= (1 + activityFactor * 0.1);
+    }
+
+    // Final multiplier based on supply/demand balance
+    const demandSupplyRatio = (demandMultiplier * systemDemand) / (supplyMultiplier * systemSupply);
+    const multiplier = Math.max(0.1, Math.min(3.0, demandSupplyRatio));
+
+    return {
+      multiplier,
+      demand: systemDemand,
+      supply: systemSupply
+    };
+  }
+
+  /**
+   * Apply market shock effects
+   */
+  private applyMarketShocks(goodName: string): number {
+    let totalMultiplier = 1.0;
+
+    // Update shock durations and remove expired shocks
+    this.marketShocks = this.marketShocks.filter(shock => {
+      shock.remainingDuration--;
+      return shock.remainingDuration > 0;
+    });
+
+    // Apply active shocks
+    for (const shock of this.marketShocks) {
+      if (shock.affectedGoods.includes(goodName) || shock.affectedGoods.includes('*')) {
+        const shockStrength = shock.magnitude * (shock.remainingDuration / shock.duration);
+        totalMultiplier *= (1 + shockStrength);
+      }
+    }
+
+    return totalMultiplier;
+  }
+
+  /**
+   * Apply global market coordination
+   */
+  private applyGlobalMarket(goodName: string, localPrice: number): number {
+    const galacticAvg = this.globalMarketData.galacticAveragePrice.get(goodName);
+    
+    if (!galacticAvg || this.shouldUpdateGlobalPrice(goodName, localPrice)) {
+      // Update global average
+      const weight = 0.1; // 10% weight for new data
+      const updatedAvg = galacticAvg ? 
+        galacticAvg * (1 - weight) + localPrice * weight :
+        localPrice;
+      this.globalMarketData.galacticAveragePrice.set(goodName, updatedAvg);
+    }
+
+    const updatedGalacticAvg = this.globalMarketData.galacticAveragePrice.get(goodName) || localPrice;
+    
+    // Apply gentle convergence to galactic average
+    const convergenceRate = 0.02; // 2% convergence per calculation
+    return 1 + (updatedGalacticAvg - localPrice) / localPrice * convergenceRate;
+  }
+
+  /**
+   * Calculate trend momentum
+   */
+  private calculateTrendMultiplier(goodName: string, lastKnownPrice?: number, currentPrice?: number): number {
+    if (!lastKnownPrice || !currentPrice) return 1.0;
+
+    const priceChange = (currentPrice - lastKnownPrice) / lastKnownPrice;
+    
+    // Apply momentum (prices tend to continue in same direction)
+    const momentumFactor = 0.1; // 10% momentum
+    return 1 + (priceChange * momentumFactor);
+  }
+
+  /**
+   * Calculate random market fluctuation
+   */
+  private calculateRandomFluctuation(goodName: string, transactionVolume?: number): number {
+    // Base volatility varies by good type
+    const baseVolatility = this.priceElasticityData.get(goodName) ? 
+      Math.abs(this.priceElasticityData.get(goodName)!) * 0.1 : 0.05;
+
+    // Adjust for transaction volume (higher volume = lower volatility)
+    const volumeAdjustment = transactionVolume ? 
+      Math.max(0.5, 1.0 - transactionVolume / 10000) : 1.0;
+
+    const adjustedVolatility = baseVolatility * volumeAdjustment;
+    
+    // Generate random fluctuation
+    return 1 + this.random.nextGaussian(0, adjustedVolatility);
+  }
+
+  /**
+   * Calculate availability percentage
+   */
+  private calculateAvailability(
+    goodName: string,
+    systemData: {
+      economyType: EconomyType;
+      techLevel: number;
+      population: number;
+    }
+  ): number {
+    let availability = 50; // Base availability
+
+    // Economy affects availability
+    const economyAvailability: Record<EconomyType, number> = {
+      [EconomyType.AGRICULTURAL]: 80,
+      [EconomyType.INDUSTRIAL]: 70,
+      [EconomyType.HIGH_TECH]: 60,
+      [EconomyType.MINING]: 40,
+      [EconomyType.TOURISM]: 50,
+      [EconomyType.MILITARY]: 30
+    };
+
+    availability = economyAvailability[systemData.economyType] || 50;
+
+    // Tech level affects availability of high-tech goods
+    if (goodName.includes('Computer') || goodName.includes('Software')) {
+      availability *= (systemData.techLevel / 10);
+    }
+
+    // Population affects general availability
+    const popFactor = Math.log10(systemData.population + 1) / 7; // 0-1
+    availability *= (0.5 + popFactor * 0.5);
+
+    return Math.max(0, Math.min(100, availability));
+  }
+
+  /**
+   * Calculate demand level
+   */
+  private calculateDemandLevel(goodName: string, systemData: any): number {
+    let demand = Math.log10(systemData.population + 1) * 10;
+
+    // Economy-specific demand
+    if (systemData.economyType === EconomyType.AGRICULTURAL && goodName.includes('Food')) {
+      demand *= 1.5;
+    } else if (systemData.economyType === EconomyType.MINING && goodName.includes('Food')) {
+      demand *= 1.8; // Miners need lots of food
+    } else if (systemData.economyType === EconomyType.HIGH_TECH && goodName.includes('Computer')) {
+      demand *= 2.0;
+    }
+
+    return Math.max(0, Math.min(100, demand));
+  }
+
+  /**
+   * Calculate supply level
+   */
+  private calculateSupplyLevel(goodName: string, systemData: any): number {
+    let supply = this.economicIndicators.resourceAbundance;
+
+    // Economy-specific supply
+    if (systemData.economyType === EconomyType.AGRICULTURAL && goodName.includes('Food')) {
+      supply *= 1.6;
+    } else if (systemData.economyType === EconomyType.MINING && 
+               (goodName.includes('Metal') || goodName.includes('Mineral'))) {
+      supply *= 2.0;
+    } else if (systemData.economyType === EconomyType.INDUSTRIAL) {
+      supply *= 1.3;
+    }
+
+    return Math.max(0, Math.min(100, supply));
+  }
+
+  /**
+   * Generate market shock event
+   */
+  generateMarketShock(systemName?: string): void {
+    const shockTypes = ['war', 'shortage', 'surplus', 'disaster', 'discovery', 'embargo'] as const;
+    const shockType = this.random.choice(shockTypes);
+    
+    const shock: MarketShock = {
+      type: shockType,
+      affectedGoods: this.generateShockAffectedGoods(shockType),
+      magnitude: this.random.next() * 1.5 - 0.75, // -0.75 to +0.75
+      duration: this.random.nextInt(30, 180), // 30-180 days
+      remainingDuration: this.random.nextInt(30, 180),
+      description: this.generateShockDescription(shockType),
+      startedBy: systemName
+    };
+
+    this.marketShocks.push(shock);
+  }
+
+  /**
+   * Helper methods
+   */
+  private shouldUpdateGlobalPrice(goodName: string, localPrice: number): boolean {
+    // Update if we don't have global data or if local price is significantly different
+    const galacticAvg = this.globalMarketData.galacticAveragePrice.get(goodName);
+    if (!galacticAvg) return true;
+    
+    const difference = Math.abs(localPrice - galacticAvg) / galacticAvg;
+    return difference > 0.1; // 10% difference threshold
+  }
+
+  private generateShockAffectedGoods(shockType: string): string[] {
+    const affectedGoodsMap: Record<string, string[]> = {
+      war: ['Weapons', 'Military Equipment', 'Food Cartridges'],
+      shortage: ['Food Cartridges', 'Fuel', 'Basic Supplies'],
+      surplus: ['Raw Materials', 'Agricultural Products'],
+      disaster: ['All', 'Emergency Supplies'],
+      discovery: ['High-Value Materials', 'Technology'],
+      embargo: ['Luxuries', 'Technology', 'Military Equipment']
+    };
+
+    return affectedGoodsMap[shockType] || ['Basic Goods'];
+  }
+
+  private generateShockDescription(shockType: string): string {
+    const descriptions = {
+      war: 'Military conflict affecting trade routes',
+      shortage: 'Supply chain disruption',
+      surplus: 'Oversupply situation',
+      disaster: 'Natural or industrial disaster',
+      discovery: 'New resource discovery',
+      embargo: 'Trade restrictions imposed'
+    };
+
+    return descriptions[shockType] || 'Market disturbance';
+  }
+}
+
+/**
+ * Price factor breakdown for debugging and UI
+ */
+export interface PriceFactorBreakdown {
+  base: number;
+  economy: number;
+  government: number;
+  technology: number;
+  distance: number;
+  demandSupply: number;
+  marketShocks: number;
+  global: number;
+  trend: number;
+  random: number;
+}

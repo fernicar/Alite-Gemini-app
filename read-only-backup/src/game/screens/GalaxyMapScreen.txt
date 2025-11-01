@@ -1,0 +1,560 @@
+/**
+ * Galaxy Map Screen - Star system navigation interface
+ * Allows players to view and navigate between star systems
+ */
+
+import { BaseScreen, UIManager, ScreenId } from '../ui/UIManager';
+import { UIPanel, UIButton, UIText, UIButtonOptions, UIPanelOptions } from '../ui/components/UIBasicComponents';
+import { Galaxy, System } from '../models/Galaxy';
+import { Vector2D } from '../../types/index';
+
+export interface GalaxyMapData {
+  galaxy: Galaxy;
+  currentSystem: string;
+  availableSystems: System[];
+  playerPosition: { x: number; y: number };
+}
+
+export class GalaxyMapScreen extends BaseScreen {
+  private data: GalaxyMapData;
+  private mapPanel: UIPanel;
+  private infoPanel: UIPanel;
+  private controlPanel: UIPanel;
+  private systemButtons: Map<string, UIButton> = new Map();
+  private currentSystemInfo: UIText;
+  private distanceInfo: UIText;
+  private fuelCostInfo: UIText;
+  private selectedSystem?: System;
+  private mapOffset: { x: number; y: number } = { x: 0, y: 0 };
+  private zoomLevel: number = 1.0;
+  private isDragging: boolean = false;
+  private dragStart: { x: number; y: number } = { x: 0, y: 0 };
+  private mapStart: { x: number; y: number } = { x: 0, y: 0 };
+
+  constructor(data: GalaxyMapData) {
+    const rootComponent = new UIPanel('galaxy-map-root', {
+      width: 800,
+      height: 600,
+      backgroundColor: '#000011',
+      borderWidth: 0,
+      shadow: false,
+      opacity: 1.0
+    });
+
+    super('galaxy-map', 'Galaxy Map', rootComponent);
+    this.data = data;
+
+    this.initializeUI();
+  }
+
+  private initializeUI(): void {
+    const root = this.component as UIPanel;
+
+    // Map Panel (main area)
+    this.mapPanel = new UIPanel('map', {
+      width: 600,
+      height: 500,
+      backgroundColor: '#000022',
+      borderColor: '#40e0ff',
+      borderWidth: 2,
+      cornerRadius: 0,
+      shadow: true,
+      opacity: 0.9
+    });
+    this.mapPanel.position = { x: 20, y: 20 };
+
+    // Info Panel (right side)
+    this.infoPanel = new UIPanel('info', {
+      width: 160,
+      height: 500,
+      backgroundColor: 'rgba(26, 32, 44, 0.95)',
+      borderColor: '#40e0ff',
+      borderWidth: 2,
+      cornerRadius: 0,
+      shadow: true,
+      opacity: 0.9
+    });
+    this.infoPanel.position = { x: 640, y: 20 };
+
+    // Control Panel (bottom)
+    this.controlPanel = new UIPanel('controls', {
+      width: 780,
+      height: 60,
+      backgroundColor: 'rgba(26, 32, 44, 0.95)',
+      borderColor: '#40e0ff',
+      borderWidth: 2,
+      cornerRadius: 0,
+      shadow: true,
+      opacity: 0.9
+    });
+    this.controlPanel.position = { x: 10, y: 520 };
+
+    // Initialize panels
+    this.initializeInfoPanel();
+    this.initializeControlPanel();
+    this.initializeMapSystems();
+
+    // Add panels to root
+    root.addChild(this.mapPanel);
+    root.addChild(this.infoPanel);
+    root.addChild(this.controlPanel);
+  }
+
+  private initializeInfoPanel(): void {
+    // Current System Info
+    const currentSystemTitle = new UIText('current-title', 'CURRENT SYSTEM', {
+      fontSize: 12,
+      fontFamily: 'Arial, sans-serif',
+      color: '#40e0ff',
+      textAlign: 'center',
+      bold: true
+    });
+    currentSystemTitle.position = { x: 10, y: 10 };
+    currentSystemTitle.size = { x: 140, y: 20 };
+    this.infoPanel.addChild(currentSystemTitle);
+
+    this.currentSystemInfo = new UIText('current-info', this.data.currentSystem, {
+      fontSize: 14,
+      fontFamily: 'Arial, sans-serif',
+      color: '#ffffff',
+      textAlign: 'center',
+      bold: true
+    });
+    this.currentSystemInfo.position = { x: 10, y: 35 };
+    this.currentSystemInfo.size = { x: 140, y: 20 };
+    this.infoPanel.addChild(this.currentSystemInfo);
+
+    // Distance Info
+    const distanceTitle = new UIText('distance-title', 'DISTANCE', {
+      fontSize: 12,
+      fontFamily: 'Arial, sans-serif',
+      color: '#40e0ff',
+      textAlign: 'center',
+      bold: true
+    });
+    distanceTitle.position = { x: 10, y: 70 };
+    distanceTitle.size = { x: 140, y: 20 };
+    this.infoPanel.addChild(distanceTitle);
+
+    this.distanceInfo = new UIText('distance-info', '0.0 LY', {
+      fontSize: 14,
+      fontFamily: 'Courier New, monospace',
+      color: '#ffffff',
+      textAlign: 'center'
+    });
+    this.distanceInfo.position = { x: 10, y: 95 };
+    this.distanceInfo.size = { x: 140, y: 20 };
+    this.infoPanel.addChild(this.distanceInfo);
+
+    // Fuel Cost Info
+    const fuelTitle = new UIText('fuel-title', 'FUEL COST', {
+      fontSize: 12,
+      fontFamily: 'Arial, sans-serif',
+      color: '#40e0ff',
+      textAlign: 'center',
+      bold: true
+    });
+    fuelTitle.position = { x: 10, y: 130 };
+    fuelTitle.size = { x: 140, y: 20 };
+    this.infoPanel.addChild(fuelTitle);
+
+    this.fuelCostInfo = new UIText('fuel-info', '0.0 T', {
+      fontSize: 14,
+      fontFamily: 'Courier New, monospace',
+      color: '#ffffff',
+      textAlign: 'center'
+    });
+    this.fuelCostInfo.position = { x: 10, y: 155 };
+    this.fuelCostInfo.size = { x: 140, y: 20 };
+    this.infoPanel.addChild(this.fuelCostInfo);
+
+    // System List
+    const systemListTitle = new UIText('systems-title', 'AVAILABLE SYSTEMS', {
+      fontSize: 12,
+      fontFamily: 'Arial, sans-serif',
+      color: '#40e0ff',
+      textAlign: 'center',
+      bold: true
+    });
+    systemListTitle.position = { x: 10, y: 190 };
+    systemListTitle.size = { x: 140, y: 20 };
+    this.infoPanel.addChild(systemListTitle);
+
+    // Add some example system buttons
+    this.addSystemList();
+  }
+
+  private addSystemList(): void {
+    const buttonHeight = 25;
+    const buttonSpacing = 5;
+    const startY = 220;
+
+    // Add a few example systems
+    const systems = [
+      'Lave', 'Riedquat', 'Zain', 'Nix', 'Morecambe', 'Rrocket'
+    ];
+
+    systems.forEach((systemName, index) => {
+      const button = new UIButton(`system-${systemName}`, systemName, {
+        width: 140,
+        height: buttonHeight,
+        backgroundColor: systemName === this.data.currentSystem ? '#4a5568' : '#2d3748',
+        textColor: '#ffffff',
+        fontSize: 10,
+        borderColor: '#40e0ff',
+        borderWidth: 1,
+        cornerRadius: 3
+      }, () => this.selectSystem(systemName));
+      
+      button.position = { x: 10, y: startY + index * (buttonHeight + buttonSpacing) };
+      this.infoPanel.addChild(button);
+      this.systemButtons.set(systemName, button);
+    });
+  }
+
+  private initializeControlPanel(): void {
+    // Zoom controls
+    const zoomInButton = new UIButton('zoom-in', '+', {
+      width: 30,
+      height: 30,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 16,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.zoomIn());
+    zoomInButton.position = { x: 20, y: 15 };
+    this.controlPanel.addChild(zoomInButton);
+
+    const zoomOutButton = new UIButton('zoom-out', '-', {
+      width: 30,
+      height: 30,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 16,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.zoomOut());
+    zoomOutButton.position = { x: 60, y: 15 };
+    this.controlPanel.addChild(zoomOutButton);
+
+    const zoomLabel = new UIText('zoom-label', `Zoom: ${(this.zoomLevel * 100).toFixed(0)}%`, {
+      fontSize: 12,
+      color: '#ffffff'
+    });
+    zoomLabel.position = { x: 100, y: 20 };
+    zoomLabel.size = { x: 100, y: 20 };
+    this.controlPanel.addChild(zoomLabel);
+
+    // Jump button
+    const jumpButton = new UIButton('jump', 'JUMP TO SELECTED', {
+      width: 180,
+      height: 35,
+      backgroundColor: '#9f7aea',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#805ad5',
+      borderWidth: 2,
+      cornerRadius: 5
+    }, () => this.jumpToSelectedSystem());
+    jumpButton.position = { x: 600, y: 12 };
+    this.controlPanel.addChild(jumpButton);
+
+    // Back button
+    const backButton = new UIButton('back', 'BACK TO COCKPIT', {
+      width: 150,
+      height: 35,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#40e0ff',
+      borderWidth: 1,
+      cornerRadius: 5
+    }, () => this.backToCockpit());
+    backButton.position = { x: 20, y: 35 };
+    this.controlPanel.addChild(backButton);
+
+    // Center button
+    const centerButton = new UIButton('center', 'CENTER', {
+      width: 100,
+      height: 35,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#40e0ff',
+      borderWidth: 1,
+      cornerRadius: 5
+    }, () => this.centerOnCurrentSystem());
+    centerButton.position = { x: 680, y: 35 };
+    this.controlPanel.addChild(centerButton);
+  }
+
+  private initializeMapSystems(): void {
+    // Create visual representation of systems on the map
+    const systems = this.data.galaxy.systems;
+    
+    systems.forEach(system => {
+      const systemPosition = this.getSystemPosition(system.name);
+      const systemButton = new UIButton(`map-${system.name}`, '', {
+        width: 8,
+        height: 8,
+        backgroundColor: system.name === this.data.currentSystem ? '#40e0ff' : '#666666',
+        textColor: 'transparent',
+        borderColor: system.name === this.data.currentSystem ? '#ffffff' : '#333333',
+        borderWidth: 1
+      }, () => this.selectSystem(system.name));
+      
+      systemButton.position = { 
+        x: 300 + systemPosition.x * this.zoomLevel + this.mapOffset.x - 4, 
+        y: 250 + systemPosition.y * this.zoomLevel + this.mapOffset.y - 4 
+      };
+      this.mapPanel.addChild(systemButton);
+      this.systemButtons.set(system.name, systemButton);
+    });
+  }
+
+  private getSystemPosition(systemName: string): { x: number; y: number } {
+    // Mock position calculation - would use actual galaxy data
+    const hash = systemName.split('').reduce((a, b) => {
+      a = ((a << 5) - a) + b.charCodeAt(0);
+      return a & a;
+    }, 0);
+    
+    const x = (hash % 1000) - 500;
+    const y = ((hash * 7) % 1000) - 500;
+    
+    return { x, y };
+  }
+
+  onEnter(): void {
+    super.onEnter();
+    this.centerOnCurrentSystem();
+    this.updateSystemButtons();
+  }
+
+  onExit(): void {
+    super.onExit();
+  }
+
+  onUpdate(deltaTime: number): void {
+    super.onUpdate(deltaTime);
+    // Update any animated elements
+  }
+
+  handleMouseDown(x: number, y: number): boolean {
+    if (!this.isVisible || !this.isEnabled) {
+      return false;
+    }
+
+    const mapBounds = this.mapPanel.getBounds();
+    
+    // Check if click is on the map
+    if (x >= mapBounds.x && x <= mapBounds.x + mapBounds.width &&
+        y >= mapBounds.y && y <= mapBounds.y + mapBounds.height) {
+      
+      this.isDragging = true;
+      this.dragStart = { x, y };
+      this.mapStart = { ...this.mapOffset };
+      return true;
+    }
+
+    return super.handleMouseDown(x, y);
+  }
+
+  handleMouseMove(x: number, y: number): boolean {
+    if (!this.isVisible || !this.isEnabled) {
+      return false;
+    }
+
+    if (this.isDragging) {
+      const dx = x - this.dragStart.x;
+      const dy = y - this.dragStart.y;
+      this.mapOffset = {
+        x: this.mapStart.x + dx,
+        y: this.mapStart.y + dy
+      };
+      this.updateSystemPositions();
+      return true;
+    }
+
+    return super.handleMouseMove(x, y);
+  }
+
+  handleMouseUp(x: number, y: number): boolean {
+    if (!this.isVisible || !this.isEnabled) {
+      return false;
+    }
+
+    this.isDragging = false;
+    return super.handleMouseUp(x, y);
+  }
+
+  handleKeyDown(key: string): boolean {
+    if (!this.isVisible || !this.isEnabled) {
+      return false;
+    }
+
+    switch (key.toLowerCase()) {
+      case 'escape':
+      case 'backspace':
+        this.backToCockpit();
+        return true;
+      case ' ':
+      case 'enter':
+        if (this.selectedSystem) {
+          this.jumpToSelectedSystem();
+        }
+        return true;
+      case '+':
+      case '=':
+        this.zoomIn();
+        return true;
+      case '-':
+        this.zoomOut();
+        return true;
+      case 'c':
+        this.centerOnCurrentSystem();
+        return true;
+    }
+
+    return super.handleKeyDown(key);
+  }
+
+  private selectSystem(systemName: string): void {
+    if (this.selectedSystem?.name === systemName) {
+      this.jumpToSelectedSystem();
+      return;
+    }
+
+    // Find the system
+    const system = this.data.galaxy.systems.find(s => s.name === systemName);
+    if (!system) return;
+
+    this.selectedSystem = system;
+    this.updateSelectionInfo();
+    this.updateSystemButtons();
+  }
+
+  private updateSelectionInfo(): void {
+    if (!this.selectedSystem) {
+      this.distanceInfo.setText('0.0 LY');
+      this.fuelCostInfo.setText('0.0 T');
+      return;
+    }
+
+    // Calculate distance (mock calculation)
+    const currentPos = this.getSystemPosition(this.data.currentSystem);
+    const selectedPos = this.getSystemPosition(this.selectedSystem.name);
+    const distance = Math.sqrt(
+      Math.pow(selectedPos.x - currentPos.x, 2) + 
+      Math.pow(selectedPos.y - currentPos.y, 2)
+    ) / 10;
+
+    // Calculate fuel cost (mock calculation)
+    const fuelCost = distance * 0.1;
+
+    this.distanceInfo.setText(`${distance.toFixed(1)} LY`);
+    this.fuelCostInfo.setText(`${fuelCost.toFixed(1)} T`);
+  }
+
+  private updateSystemButtons(): void {
+    this.systemButtons.forEach((button, systemName) => {
+      if (systemName === this.data.currentSystem) {
+        button.options.backgroundColor = '#4a5568';
+      } else if (this.selectedSystem?.name === systemName) {
+        button.options.backgroundColor = '#9f7aea';
+      } else {
+        button.options.backgroundColor = '#2d3748';
+      }
+    });
+  }
+
+  private updateSystemPositions(): void {
+    this.systemButtons.forEach((button, systemName) => {
+      const systemPosition = this.getSystemPosition(systemName);
+      button.position = {
+        x: 300 + systemPosition.x * this.zoomLevel + this.mapOffset.x - 4,
+        y: 250 + systemPosition.y * this.zoomLevel + this.mapOffset.y - 4
+      };
+    });
+  }
+
+  private zoomIn(): void {
+    this.zoomLevel = Math.min(3.0, this.zoomLevel + 0.2);
+    this.updateSystemPositions();
+    // Update zoom label
+    const zoomLabel = this.controlPanel.findChild('zoom-label') as UIText;
+    if (zoomLabel) {
+      zoomLabel.setText(`Zoom: ${(this.zoomLevel * 100).toFixed(0)}%`);
+    }
+  }
+
+  private zoomOut(): void {
+    this.zoomLevel = Math.max(0.5, this.zoomLevel - 0.2);
+    this.updateSystemPositions();
+    // Update zoom label
+    const zoomLabel = this.controlPanel.findChild('zoom-label') as UIText;
+    if (zoomLabel) {
+      zoomLabel.setText(`Zoom: ${(this.zoomLevel * 100).toFixed(0)}%`);
+    }
+  }
+
+  private jumpToSelectedSystem(): void {
+    if (!this.selectedSystem) {
+      alert('Please select a system first');
+      return;
+    }
+
+    // Check if player has enough fuel
+    const fuelCost = parseFloat(this.fuelCostInfo.getText().split(' ')[0]);
+    // Mock fuel check - would check against actual player fuel
+    if (fuelCost > 10) {
+      alert('Not enough fuel for this jump');
+      return;
+    }
+
+    // Perform the jump
+    if (confirm(`Jump to ${this.selectedSystem.name}?`)) {
+      this.performJump(this.selectedSystem.name);
+    }
+  }
+
+  private performJump(systemName: string): void {
+    // This would integrate with the hyperspace jump system
+    console.log(`Jumping to ${systemName}`);
+    
+    // Update current system and jump
+    this.data.currentSystem = systemName;
+    
+    // Return to cockpit with new system
+    setTimeout(() => {
+      this.backToCockpit();
+    }, 1000);
+  }
+
+  private centerOnCurrentSystem(): void {
+    const currentPos = this.getSystemPosition(this.data.currentSystem);
+    this.mapOffset = {
+      x: -currentPos.x * this.zoomLevel,
+      y: -currentPos.y * this.zoomLevel
+    };
+    this.updateSystemPositions();
+  }
+
+  private backToCockpit(): void {
+    this.navigateToScreen('cockpit');
+  }
+
+  private navigateToScreen(screenId: ScreenId): void {
+    const uiManager = UIManager.getInstance();
+    uiManager.showScreen(screenId);
+  }
+
+  // Public methods for updating data
+  public setCurrentSystem(systemName: string): void {
+    this.data.currentSystem = systemName;
+    this.currentSystemInfo.setText(systemName);
+    this.centerOnCurrentSystem();
+    this.updateSystemButtons();
+  }
+}

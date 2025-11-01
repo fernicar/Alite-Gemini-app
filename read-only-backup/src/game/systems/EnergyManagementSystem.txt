@@ -1,0 +1,554 @@
+/**
+ * Energy Management System - Power distribution and consumption tracking
+ * Handles ship power allocation to weapons, shields, engines, and other systems
+ */
+
+import { Vector3D } from '../../types/index.js';
+import { EquipmentSlot } from '../models/Ship.js';
+
+export interface PowerDistribution {
+  weapons: number;
+  shields: number;
+  engines: number;
+  lifeSupport: number;
+  sensors: number;
+  utility: number;
+  reserves: number; // Emergency power
+}
+
+export interface EnergySystem {
+  capacity: number; // Maximum power output
+  currentOutput: number; // Current power being generated
+  efficiency: number; // 0-1 (1.0 = 100% efficient)
+  integrity: number; // 0-100 (affects power output)
+  heatLevel: number; // 0-100 (overheating reduces output)
+}
+
+export interface SystemPowerRequirements {
+  [key: string]: number; // system -> power required
+}
+
+export interface PowerAllocation {
+  system: string;
+  allocated: number;
+  required: number;
+  priority: number; // 1-10 (10 = highest)
+  critical: boolean;
+}
+
+export interface PowerDrain {
+  system: string;
+  drainRate: number; // Power per second
+  active: boolean;
+  type: 'continuous' | 'burst' | 'event';
+}
+
+export interface EmergencyProtocol {
+  id: string;
+  trigger: 'lowPower' | 'overheat' | 'damage' | 'manual';
+  action: 'shutdownSystems' | 'reroutePower' | 'boostOutput' | 'emergencyRepair';
+  targetSystems: string[];
+  priority: number;
+  executed: boolean;
+}
+
+/**
+ * Advanced Energy Management System for Elite-style power distribution
+ */
+export class EnergyManagementSystem {
+  private powerPlant: EnergySystem;
+  private powerDistribution: PowerDistribution;
+  private currentAllocations: Map<string, PowerAllocation>;
+  private powerDrains: Map<string, PowerDrain>;
+  private emergencyProtocols: Map<string, EmergencyProtocol>;
+  private systemPriorities: Map<string, number>;
+  private powerHistory: Array<{ timestamp: number; output: number; heat: number }>;
+  private currentTime: number = 0;
+  private overheated: boolean = false;
+
+  constructor(capacity: number = 10.0) {
+    this.powerPlant = {
+      capacity,
+      currentOutput: capacity * 0.8, // Start at 80% capacity
+      efficiency: 0.95,
+      integrity: 100,
+      heatLevel: 20
+    };
+
+    this.powerDistribution = {
+      weapons: 3.0,
+      shields: 2.0,
+      engines: 2.5,
+      lifeSupport: 1.0,
+      sensors: 0.5,
+      utility: 1.0,
+      reserves: 0
+    };
+
+    this.currentAllocations = new Map();
+    this.powerDrains = new Map();
+    this.emergencyProtocols = new Map();
+    this.systemPriorities = new Map();
+    this.powerHistory = [];
+
+    this.initializeSystemPriorities();
+    this.initializeEmergencyProtocols();
+  }
+
+  /**
+   * Request power allocation for a system
+   */
+  requestPower(systemId: string, requiredPower: number, priority: number = 5): boolean {
+    const allocation: PowerAllocation = {
+      system: systemId,
+      allocated: 0,
+      required: requiredPower,
+      priority,
+      critical: priority >= 8
+    };
+
+    this.currentAllocations.set(systemId, allocation);
+    return this.rebalancePower();
+  }
+
+  /**
+   * Release power allocation for a system
+   */
+  releasePower(systemId: string): boolean {
+    const allocation = this.currentAllocations.get(systemId);
+    if (allocation) {
+      this.currentAllocations.delete(systemId);
+      return this.rebalancePower();
+    }
+    return false;
+  }
+
+  /**
+   * Check if system can drain specified power
+   */
+  canDrainPower(amount: number): boolean {
+    return this.getAvailablePower() >= amount;
+  }
+
+  /**
+   * Drain power from the system
+   */
+  drainPower(amount: number): boolean {
+    if (this.canDrainPower(amount)) {
+      this.powerPlant.currentOutput = Math.max(0, this.powerPlant.currentOutput - amount);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Add power drain (weapon firing, etc.)
+   */
+  addPowerDrain(systemId: string, drainRate: number, type: 'continuous' | 'burst' | 'event' = 'event'): void {
+    this.powerDrains.set(systemId, {
+      system: systemId,
+      drainRate,
+      active: true,
+      type
+    });
+  }
+
+  /**
+   * Remove power drain
+   */
+  removePowerDrain(systemId: string): void {
+    this.powerDrains.delete(systemId);
+  }
+
+  /**
+   * Update power system (called every frame)
+   */
+  update(deltaTime: number): void {
+    this.currentTime += deltaTime;
+    
+    // Update power plant heat
+    this.updatePowerPlant(deltaTime);
+    
+    // Apply power drains
+    this.applyPowerDrains(deltaTime);
+    
+    // Check emergency protocols
+    this.checkEmergencyProtocols();
+    
+    // Record power history
+    this.recordPowerHistory();
+  }
+
+  /**
+   * Get available power
+   */
+  getAvailablePower(): number {
+    return Math.max(0, this.powerPlant.currentOutput - this.getTotalAllocatedPower());
+  }
+
+  /**
+   * Get total allocated power
+   */
+  getTotalAllocatedPower(): number {
+    let total = 0;
+    this.currentAllocations.forEach(allocation => {
+      total += allocation.allocated;
+    });
+    return total;
+  }
+
+  /**
+   * Get current power distribution
+   */
+  getPowerDistribution(): PowerDistribution {
+    return { ...this.powerDistribution };
+  }
+
+  /**
+   * Get power plant status
+   */
+  getPowerPlantStatus(): EnergySystem {
+    return { ...this.powerPlant };
+  }
+
+  /**
+   * Set power distribution percentages
+   */
+  setPowerDistribution(distribution: Partial<PowerDistribution>): void {
+    // Ensure total doesn't exceed 100%
+    const currentTotal = Object.values(this.powerDistribution).reduce((sum, val) => sum + val, 0);
+    const newTotal = Object.values(distribution).reduce((sum, val) => sum + val, 0);
+    
+    if (newTotal <= 100) {
+      this.powerDistribution = { ...this.powerDistribution, ...distribution };
+    } else {
+      // Scale down if over 100%
+      const scale = 100 / newTotal;
+      Object.keys(distribution).forEach(key => {
+        (this.powerDistribution as any)[key] = (distribution as any)[key] * scale;
+      });
+    }
+    
+    this.rebalancePower();
+  }
+
+  /**
+   * Rebalance power allocation based on priorities
+   */
+  private rebalancePower(): boolean {
+    const availablePower = this.getAvailablePower();
+    const allocations = Array.from(this.currentAllocations.values());
+    
+    // Sort by priority (highest first)
+    allocations.sort((a, b) => b.priority - a.priority);
+    
+    // Reset allocations
+    allocations.forEach(allocation => {
+      allocation.allocated = 0;
+    });
+    
+    // Distribute power based on priority
+    let remainingPower = availablePower;
+    
+    for (const allocation of allocations) {
+      if (allocation.required <= remainingPower) {
+        allocation.allocated = allocation.required;
+        remainingPower -= allocation.required;
+      } else if (remainingPower > 0) {
+        allocation.allocated = remainingPower;
+        remainingPower = 0;
+      }
+    }
+    
+    // Update allocations in map
+    allocations.forEach(allocation => {
+      this.currentAllocations.set(allocation.system, allocation);
+    });
+    
+    return remainingPower === 0; // Return true if all power is allocated
+  }
+
+  /**
+   * Update power plant heat and efficiency
+   */
+  private updatePowerPlant(deltaTime: number): void {
+    // Calculate heat generation based on current output vs capacity
+    const heatGeneration = (this.powerPlant.currentOutput / this.powerPlant.capacity) * 10;
+    const heatDissipation = Math.min(5, this.powerPlant.heatLevel * 0.1);
+    
+    // Update heat level
+    this.powerPlant.heatLevel += (heatGeneration - heatDissipation) * deltaTime;
+    this.powerPlant.heatLevel = Math.max(0, Math.min(100, this.powerPlant.heatLevel));
+    
+    // Update efficiency based on heat
+    if (this.powerPlant.heatLevel > 80) {
+      this.overheated = true;
+      this.powerPlant.efficiency = Math.max(0.5, 0.95 - ((this.powerPlant.heatLevel - 80) * 0.02));
+    } else {
+      this.overheated = false;
+      this.powerPlant.efficiency = Math.min(0.95, 0.95 + (80 - this.powerPlant.heatLevel) * 0.001);
+    }
+    
+    // Update output based on efficiency and integrity
+    this.powerPlant.currentOutput = this.powerPlant.capacity * this.powerPlant.efficiency * (this.powerPlant.integrity / 100);
+    
+    // Automatic restart if overheated but cooling down
+    if (this.overheated && this.powerPlant.heatLevel < 70) {
+      this.overheated = false;
+    }
+  }
+
+  /**
+   * Apply active power drains
+   */
+  private applyPowerDrains(deltaTime: number): void {
+    this.powerDrains.forEach(drain => {
+      if (drain.active && drain.drainRate > 0) {
+        const drainAmount = drain.drainRate * deltaTime;
+        this.powerPlant.currentOutput = Math.max(0, this.powerPlant.currentOutput - drainAmount);
+      }
+    });
+  }
+
+  /**
+   * Check and execute emergency protocols
+   */
+  private checkEmergencyProtocols(): void {
+    this.emergencyProtocols.forEach(protocol => {
+      if (protocol.executed) return;
+      
+      let trigger = false;
+      let reason = '';
+      
+      switch (protocol.trigger) {
+        case 'lowPower':
+          if (this.getAvailablePower() < 1.0) {
+            trigger = true;
+            reason = 'Low power available';
+          }
+          break;
+        case 'overheat':
+          if (this.overheated) {
+            trigger = true;
+            reason = 'Power plant overheating';
+          }
+          break;
+        case 'damage':
+          if (this.powerPlant.integrity < 50) {
+            trigger = true;
+            reason = 'Power plant damaged';
+          }
+          break;
+      }
+      
+      if (trigger) {
+        this.executeEmergencyProtocol(protocol, reason);
+        protocol.executed = true;
+      }
+    });
+  }
+
+  /**
+   * Execute emergency protocol
+   */
+  private executeEmergencyProtocol(protocol: EmergencyProtocol, reason: string): void {
+    switch (protocol.action) {
+      case 'shutdownSystems':
+        protocol.targetSystems.forEach(systemId => {
+          const allocation = this.currentAllocations.get(systemId);
+          if (allocation && allocation.priority < 7) {
+            allocation.allocated = 0;
+          }
+        });
+        break;
+        
+      case 'reroutePower':
+        // Redistribute power to critical systems
+        protocol.targetSystems.forEach(systemId => {
+          const allocation = this.currentAllocations.get(systemId);
+          if (allocation) {
+            allocation.allocated = Math.min(allocation.required, allocation.allocated * 1.5);
+          }
+        });
+        break;
+        
+      case 'boostOutput':
+        // Temporary power boost (reduces integrity)
+        this.powerPlant.currentOutput = Math.min(this.powerPlant.capacity, this.powerPlant.currentOutput * 1.2);
+        this.powerPlant.integrity = Math.max(0, this.powerPlant.integrity - 5);
+        break;
+        
+      case 'emergencyRepair':
+        // Gradually restore integrity
+        this.powerPlant.integrity = Math.min(100, this.powerPlant.integrity + 1);
+        break;
+    }
+  }
+
+  /**
+   * Record power history for monitoring
+   */
+  private recordPowerHistory(): void {
+    if (this.powerHistory.length > 0) {
+      const last = this.powerHistory[this.powerHistory.length - 1];
+      if (this.currentTime - last.timestamp >= 1.0) { // Record every second
+        this.powerHistory.push({
+          timestamp: this.currentTime,
+          output: this.powerPlant.currentOutput,
+          heat: this.powerPlant.heatLevel
+        });
+        
+        // Keep only last 10 minutes of data
+        const cutoff = this.currentTime - 600;
+        this.powerHistory = this.powerHistory.filter(entry => entry.timestamp >= cutoff);
+      }
+    } else {
+      this.powerHistory.push({
+        timestamp: this.currentTime,
+        output: this.powerPlant.currentOutput,
+        heat: this.powerPlant.heatLevel
+      });
+    }
+  }
+
+  /**
+   * Initialize system priorities
+   */
+  private initializeSystemPriorities(): void {
+    this.systemPriorities.set('lifeSupport', 10);
+    this.systemPriorities.set('shields', 8);
+    this.systemPriorities.set('weapons', 6);
+    this.systemPriorities.set('engines', 7);
+    this.systemPriorities.set('sensors', 3);
+    this.systemPriorities.set('utility', 4);
+  }
+
+  /**
+   * Initialize emergency protocols
+   */
+  private initializeEmergencyProtocols(): void {
+    this.emergencyProtocols.set('lowPower', {
+      id: 'lowPower',
+      trigger: 'lowPower',
+      action: 'shutdownSystems',
+      targetSystems: ['sensors', 'utility'],
+      priority: 1,
+      executed: false
+    });
+    
+    this.emergencyProtocols.set('overheat', {
+      id: 'overheat',
+      trigger: 'overheat',
+      action: 'reroutePower',
+      targetSystems: ['shields', 'lifeSupport'],
+      priority: 2,
+      executed: false
+    });
+    
+    this.emergencyProtocols.set('damage', {
+      id: 'damage',
+      trigger: 'damage',
+      action: 'boostOutput',
+      targetSystems: [],
+      priority: 3,
+      executed: false
+    });
+  }
+
+  /**
+   * Manual trigger emergency protocol
+   */
+  triggerEmergencyProtocol(protocolId: string): boolean {
+    const protocol = this.emergencyProtocols.get(protocolId);
+    if (protocol) {
+      protocol.trigger = 'manual';
+      this.executeEmergencyProtocol(protocol, 'Manual activation');
+      protocol.executed = true;
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Get power allocation status
+   */
+  getPowerAllocationStatus(): Array<{
+    system: string;
+    required: number;
+    allocated: number;
+    percentage: number;
+    priority: number;
+    critical: boolean;
+    efficiency: number;
+  }> {
+    return Array.from(this.currentAllocations.values()).map(allocation => ({
+      system: allocation.system,
+      required: allocation.required,
+      allocated: allocation.allocated,
+      percentage: allocation.required > 0 ? (allocation.allocated / allocation.required) * 100 : 0,
+      priority: allocation.priority,
+      critical: allocation.critical,
+      efficiency: allocation.required > 0 ? allocation.allocated / allocation.required : 0
+    }));
+  }
+
+  /**
+   * Get power system diagnostics
+   */
+  getPowerSystemDiagnostics(): {
+    powerPlantStatus: EnergySystem;
+    currentLoad: number;
+    efficiency: number;
+    heatStatus: 'normal' | 'warning' | 'overheated';
+    emergencyProtocols: EmergencyProtocol[];
+    recommendations: string[];
+  } {
+    const currentLoad = (this.getTotalAllocatedPower() / this.powerPlant.capacity) * 100;
+    let heatStatus: 'normal' | 'warning' | 'overheated';
+    
+    if (this.powerPlant.heatLevel > 80) heatStatus = 'overheated';
+    else if (this.powerPlant.heatLevel > 60) heatStatus = 'warning';
+    else heatStatus = 'normal';
+    
+    const recommendations: string[] = [];
+    
+    if (currentLoad > 90) {
+      recommendations.push('Reduce power allocation to prevent overload');
+    }
+    
+    if (this.powerPlant.heatLevel > 70) {
+      recommendations.push('Consider reducing power output to cool down');
+    }
+    
+    if (this.powerPlant.integrity < 70) {
+      recommendations.push('Power plant integrity low - consider repairs');
+    }
+    
+    return {
+      powerPlantStatus: { ...this.powerPlant },
+      currentLoad,
+      efficiency: this.powerPlant.efficiency,
+      heatStatus,
+      emergencyProtocols: Array.from(this.emergencyProtocols.values()),
+      recommendations
+    };
+  }
+
+  /**
+   * Repair power plant integrity
+   */
+  repairPowerPlant(amount: number): number {
+    const oldIntegrity = this.powerPlant.integrity;
+    this.powerPlant.integrity = Math.min(100, this.powerPlant.integrity + amount);
+    return this.powerPlant.integrity - oldIntegrity;
+  }
+
+  /**
+   * Damage power plant integrity
+   */
+  damagePowerPlant(amount: number): number {
+    const oldIntegrity = this.powerPlant.integrity;
+    this.powerPlant.integrity = Math.max(0, this.powerPlant.integrity - amount);
+    return oldIntegrity - this.powerPlant.integrity;
+  }
+}

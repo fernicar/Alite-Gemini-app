@@ -1,0 +1,555 @@
+/**
+ * Asset Manager - Optimized loading, caching, and delivery of game assets
+ * Handles images, audio, fonts, and other game resources with performance optimization
+ */
+
+export interface AssetInfo {
+  id: string;
+  url: string;
+  type: 'image' | 'audio' | 'font' | 'data' | 'json';
+  size: number;
+  loaded: boolean;
+  loading: boolean;
+  error: string | null;
+  priority: number;
+  cacheable: boolean;
+  compressed: boolean;
+  format: string;
+  lastAccessed: number;
+  accessCount: number;
+}
+
+export interface LoadingProgress {
+  totalAssets: number;
+  loadedAssets: number;
+  failedAssets: number;
+  progress: number; // 0-1
+  bytesLoaded: number;
+  totalBytes: number;
+  estimatedTimeRemaining: number;
+  currentAsset: string;
+}
+
+export interface AssetSettings {
+  enableCompression: boolean;
+  enableCaching: boolean;
+  enablePreloading: boolean;
+  maxCacheSize: number; // in bytes
+  compressionLevel: number; // 0-9
+  enableWebP: boolean;
+  enableLazyLoading: boolean;
+  preloadThreshold: number; // assets to preload
+  retryAttempts: number;
+  timeout: number; // milliseconds
+}
+
+export interface CacheEntry {
+  asset: AssetInfo;
+  blob: Blob | ArrayBuffer | string;
+  timestamp: number;
+  size: number;
+  accessCount: number;
+}
+
+export class AssetManager {
+  private static instance: AssetManager;
+  
+  private assets: Map<string, AssetInfo> = new Map();
+  private cache: Map<string, CacheEntry> = new Map();
+  private loadingPromises: Map<string, Promise<any>> = new Map();
+  private progressCallbacks: ((progress: LoadingProgress) => void)[] = [];
+  private settings: AssetSettings;
+  private totalBytes: number = 0;
+  private loadedBytes: number = 0;
+
+  private constructor() {
+    this.settings = this.getDefaultSettings();
+    this.initializeCache();
+  }
+
+  public static getInstance(): AssetManager {
+    if (!AssetManager.instance) {
+      AssetManager.instance = new AssetManager();
+    }
+    return AssetManager.instance;
+  }
+
+  private getDefaultSettings(): AssetSettings {
+    return {
+      enableCompression: true,
+      enableCaching: true,
+      enablePreloading: true,
+      maxCacheSize: 50 * 1024 * 1024, // 50MB
+      compressionLevel: 6,
+      enableWebP: true,
+      enableLazyLoading: true,
+      preloadThreshold: 5,
+      retryAttempts: 3,
+      timeout: 10000 // 10 seconds
+    };
+  }
+
+  private initializeCache(): void {
+    // Initialize cache from localStorage if available
+    if (this.settings.enableCaching && 'localStorage' in window) {
+      this.loadCacheFromStorage();
+    }
+  }
+
+  private loadCacheFromStorage(): void {
+    try {
+      const cached = localStorage.getItem('alite_asset_cache');
+      if (cached) {
+        const cacheData = JSON.parse(cached);
+        cacheData.forEach((entry: any) => {
+          // Restore cache entries (in a real implementation, you'd restore the actual data)
+          console.log(`Restored cached asset: ${entry.id}`);
+        });
+      }
+    } catch (error) {
+      console.warn('Failed to load cache from storage:', error);
+    }
+  }
+
+  private saveCacheToStorage(): void {
+    if (!this.settings.enableCaching) return;
+
+    try {
+      const cacheData = Array.from(this.cache.entries()).map(([id, entry]) => ({
+        id,
+        timestamp: entry.timestamp,
+        size: entry.size,
+        accessCount: entry.accessCount
+      }));
+      
+      localStorage.setItem('alite_asset_cache', JSON.stringify(cacheData));
+    } catch (error) {
+      console.warn('Failed to save cache to storage:', error);
+    }
+  }
+
+  public registerAsset(
+    id: string, 
+    url: string, 
+    type: AssetInfo['type'], 
+    options: Partial<AssetInfo> = {}
+  ): void {
+    const assetInfo: AssetInfo = {
+      id,
+      url,
+      type,
+      size: 0,
+      loaded: false,
+      loading: false,
+      error: null,
+      priority: options.priority ?? 5,
+      cacheable: options.cacheable ?? true,
+      compressed: options.compressed ?? false,
+      format: options.format ?? this.getFormatFromUrl(url),
+      lastAccessed: 0,
+      accessCount: 0
+    };
+
+    this.assets.set(id, assetInfo);
+  }
+
+  public unregisterAsset(id: string): boolean {
+    const asset = this.assets.get(id);
+    if (asset) {
+      this.assets.delete(id);
+      this.cache.delete(id);
+      return true;
+    }
+    return false;
+  }
+
+  public async loadAsset(id: string): Promise<any> {
+    // Check if already loaded
+    if (this.assets.get(id)?.loaded) {
+      return this.getAssetFromCache(id);
+    }
+
+    // Check if already loading
+    if (this.loadingPromises.has(id)) {
+      return this.loadingPromises.get(id);
+    }
+
+    const asset = this.assets.get(id);
+    if (!asset) {
+      throw new Error(`Asset ${id} not registered`);
+    }
+
+    // Update progress
+    this.updateProgress();
+
+    const loadPromise = this.performLoad(asset);
+    this.loadingPromises.set(id, loadPromise);
+
+    try {
+      const result = await loadPromise;
+      this.loadingPromises.delete(id);
+      return result;
+    } catch (error) {
+      this.loadingPromises.delete(id);
+      throw error;
+    }
+  }
+
+  private async performLoad(asset: AssetInfo): Promise<any> {
+    asset.loading = true;
+    asset.error = null;
+
+    try {
+      let result: any;
+
+      switch (asset.type) {
+        case 'image':
+          result = await this.loadImage(asset);
+          break;
+        case 'audio':
+          result = await this.loadAudio(asset);
+          break;
+        case 'font':
+          result = await this.loadFont(asset);
+          break;
+        case 'json':
+          result = await this.loadJSON(asset);
+          break;
+        case 'data':
+          result = await this.loadData(asset);
+          break;
+        default:
+          throw new Error(`Unsupported asset type: ${asset.type}`);
+      }
+
+      // Update asset info
+      asset.loaded = true;
+      asset.loading = false;
+      asset.lastAccessed = Date.now();
+      asset.accessCount++;
+
+      // Cache if enabled
+      if (this.settings.enableCaching && asset.cacheable) {
+        this.cacheAsset(id, result);
+      }
+
+      return result;
+    } catch (error) {
+      asset.loading = false;
+      asset.error = error instanceof Error ? error.message : String(error);
+      throw error;
+    }
+  }
+
+  private async loadImage(asset: AssetInfo): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      
+      img.onload = () => {
+        asset.size = img.naturalWidth * img.naturalHeight * 4; // Estimate
+        resolve(img);
+      };
+      
+      img.onerror = () => {
+        reject(new Error(`Failed to load image: ${asset.url}`));
+      };
+
+      // Handle WebP support
+      if (this.settings.enableWebP && this.supportsWebP()) {
+        img.src = this.getWebPUrl(asset.url);
+      } else {
+        img.src = asset.url;
+      }
+    });
+  }
+
+  private async loadAudio(asset: AssetInfo): Promise<AudioBuffer | HTMLAudioElement> {
+    const browserCompat = this.getBrowserCompatibility();
+    
+    if (browserCompat.webAudio) {
+      return this.loadAudioWebAudio(asset);
+    } else {
+      return this.loadAudioHTML(asset);
+    }
+  }
+
+  private async loadAudioWebAudio(asset: AssetInfo): Promise<AudioBuffer> {
+    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const response = await fetch(asset.url);
+    const arrayBuffer = await response.arrayBuffer();
+    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+    
+    asset.size = arrayBuffer.byteLength;
+    return audioBuffer;
+  }
+
+  private async loadAudioHTML(asset: AssetInfo): Promise<HTMLAudioElement> {
+    return new Promise((resolve, reject) => {
+      const audio = new Audio();
+      
+      audio.oncanplaythrough = () => {
+        asset.size = audio.duration * 16000; // Rough estimate
+        resolve(audio);
+      };
+      
+      audio.onerror = () => {
+        reject(new Error(`Failed to load audio: ${asset.url}`));
+      };
+
+      audio.src = asset.url;
+      audio.load();
+    });
+  }
+
+  private async loadFont(asset: AssetInfo): Promise<FontFace> {
+    const fontFace = new FontFace(asset.id, `url(${asset.url})`);
+    
+    await fontFace.load();
+    (document as any).fonts.add(fontFace);
+    
+    asset.size = 1024; // Estimate
+    return fontFace;
+  }
+
+  private async loadJSON(asset: AssetInfo): Promise<any> {
+    const response = await fetch(asset.url);
+    const json = await response.json();
+    
+    asset.size = JSON.stringify(json).length;
+    return json;
+  }
+
+  private async loadData(asset: AssetInfo): Promise<ArrayBuffer> {
+    const response = await fetch(asset.url);
+    const arrayBuffer = await response.arrayBuffer();
+    
+    asset.size = arrayBuffer.byteLength;
+    return arrayBuffer;
+  }
+
+  private cacheAsset(id: string, data: any): void {
+    const asset = this.assets.get(id);
+    if (!asset) return;
+
+    const entry: CacheEntry = {
+      asset,
+      blob: data,
+      timestamp: Date.now(),
+      size: asset.size,
+      accessCount: asset.accessCount
+    };
+
+    this.cache.set(id, entry);
+    
+    // Check cache size limit
+    this.enforceCacheSizeLimit();
+  }
+
+  private getAssetFromCache(id: string): any {
+    const entry = this.cache.get(id);
+    if (entry) {
+      entry.timestamp = Date.now();
+      entry.accessCount++;
+      return entry.blob;
+    }
+    return null;
+  }
+
+  private enforceCacheSizeLimit(): void {
+    let totalSize = 0;
+    
+    // Calculate total cache size
+    this.cache.forEach(entry => {
+      totalSize += entry.size;
+    });
+
+    // Remove oldest/frequently accessed items if over limit
+    if (totalSize > this.settings.maxCacheSize) {
+      const sortedEntries = Array.from(this.cache.entries())
+        .sort((a, b) => {
+          // Prioritize by access count and recency
+          const scoreA = a[1].accessCount * 0.3 + (Date.now() - a[1].timestamp) * 0.000001;
+          const scoreB = b[1].accessCount * 0.3 + (Date.now() - b[1].timestamp) * 0.000001;
+          return scoreA - scoreB; // Remove lowest scoring items first
+        });
+
+      // Remove items until under limit
+      for (const [id, entry] of sortedEntries) {
+        this.cache.delete(id);
+        totalSize -= entry.size;
+        
+        if (totalSize <= this.settings.maxCacheSize * 0.8) { // Leave 20% buffer
+          break;
+        }
+      }
+    }
+  }
+
+  public async preloadAssets(assetIds: string[]): Promise<void> {
+    if (!this.settings.enablePreloading) return;
+
+    // Sort by priority
+    const sortedAssets = assetIds
+      .map(id => ({ id, priority: this.assets.get(id)?.priority ?? 5 }))
+      .sort((a, b) => a.priority - b.priority);
+
+    const loadPromises = sortedAssets.slice(0, this.settings.preloadThreshold)
+      .map(({ id }) => this.loadAsset(id).catch(error => {
+        console.warn(`Failed to preload asset ${id}:`, error);
+      }));
+
+    await Promise.allSettled(loadPromises);
+  }
+
+  public async loadAssetsBatch(assetIds: string[]): Promise<Map<string, any>> {
+    const results = new Map<string, any>();
+    const loadPromises = assetIds.map(async (id) => {
+      try {
+        const asset = await this.loadAsset(id);
+        results.set(id, asset);
+      } catch (error) {
+        console.warn(`Failed to load asset ${id}:`, error);
+        results.set(id, null);
+      }
+    });
+
+    await Promise.allSettled(loadPromises);
+    return results;
+  }
+
+  public getAssetInfo(id: string): AssetInfo | null {
+    return this.assets.get(id) || null;
+  }
+
+  public getAllAssets(): AssetInfo[] {
+    return Array.from(this.assets.values());
+  }
+
+  public getLoadedAssets(): AssetInfo[] {
+    return Array.from(this.assets.values()).filter(asset => asset.loaded);
+  }
+
+  public getLoadingAssets(): AssetInfo[] {
+    return Array.from(this.assets.values()).filter(asset => asset.loading);
+  }
+
+  public getFailedAssets(): AssetInfo[] {
+    return Array.from(this.assets.values()).filter(asset => asset.error);
+  }
+
+  public onProgress(callback: (progress: LoadingProgress) => void): void {
+    this.progressCallbacks.push(callback);
+  }
+
+  private updateProgress(): void {
+    const totalAssets = this.assets.size;
+    const loadedAssets = Array.from(this.assets.values()).filter(a => a.loaded).length;
+    const failedAssets = Array.from(this.assets.values()).filter(a => a.error).length;
+    const progress = totalAssets > 0 ? loadedAssets / totalAssets : 0;
+
+    // Estimate time remaining
+    const estimatedTimeRemaining = progress > 0 ? 
+      ((Date.now() - this.startTime) / progress) - (Date.now() - this.startTime) : 0;
+
+    const progressInfo: LoadingProgress = {
+      totalAssets,
+      loadedAssets,
+      failedAssets,
+      progress,
+      bytesLoaded: this.loadedBytes,
+      totalBytes: this.totalBytes,
+      estimatedTimeRemaining,
+      currentAsset: this.getCurrentLoadingAsset() || ''
+    };
+
+    this.progressCallbacks.forEach(callback => callback(progressInfo));
+  }
+
+  private startTime = Date.now();
+  private getCurrentLoadingAsset(): string | null {
+    const loadingAsset = Array.from(this.assets.values()).find(a => a.loading);
+    return loadingAsset?.id || null;
+  }
+
+  public getCacheStatistics(): {
+    totalCached: number;
+    totalSize: number;
+    hitRate: number;
+    oldestEntry: number;
+    newestEntry: number;
+  } {
+    const entries = Array.from(this.cache.values());
+    
+    if (entries.length === 0) {
+      return {
+        totalCached: 0,
+        totalSize: 0,
+        hitRate: 0,
+        oldestEntry: 0,
+        newestEntry: 0
+      };
+    }
+
+    const timestamps = entries.map(e => e.timestamp);
+    const hitRate = entries.reduce((acc, e) => acc + e.accessCount, 0) / entries.length;
+
+    return {
+      totalCached: entries.length,
+      totalSize: entries.reduce((acc, e) => acc + e.size, 0),
+      hitRate,
+      oldestEntry: Math.min(...timestamps),
+      newestEntry: Math.max(...timestamps)
+    };
+  }
+
+  public clearCache(): void {
+    this.cache.clear();
+    this.saveCacheToStorage();
+  }
+
+  public optimizeCache(): void {
+    this.enforceCacheSizeLimit();
+    this.saveCacheToStorage();
+  }
+
+  private supportsWebP(): boolean {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1;
+    canvas.height = 1;
+    return canvas.toDataURL('image/webp').indexOf('data:image/webp') === 0;
+  }
+
+  private getWebPUrl(originalUrl: string): string {
+    // Simple WebP URL generation - in reality you'd have asset mapping
+    if (originalUrl.endsWith('.png') || originalUrl.endsWith('.jpg') || originalUrl.endsWith('.jpeg')) {
+      return originalUrl.replace(/\.(png|jpg|jpeg)$/, '.webp');
+    }
+    return originalUrl;
+  }
+
+  private getFormatFromUrl(url: string): string {
+    const match = url.match(/\.([^.]+)$/);
+    return match ? match[1].toLowerCase() : 'unknown';
+  }
+
+  private getBrowserCompatibility(): { webAudio: boolean } {
+    return {
+      webAudio: !!(window.AudioContext || (window as any).webkitAudioContext)
+    };
+  }
+
+  public setSettings(settings: Partial<AssetSettings>): void {
+    this.settings = { ...this.settings, ...settings };
+  }
+
+  public getSettings(): AssetSettings {
+    return { ...this.settings };
+  }
+
+  public dispose(): void {
+    this.assets.clear();
+    this.cache.clear();
+    this.loadingPromises.clear();
+    this.progressCallbacks.length = 0;
+  }
+}

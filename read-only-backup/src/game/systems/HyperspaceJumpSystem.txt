@@ -1,0 +1,762 @@
+/**
+ * Hyperspace Jump System - Handles hyperspace travel mechanics and protocols
+ * Implements FSD (Frame Shift Drive) operations, jump planning, and safety systems
+ */
+
+import { Vector3D } from '../../types/index.js';
+import { Ship } from '../models/Ship.js';
+
+/**
+ * Hyperspace jump states
+ */
+export enum JumpState {
+  IDLE = 'IDLE',
+  CHARGING = 'CHARGING',
+  IN_STANDSTILL = 'IN_STANDSTILL',
+  JUMPING = 'JUMPING',
+  COOLING_DOWN = 'COOLING_DOWN',
+  ERROR = 'ERROR'
+}
+
+/**
+ * Jump types and their characteristics
+ */
+export enum JumpType {
+  NORMAL = 'NORMAL',
+  SUPERCHARGE = 'SUPERCHARGE',
+  EMERGENCY = 'EMERGENCY',
+  CALCULATED = 'CALCULATED'
+}
+
+/**
+ * Jump failure reasons
+ */
+export enum JumpFailureReason {
+  INSUFFICIENT_FUEL = 'INSUFFICIENT_FUEL',
+  FSD_DAMAGED = 'FSD_DAMAGED',
+  MASS_LOCK = 'MASS_LOCK',
+  GRAVITY_WELL = 'GRAVITY_WELL',
+  DOCKED_OR_DOCKING = 'DOCKED_OR_DOCKING',
+  WEAPONS_FIRED = 'WEAPONS_FIRED',
+  SYSTEM_OVERHEATING = 'SYSTEM_OVERHEATING',
+  MALFUNCTION = 'MALFUNCTION'
+}
+
+/**
+ * Jump destination information
+ */
+export interface JumpDestination {
+  systemId: number;
+  systemName: string;
+  position: Vector3D;
+  distance: number; // Light years
+  fuelCost: number;
+  estimatedTime: number; // Seconds
+  difficulty: 'EASY' | 'MEDIUM' | 'HARD' | 'EXTREME';
+  hasDocking: boolean;
+  government: string;
+  economy: string;
+}
+
+/**
+ * Jump calculation parameters
+ */
+export interface JumpCalculation {
+  destination: JumpDestination;
+  actualFuelCost: number;
+  safeDistance: number;
+  estimatedTime: number;
+  successProbability: number; // 0-1
+  risks: string[];
+  requirements: string[];
+  warnings: string[];
+}
+
+/**
+ * Jump event for logging
+ */
+export interface JumpEvent {
+  shipId: string;
+  timestamp: number;
+  type: 'CALCULATION' | 'CHARGE_START' | 'JUMP_START' | 'JUMP_COMPLETE' | 'JUMP_FAILED' | 'EMERGENCY_JUMP';
+  destination?: JumpDestination;
+  fuelUsed: number;
+  duration: number;
+  success: boolean;
+  failureReason?: JumpFailureReason;
+  details: string;
+}
+
+/**
+ * FSD system status
+ */
+export interface FSDStatus {
+  integrity: number; // 0-100, system condition
+  heatLevel: number; // 0-100, current heat
+  chargeTime: number; // Current charge time remaining
+  cooldownTime: number; // Current cooldown remaining
+  isCharging: boolean;
+  isJumpReady: boolean;
+  isOverheated: boolean;
+  malfunctionLevel: number; // 0-1, system malfunction severity
+  calibrationNeeded: boolean; // Requires recalibration
+  lastMaintenance: number; // Timestamp of last maintenance
+}
+
+/**
+ * Advanced Hyperspace Jump System
+ * Implements comprehensive hyperspace mechanics including planning, execution, and safety protocols
+ */
+export class HyperspaceJumpSystem {
+  private jumpState: Map<string, JumpState> = new Map();
+  private fsdStatus: Map<string, FSDStatus> = new Map();
+  private chargeProgress: Map<string, number> = new Map(); // 0-1 charge progress
+  private jumpEvents: JumpEvent[] = [];
+  private jumpDestinations: Map<number, JumpDestination[]> = new Map();
+  private maxEvents: number = 1000;
+  private emergencyJumpCooldown: Map<string, number> = new Map();
+  private lastUpdate: number = 0;
+
+  constructor() {
+    this.initializeJumpDestinations();
+  }
+
+  /**
+   * Initialize jump system for a ship
+   */
+  initializeShipJumpSystem(ship: Ship): void {
+    const shipId = ship.getId();
+    
+    this.jumpState.set(shipId, JumpState.IDLE);
+    
+    const status: FSDStatus = {
+      integrity: ship.getState().fsdIntegrity,
+      heatLevel: 0,
+      chargeTime: 0,
+      cooldownTime: 0,
+      isCharging: false,
+      isJumpReady: false,
+      isOverheated: false,
+      malfunctionLevel: (100 - ship.getState().fsdIntegrity) / 100,
+      calibrationNeeded: false,
+      lastMaintenance: Date.now()
+    };
+    
+    this.fsdStatus.set(shipId, status);
+    this.chargeProgress.set(shipId, 0);
+    this.emergencyJumpCooldown.set(shipId, 0);
+  }
+
+  /**
+   * Calculate possible jump destinations from current system
+   */
+  calculateJumpDestinations(currentSystemId: number, ship: Ship): JumpDestination[] {
+    const specs = ship.getSpecs();
+    const maxRange = specs.jumpRange * (ship.getState().fsdIntegrity / 100);
+    const destinations: JumpDestination[] = [];
+    
+    // Generate potential destinations within range
+    for (let i = 0; i < 256; i++) {
+      if (i === currentSystemId) continue; // Skip current system
+      
+      const distance = 3 + Math.random() * 20; // Random distance
+      if (distance <= maxRange) {
+        const destination: JumpDestination = {
+          systemId: i,
+          systemName: `System ${i}`,
+          position: this.generateSystemPosition(i),
+          distance,
+          fuelCost: this.calculateJumpFuelCost(distance, ship),
+          estimatedTime: this.calculateJumpTime(distance, ship),
+          difficulty: this.calculateJumpDifficulty(distance, maxRange),
+          hasDocking: Math.random() > 0.2, // 80% have docking
+          government: this.generateRandomGovernment(),
+          economy: this.generateRandomEconomy()
+        };
+        destinations.push(destination);
+      }
+    }
+    
+    // Sort by distance (closest first)
+    destinations.sort((a, b) => a.distance - b.distance);
+    
+    return destinations.slice(0, 10); // Return top 10 closest
+  }
+
+  /**
+   * Detailed jump calculation and validation
+   */
+  calculateJump(destination: JumpDestination, ship: Ship): JumpCalculation {
+    const shipId = ship.getId();
+    const fsdStatus = this.fsdStatus.get(shipId)!;
+    const state = ship.getState();
+    
+    const risks: string[] = [];
+    const warnings: string[] = [];
+    const requirements: string[] = [];
+    
+    // Check fuel requirements
+    if (state.fuelLevel < destination.fuelCost) {
+      risks.push('Insufficient fuel for jump');
+    }
+    
+    // Check FSD integrity
+    if (fsdStatus.integrity < 50) {
+      risks.push('FSD integrity compromised');
+    }
+    
+    // Check for overheating
+    if (fsdStatus.heatLevel > 80) {
+      risks.push('FSD overheating detected');
+    }
+    
+    // Check mass lock (ships too close)
+    if (this.hasMassLock(ship)) {
+      risks.push('Mass lock detected - cannot jump');
+    }
+    
+    // Calculate success probability
+    let successProbability = 1.0;
+    if (fsdStatus.integrity < 100) successProbability *= (fsdStatus.integrity / 100);
+    if (fsdStatus.heatLevel > 50) successProbability *= (100 - fsdStatus.heatLevel) / 100;
+    if (risks.length > 0) successProbability *= 0.7; // Penalty for known risks
+    
+    // Time requirements
+    const chargeTime = this.calculateChargeTime(destination, ship);
+    const cooldownTime = this.calculateCooldownTime(destination, ship);
+    
+    // Special considerations
+    if (destination.distance > ship.getSpecs().jumpRange * 0.9) {
+      warnings.push('Jump at maximum range - reduced safety margin');
+    }
+    
+    if (destination.fuelCost > state.fuelLevel * 0.8) {
+      warnings.push('Jump will leave minimal fuel reserves');
+    }
+    
+    // Requirements
+    requirements.push('FSD system online');
+    requirements.push('Sufficient fuel');
+    requirements.push('Clear of mass lock');
+    
+    return {
+      destination,
+      actualFuelCost: destination.fuelCost,
+      safeDistance: this.calculateSafeDistance(destination, ship),
+      estimatedTime: chargeTime + cooldownTime,
+      successProbability,
+      risks,
+      requirements,
+      warnings
+    };
+  }
+
+  /**
+   * Start jump charging process
+   */
+  startJumpCharging(destination: JumpDestination, ship: Ship): boolean {
+    const shipId = ship.getId();
+    const fsdStatus = this.fsdStatus.get(shipId)!;
+    const state = ship.getState();
+    
+    // Validate prerequisites
+    if (!this.canInitiateJump(ship, destination)) {
+      return false;
+    }
+    
+    // Check if already charging
+    if (this.jumpState.get(shipId) === JumpState.CHARGING) {
+      return false;
+    }
+    
+    // Check emergency jump cooldown
+    const emergencyCooldown = this.emergencyJumpCooldown.get(shipId) || 0;
+    if (Date.now() - emergencyCooldown < 30000) { // 30 second cooldown
+      return false;
+    }
+    
+    // Set charging state
+    this.jumpState.set(shipId, JumpState.CHARGING);
+    this.chargeProgress.set(shipId, 0);
+    fsdStatus.isCharging = true;
+    
+    // Log event
+    this.logJumpEvent({
+      shipId,
+      timestamp: Date.now(),
+      type: 'CALCULATION',
+      destination,
+      fuelUsed: destination.fuelCost,
+      duration: this.calculateChargeTime(destination, ship),
+      success: true,
+      details: 'Jump charging initiated'
+    });
+    
+    return true;
+  }
+
+  /**
+   * Update jump charging process
+   */
+  updateJumpCharging(deltaTime: number, ship: Ship): { 
+    progress: number; 
+    state: JumpState; 
+    timeRemaining: number 
+  } {
+    const shipId = ship.getId();
+    const fsdStatus = this.fsdStatus.get(shipId)!;
+    const destination = this.getCurrentDestination(shipId);
+    
+    if (!destination || this.jumpState.get(shipId) !== JumpState.CHARGING) {
+      return { progress: 0, state: JumpState.IDLE, timeRemaining: 0 };
+    }
+    
+    const chargeTime = this.calculateChargeTime(destination, ship);
+    const currentProgress = this.chargeProgress.get(shipId)!;
+    const newProgress = Math.min(1.0, currentProgress + (deltaTime / chargeTime));
+    
+    this.chargeProgress.set(shipId, newProgress);
+    fsdStatus.chargeTime = Math.max(0, chargeTime - (newProgress * chargeTime));
+    
+    // Check for completion
+    if (newProgress >= 1.0) {
+      this.jumpState.set(shipId, JumpState.IN_STANDSTILL);
+      fsdStatus.isCharging = false;
+      fsdStatus.isJumpReady = true;
+    }
+    
+    return {
+      progress: newProgress,
+      state: this.jumpState.get(shipId)!,
+      timeRemaining: fsdStatus.chargeTime
+    };
+  }
+
+  /**
+   * Execute hyperspace jump
+   */
+  executeJump(ship: Ship, destination: JumpDestination): { 
+    success: boolean; 
+    failureReason?: JumpFailureReason; 
+    newSystemId?: number;
+  } {
+    const shipId = ship.getId();
+    const fsdStatus = this.fsdStatus.get(shipId)!;
+    const state = ship.getState();
+    
+    // Validate final prerequisites
+    if (this.jumpState.get(shipId) !== JumpState.IN_STANDSTILL) {
+      return { success: false, failureReason: JumpFailureReason.MALFUNCTION };
+    }
+    
+    // Execute fuel consumption
+    if (state.fuelLevel < destination.fuelCost) {
+      return { success: false, failureReason: JumpFailureReason.INSUFFICIENT_FUEL };
+    }
+    
+    // Set jumping state
+    this.jumpState.set(shipId, JumpState.JUMPING);
+    const jumpStartTime = Date.now();
+    
+    // Apply fuel cost
+    state.fuelLevel -= destination.fuelCost;
+    
+    // Simulate jump time (typically 5-15 seconds)
+    const jumpDuration = destination.estimatedTime * 1000; // Convert to milliseconds
+    
+    // After jump duration, complete the jump
+    setTimeout(() => {
+      if (Math.random() < this.calculateJumpSuccessProbability(ship, destination)) {
+        this.completeJump(ship, destination, jumpStartTime);
+      } else {
+        this.failJump(ship, destination, JumpFailureReason.MALFUNCTION, jumpStartTime);
+      }
+    }, jumpDuration);
+    
+    return { success: true, newSystemId: destination.systemId };
+  }
+
+  /**
+   * Emergency jump (instant but higher risk)
+   */
+  executeEmergencyJump(ship: Ship, destination: JumpDestination): { 
+    success: boolean; 
+    failureReason?: JumpFailureReason 
+  } {
+    const shipId = ship.getId();
+    const emergencyCooldown = this.emergencyJumpCooldown.get(shipId) || 0;
+    
+    // Check emergency cooldown
+    if (Date.now() - emergencyCooldown < 60000) { // 1 minute cooldown
+      return { success: false, failureReason: JumpFailureReason.MALFUNCTION };
+    }
+    
+    // Set cooldown
+    this.emergencyJumpCooldown.set(shipId, Date.now());
+    
+    // Emergency jump has higher fuel cost and higher risk
+    const emergencyCost = destination.fuelCost * 1.5;
+    
+    if (ship.getState().fuelLevel < emergencyCost) {
+      return { success: false, failureReason: JumpFailureReason.INSUFFICIENT_FUEL };
+    }
+    
+    ship.getState().fuelLevel -= emergencyCost;
+    
+    // Higher risk of failure
+    if (Math.random() > 0.7) { // 30% failure rate
+      return { success: false, failureReason: JumpFailureReason.MALFUNCTION };
+    }
+    
+    // Log emergency jump
+    this.logJumpEvent({
+      shipId,
+      timestamp: Date.now(),
+      type: 'EMERGENCY_JUMP',
+      destination,
+      fuelUsed: emergencyCost,
+      duration: 2000, // Much faster
+      success: true,
+      details: 'Emergency hyperspace jump executed'
+    });
+    
+    return { success: true };
+  }
+
+  /**
+   * Get current FSD status for a ship
+   */
+  getFSDStatus(shipId: string): FSDStatus | null {
+    return this.fsdStatus.get(shipId) || null;
+  }
+
+  /**
+   * Update FSD heat and condition
+   */
+  updateFSDCondition(shipId: string, deltaTime: number): void {
+    const fsdStatus = this.fsdStatus.get(shipId);
+    if (!fsdStatus) return;
+    
+    // Cool down FSD
+    if (fsdStatus.heatLevel > 0) {
+      fsdStatus.heatLevel = Math.max(0, fsdStatus.heatLevel - deltaTime * 2); // Cool at 2 units/second
+    }
+    
+    // Check for overheating
+    fsdStatus.isOverheated = fsdStatus.heatLevel >= 100;
+    
+    // Cool down cooldown timer
+    if (fsdStatus.cooldownTime > 0) {
+      fsdStatus.cooldownTime = Math.max(0, fsdStatus.cooldownTime - deltaTime);
+    }
+    
+    // System integrity maintenance
+    if (Date.now() - fsdStatus.lastMaintenance > 3600000) { // 1 hour
+      fsdStatus.malfunctionLevel = Math.min(1, fsdStatus.malfunctionLevel + 0.01);
+      fsdStatus.lastMaintenance = Date.now();
+    }
+  }
+
+  /**
+   * Repair FSD system
+   */
+  repairFSD(ship: Ship, repairAmount: number): number {
+    const shipId = ship.getId();
+    const fsdStatus = this.fsdStatus.get(shipId)!;
+    const state = ship.getState();
+    
+    const spaceAvailable = 100 - state.fsdIntegrity;
+    const actualRepair = Math.min(repairAmount, spaceAvailable);
+    
+    state.fsdIntegrity += actualRepair;
+    fsdStatus.integrity = state.fsdIntegrity;
+    fsdStatus.malfunctionLevel = (100 - state.fsdIntegrity) / 100;
+    
+    return actualRepair;
+  }
+
+  /**
+   * Get jump events for a ship
+   */
+  getJumpEvents(shipId?: string, limit: number = 20): JumpEvent[] {
+    let events = this.jumpEvents;
+    
+    if (shipId) {
+      events = events.filter(event => event.shipId === shipId);
+    }
+    
+    return events.slice(-limit).reverse(); // Most recent first
+  }
+
+  /**
+   * Complete successful jump
+   */
+  private completeJump(ship: Ship, destination: JumpDestination, startTime: number): void {
+    const shipId = ship.getId();
+    
+    this.jumpState.set(shipId, JumpState.COOLING_DOWN);
+    
+    const cooldownTime = this.calculateCooldownTime(destination, ship);
+    const fsdStatus = this.fsdStatus.get(shipId)!;
+    fsdStatus.cooldownTime = cooldownTime;
+    
+    // Log completion
+    this.logJumpEvent({
+      shipId,
+      timestamp: Date.now(),
+      type: 'JUMP_COMPLETE',
+      destination,
+      fuelUsed: destination.fuelCost,
+      duration: Date.now() - startTime,
+      success: true,
+      details: `Successfully jumped to ${destination.systemName}`
+    });
+    
+    // Set cooldown timeout
+    setTimeout(() => {
+      this.jumpState.set(shipId, JumpState.IDLE);
+      fsdStatus.isJumpReady = false;
+      fsdStatus.chargeTime = 0;
+    }, cooldownTime * 1000);
+  }
+
+  /**
+   * Handle jump failure
+   */
+  private failJump(ship: Ship, destination: JumpDestination, reason: JumpFailureReason, startTime: number): void {
+    const shipId = ship.getId();
+    
+    this.jumpState.set(shipId, JumpState.ERROR);
+    
+    // Log failure
+    this.logJumpEvent({
+      shipId,
+      timestamp: Date.now(),
+      type: 'JUMP_FAILED',
+      destination,
+      fuelUsed: 0,
+      duration: Date.now() - startTime,
+      success: false,
+      failureReason: reason,
+      details: `Jump failed: ${reason}`
+    });
+    
+    // Reset after delay
+    setTimeout(() => {
+      this.jumpState.set(shipId, JumpState.IDLE);
+      const fsdStatus = this.fsdStatus.get(shipId)!;
+      fsdStatus.isCharging = false;
+      fsdStatus.isJumpReady = false;
+      fsdStatus.chargeTime = 0;
+      this.chargeProgress.set(shipId, 0);
+    }, 5000); // 5 second error state
+  }
+
+  /**
+   * Calculate jump fuel cost
+   */
+  private calculateJumpFuelCost(distance: number, ship: Ship): number {
+    const specs = ship.getSpecs();
+    const baseCost = 2;
+    const distanceCost = distance * distance * 0.05;
+    const massPenalty = specs.mass / 1000;
+    const efficiencyFactor = ship.getState().fsdIntegrity / 100;
+    
+    return Math.ceil((baseCost + distanceCost + massPenalty) / efficiencyFactor);
+  }
+
+  /**
+   * Calculate jump time
+   */
+  private calculateJumpTime(distance: number, ship: Ship): number {
+    const baseTime = 5; // Base 5 seconds
+    const distanceFactor = distance * 0.2;
+    const massFactor = ship.getSpecs().mass / 10000;
+    
+    return baseTime + distanceFactor + massFactor;
+  }
+
+  /**
+   * Calculate jump difficulty
+   */
+  private calculateJumpDifficulty(distance: number, maxRange: number): 'EASY' | 'MEDIUM' | 'HARD' | 'EXTREME' {
+    const ratio = distance / maxRange;
+    
+    if (ratio <= 0.3) return 'EASY';
+    if (ratio <= 0.6) return 'MEDIUM';
+    if (ratio <= 0.9) return 'HARD';
+    return 'EXTREME';
+  }
+
+  /**
+   * Calculate charge time for jump
+   */
+  private calculateChargeTime(destination: JumpDestination, ship: Ship): number {
+    const baseTime = 8; // Base 8 seconds
+    const distanceFactor = destination.distance * 0.3;
+    const difficultyFactor = destination.difficulty === 'EXTREME' ? 2 : 1;
+    
+    return (baseTime + distanceFactor) * difficultyFactor;
+  }
+
+  /**
+   * Calculate cooldown time after jump
+   */
+  private calculateCooldownTime(destination: JumpDestination, ship: Ship): number {
+    const baseCooldown = 10; // Base 10 seconds
+    const distanceFactor = destination.distance * 0.1;
+    
+    return baseCooldown + distanceFactor;
+  }
+
+  /**
+   * Calculate safe distance for approach
+   */
+  private calculateSafeDistance(destination: JumpDestination, ship: Ship): number {
+    const baseSafeDistance = 1000; // Base 1000 units
+    const rangePenalty = destination.distance * 100;
+    
+    return baseSafeDistance + rangePenalty;
+  }
+
+  /**
+   * Calculate overall jump success probability
+   */
+  private calculateJumpSuccessProbability(ship: Ship, destination: JumpDestination): number {
+    const fsdIntegrity = ship.getState().fsdIntegrity / 100;
+    const fuelLevel = ship.getState().fuelLevel / ship.getSpecs().fuelCapacity;
+    
+    let probability = fsdIntegrity * 0.9 + 0.1; // Base 90% for perfect FSD
+    
+    // Fuel level affects success
+    if (fuelLevel > 0.5) {
+      probability *= 1.1; // Bonus for good fuel level
+    } else if (fuelLevel < 0.2) {
+      probability *= 0.8; // Penalty for low fuel
+    }
+    
+    // Distance penalty
+    const distanceRatio = destination.distance / ship.getSpecs().jumpRange;
+    if (distanceRatio > 0.9) {
+      probability *= 0.7; // Significant penalty for maximum range
+    }
+    
+    return Math.max(0.1, Math.min(1.0, probability));
+  }
+
+  /**
+   * Check if ship can initiate jump
+   */
+  private canInitiateJump(ship: Ship, destination: JumpDestination): boolean {
+    const state = ship.getState();
+    const fsdStatus = this.fsdStatus.get(ship.getId())!;
+    
+    // Basic checks
+    if (state.fuelLevel < destination.fuelCost) return false;
+    if (state.fsdIntegrity < 25) return false;
+    if (fsdStatus.isOverheated) return false;
+    if (this.hasMassLock(ship)) return false;
+    
+    return true;
+  }
+
+  /**
+   * Check for mass lock condition
+   */
+  private hasMassLock(ship: Ship): boolean {
+    // Simplified mass lock detection
+    // In reality, this would check for nearby massive objects
+    return false;
+  }
+
+  /**
+   * Get current destination for charging ship
+   */
+  private getCurrentDestination(shipId: string): JumpDestination | null {
+    // This would typically be stored when charging starts
+    // For now, return null as we don't store the destination
+    return null;
+  }
+
+  /**
+   * Generate random system position (for demo purposes)
+   */
+  private generateSystemPosition(systemId: number): Vector3D {
+    return {
+      x: (systemId % 16) * 5000 + Math.random() * 1000,
+      y: Math.floor(systemId / 16) * 5000 + Math.random() * 1000,
+      z: (Math.random() - 0.5) * 1000
+    };
+  }
+
+  /**
+   * Generate random government type
+   */
+  private generateRandomGovernment(): string {
+    const governments = ['Democracy', 'Corporate State', 'Communism', 'Feudal', 'Anarchy'];
+    return governments[Math.floor(Math.random() * governments.length)];
+  }
+
+  /**
+   * Generate random economy type
+   */
+  private generateRandomEconomy(): string {
+    const economies = ['Agricultural', 'Industrial', 'Rich', 'Poor', 'Service'];
+    return economies[Math.floor(Math.random() * economies.length)];
+  }
+
+  /**
+   * Log jump event
+   */
+  private logJumpEvent(event: JumpEvent): void {
+    this.jumpEvents.push(event);
+    
+    // Maintain event log size
+    if (this.jumpEvents.length > this.maxEvents) {
+      this.jumpEvents = this.jumpEvents.slice(-this.maxEvents);
+    }
+  }
+
+  /**
+   * Initialize jump destinations (placeholder)
+   */
+  private initializeJumpDestinations(): void {
+    // This would be populated with actual system data
+    // For now, it's a placeholder for the method structure
+  }
+
+  /**
+   * Get jump system statistics
+   */
+  getStatistics(): object {
+    const stateCounts = new Map<string, number>();
+    for (const state of this.jumpState.values()) {
+      const count = stateCounts.get(state) || 0;
+      stateCounts.set(state, count + 1);
+    }
+    
+    return {
+      activeJumps: this.jumpState.size,
+      jumpStates: Object.fromEntries(stateCounts),
+      recentEvents: this.jumpEvents.length,
+      fsdStatus: Array.from(this.fsdStatus.values()).map(status => ({
+        averageIntegrity: status.integrity,
+        averageHeat: status.heatLevel,
+        overheatedCount: status.isOverheated ? 1 : 0
+      }))
+    };
+  }
+
+  /**
+   * Clean up data for removed ships
+   */
+  removeShip(shipId: string): void {
+    this.jumpState.delete(shipId);
+    this.fsdStatus.delete(shipId);
+    this.chargeProgress.delete(shipId);
+    this.emergencyJumpCooldown.delete(shipId);
+    
+    // Clean up jump events for this ship
+    this.jumpEvents = this.jumpEvents.filter(event => event.shipId !== shipId);
+  }
+}

@@ -1,0 +1,1107 @@
+/**
+ * AI and NPC Coordinator - Central integration hub for all AI systems
+ * Orchestrates ship AI, behavior systems, mission framework, and conversation systems
+ */
+
+import { Vector3D } from '../../types/index.js';
+import { ShipAIStateMachine } from './ShipAIStateMachine.js';
+import { AIBehaviorSystem, NPCType } from './AIBehaviorSystem.js';
+import { MissionFramework } from './MissionFramework.js';
+import { ConversationSystem, ConversationContext } from './ConversationSystem.js';
+import { ShipType } from '../models/Ship.js';
+
+export interface AIState {
+  system: 'ship_ai' | 'behavior' | 'missions' | 'conversation' | 'coordinator';
+  status: 'active' | 'idle' | 'error' | 'maintenance';
+  performance: number; // 0-1 efficiency rating
+  lastUpdate: number;
+  load: number; // 0-1 system load
+  errors: string[];
+}
+
+export interface NPCRegistry {
+  id: string;
+  type: NPCType;
+  shipType: ShipType;
+  position: Vector3D;
+  aiSystem: string;
+  behaviorSystem: string;
+  activeMissions: string[];
+  conversations: string[];
+  status: NPCStatus;
+  created: number;
+  lastActivity: number;
+}
+
+export enum NPCStatus {
+  ACTIVE = 'ACTIVE',
+  IDLE = 'IDLE',
+  BUSY = 'BUSY',
+  OFFLINE = 'OFFLINE',
+  ESCAPED = 'ESCAPED',
+  DESTROYED = 'DESTROYED'
+}
+
+export interface GlobalAIState {
+  totalNPCs: number;
+  activeNPCs: number;
+  aiUpdateRate: number;
+  behaviorComplexity: number; // 0-1
+  missionGenerationRate: number;
+  conversationActivity: number; // 0-1
+  systemPerformance: number; // 0-1
+  resourceUsage: number; // 0-1
+  playerProximity: number; // Average distance to player
+  factionRelations: Map<string, number>;
+  economicActivity: number; // 0-1
+  securityLevel: number; // 0-1
+  criminalActivity: number; // 0-1
+}
+
+export interface PlayerInteraction {
+  npcId: string;
+  type: 'conversation' | 'mission_offer' | 'trade_offer' | 'threat' | 'assistance';
+  timestamp: number;
+  outcome: 'positive' | 'neutral' | 'negative' | 'pending';
+  reputationChange: number;
+  relationshipChange: number;
+  consequences: string[];
+}
+
+export interface SystemEvent {
+  id: string;
+  type: 'mission_generated' | 'npc_spawned' | 'conversation_started' | 'mission_completed' | 'faction_event';
+  data: any;
+  timestamp: number;
+  priority: 'low' | 'medium' | 'high' | 'critical';
+  processed: boolean;
+  targetNPCs: string[];
+}
+
+export interface AIDecision {
+  npcId: string;
+  decision: string;
+  reasoning: string;
+  priority: number;
+  confidence: number; // 0-1
+  consequences: string[];
+  timestamp: number;
+}
+
+export interface NPCSpawnContext {
+  location: string;
+  faction: string;
+  system: string;
+  playerReputation: Map<string, number>;
+  economicConditions: any;
+  securityLevel: number;
+  timeOfDay: string;
+}
+
+/**
+ * Advanced AI and NPC Coordination System for Elite-style AI behavior
+ */
+export class AIandNPCCoordinator {
+  private shipAI: ShipAIStateMachine;
+  private behaviorSystem: AIBehaviorSystem;
+  private missionFramework: MissionFramework;
+  private conversationSystem: ConversationSystem;
+
+  private npcRegistry: Map<string, NPCRegistry>;
+  private activeInteractions: Map<string, PlayerInteraction>;
+  private systemEvents: Map<string, SystemEvent>;
+  private aiDecisions: AIDecision[];
+  
+  private globalAIState: GlobalAIState;
+  private systemStates: Map<string, AIState>;
+  
+  private eventCounter: number = 0;
+  private lastGlobalUpdate: number = 0;
+  private aiUpdateCounter: number = 0;
+
+  constructor() {
+    // Initialize all AI subsystems
+    this.shipAI = new ShipAIStateMachine();
+    this.behaviorSystem = new AIBehaviorSystem(this.shipAI);
+    this.missionFramework = new MissionFramework();
+    this.conversationSystem = new ConversationSystem();
+
+    // Initialize data structures
+    this.npcRegistry = new Map();
+    this.activeInteractions = new Map();
+    this.systemEvents = new Map();
+    this.aiDecisions = [];
+
+    // Initialize system states
+    this.systemStates = new Map();
+    this.initializeSystemStates();
+
+    // Initialize global AI state
+    this.globalAIState = this.initializeGlobalAIState();
+
+    // Set up inter-system communication
+    this.setupSystemConnections();
+  }
+
+  /**
+   * Update all AI systems (called every frame)
+   */
+  update(deltaTime: number, playerPosition: Vector3D, playerContext: any): void {
+    const startTime = performance.now();
+
+    this.aiUpdateCounter++;
+    this.lastGlobalUpdate += deltaTime;
+
+    // Update global AI state
+    this.updateGlobalAIState(deltaTime, playerPosition, playerContext);
+
+    // Update individual AI systems
+    this.updateShipAI(deltaTime);
+    this.updateBehaviorSystems(deltaTime);
+    this.updateMissionSystems(deltaTime);
+    this.updateConversationSystems(deltaTime);
+
+    // Process system events
+    this.processSystemEvents(deltaTime);
+
+    // Make global AI decisions
+    this.processGlobalAIDecisions(deltaTime);
+
+    // Clean up completed interactions and events
+    this.performCleanup(deltaTime);
+
+    // Performance monitoring
+    const processingTime = performance.now() - startTime;
+    this.updateSystemPerformance(processingTime);
+  }
+
+  /**
+   * Spawn new NPC with specified parameters
+   */
+  spawnNPC(spawnContext: NPCSpawnContext): string | null {
+    // Determine NPC type based on context
+    const npcType = this.determineNPCType(spawnContext);
+    if (!npcType) return null;
+
+    // Generate ship type appropriate for NPC type and location
+    const shipType = this.selectShipType(npcType, spawnContext);
+    
+    // Create AI ship
+    const npcId = `npc_${++this.eventCounter}`;
+    const shipId = this.shipAI.initializeShip({
+      id: npcId,
+      type: shipType,
+      position: this.generateSpawnPosition(spawnContext),
+      velocity: { x: 0, y: 0, z: 0 },
+      health: 100,
+      shields: 100,
+      fuel: 100,
+      credits: this.calculateStartingCredits(npcType),
+      cargo: new Map(),
+      targetId: null
+    });
+
+    if (!shipId) return null;
+
+    // Initialize behavior system
+    this.behaviorSystem.initializeNPC(npcId, npcType, shipType);
+
+    // Register NPC
+    const registry: NPCRegistry = {
+      id: npcId,
+      type: npcType,
+      shipType,
+      position: this.generateSpawnPosition(spawnContext),
+      aiSystem: shipId,
+      behaviorSystem: npcId,
+      activeMissions: [],
+      conversations: [],
+      status: NPCStatus.ACTIVE,
+      created: Date.now(),
+      lastActivity: Date.now()
+    };
+
+    this.npcRegistry.set(npcId, registry);
+
+    // Trigger spawn event
+    this.triggerSystemEvent({
+      type: 'npc_spawned',
+      data: { npcId, type: npcType, location: spawnContext.location },
+      priority: 'medium'
+    }, [npcId]);
+
+    return npcId;
+  }
+
+  /**
+   * Handle player interaction with NPC
+   */
+  handlePlayerInteraction(npcId: string, interactionType: 'conversation' | 'mission' | 'trade'): PlayerInteractionResult {
+    const npc = this.npcRegistry.get(npcId);
+    if (!npc || npc.status !== NPCStatus.ACTIVE) {
+      return { success: false, reason: 'NPC not available' };
+    }
+
+    const interaction: PlayerInteraction = {
+      npcId,
+      type: interactionType,
+      timestamp: Date.now(),
+      outcome: 'pending',
+      reputationChange: 0,
+      relationshipChange: 0,
+      consequences: []
+    };
+
+    let result: PlayerInteractionResult;
+
+    switch (interactionType) {
+      case 'conversation':
+        result = this.handleConversationInteraction(npcId);
+        break;
+      case 'mission':
+        result = this.handleMissionInteraction(npcId);
+        break;
+      case 'trade':
+        result = this.handleTradeInteraction(npcId);
+        break;
+      default:
+        result = { success: false, reason: 'Unknown interaction type' };
+    }
+
+    // Update interaction record
+    if (result.success) {
+      interaction.outcome = 'positive';
+      interaction.reputationChange = result.reputationChange || 0;
+      interaction.relationshipChange = result.relationshipChange || 0;
+      interaction.consequences = result.consequences || [];
+    } else {
+      interaction.outcome = 'negative';
+    }
+
+    this.activeInteractions.set(`${npcId}_${Date.now()}`, interaction);
+    npc.lastActivity = Date.now();
+
+    return result;
+  }
+
+  /**
+   * Start conversation with NPC
+   */
+  startConversation(npcId: string, playerContext: any): string | null {
+    const npc = this.npcRegistry.get(npcId);
+    if (!npc || npc.status !== NPCStatus.ACTIVE) {
+      return null;
+    }
+
+    // Create conversation context
+    const conversationContext: ConversationContext = {
+      location: 'station',
+      situation: 'formal',
+      urgency: 0.3,
+      relationship: this.getPlayerNPCRelationship(npcId)
+    };
+
+    // Start conversation
+    const conversationId = this.conversationSystem.startConversation(npcId, 'player', conversationContext);
+    
+    if (conversationId) {
+      npc.conversations.push(conversationId);
+      this.triggerSystemEvent({
+        type: 'conversation_started',
+        data: { npcId, conversationId },
+        priority: 'medium'
+      }, [npcId]);
+    }
+
+    return conversationId;
+  }
+
+  /**
+   * Process conversation input
+   */
+  processConversation(conversationId: string, playerInput: string): ConversationUpdate | null {
+    const update = this.conversationSystem.processPlayerInput(conversationId, playerInput);
+    
+    // Update NPC activity
+    const conversation = this.conversationSystem as any; // Access internal conversation data
+    const npcId = this.findNPCByConversation(conversationId);
+    if (npcId) {
+      const npc = this.npcRegistry.get(npcId);
+      if (npc) {
+        npc.lastActivity = Date.now();
+      }
+    }
+
+    // Trigger events based on conversation update
+    if (update.missionOffers.length > 0) {
+      this.triggerSystemEvent({
+        type: 'mission_generated',
+        data: { missionOffers: update.missionOffers, conversationId },
+        priority: 'high'
+      }, [npcId || '']);
+    }
+
+    return update;
+  }
+
+  /**
+   * Generate missions for players based on global context
+   */
+  generateMissions(context: any): string[] {
+    const missionIds: string[] = [];
+    
+    // Generate procedural missions
+    const mission = this.missionFramework.generateMission(context);
+    if (mission) {
+      missionIds.push(mission.id);
+    }
+
+    // Generate storyline missions
+    const storylineMissions = ['main_story']; // Available storylines
+    storylineMissions.forEach(storylineId => {
+      const storyMission = this.missionFramework.generateStorylineMission(storylineId, context);
+      if (storyMission) {
+        missionIds.push(storyMission.id);
+      }
+    });
+
+    // Trigger mission generation events
+    missionIds.forEach(missionId => {
+      this.triggerSystemEvent({
+        type: 'mission_generated',
+        data: { missionId },
+        priority: 'medium'
+      }, []);
+    });
+
+    return missionIds;
+  }
+
+  /**
+   * Update global AI state and metrics
+   */
+  private updateGlobalAIState(deltaTime: number, playerPosition: Vector3D, playerContext: any): void {
+    // Update NPC counts
+    this.globalAIState.totalNPCs = this.npcRegistry.size;
+    this.globalAIState.activeNPCs = Array.from(this.npcRegistry.values())
+      .filter(npc => npc.status === NPCStatus.ACTIVE).length;
+
+    // Calculate AI update rate
+    this.globalAIState.aiUpdateRate = this.aiUpdateCounter / this.lastGlobalUpdate;
+
+    // Assess behavior complexity
+    this.globalAIState.behaviorComplexity = this.calculateBehaviorComplexity();
+
+    // Calculate mission generation rate
+    this.globalAIState.missionGenerationRate = this.missionFramework.getSystemStatus().availableMissions / 
+                                               Math.max(1, this.globalAIState.totalNPCs);
+
+    // Assess conversation activity
+    this.globalAIState.conversationActivity = this.conversationSystem.getSystemStatus().activeConversations / 
+                                              Math.max(1, this.globalAIState.activeNPCs);
+
+    // Calculate system performance
+    this.globalAIState.systemPerformance = this.calculateSystemPerformance();
+
+    // Assess resource usage
+    this.globalAIState.resourceUsage = this.calculateResourceUsage();
+
+    // Calculate average player proximity
+    this.globalAIState.playerProximity = this.calculateAveragePlayerProximity(playerPosition);
+
+    // Update faction relations
+    this.updateFactionRelations();
+
+    // Assess economic and security activity
+    this.globalAIState.economicActivity = this.assessEconomicActivity();
+    this.globalAIState.securityLevel = this.assessSecurityLevel();
+    this.globalAIState.criminalActivity = this.assessCriminalActivity();
+  }
+
+  /**
+   * Update ship AI systems
+   */
+  private updateShipAI(deltaTime: number): void {
+    this.shipAI.update(deltaTime);
+    
+    // Update system state
+    this.updateSystemState('ship_ai', 'active', this.calculateAISubsystemLoad('ship_ai'));
+  }
+
+  /**
+   * Update behavior systems
+   */
+  private updateBehaviorSystems(deltaTime: number): void {
+    this.npcRegistry.forEach(npc => {
+      if (npc.status === NPCStatus.ACTIVE) {
+        this.behaviorSystem.updateNPC(npc.id, deltaTime);
+      }
+    });
+    
+    this.updateSystemState('behavior', 'active', this.calculateAISubsystemLoad('behavior'));
+  }
+
+  /**
+   * Update mission systems
+   */
+  private updateMissionSystems(deltaTime: number): void {
+    // Mission framework has its own internal updates
+    this.updateSystemState('missions', 'active', this.calculateAISubsystemLoad('missions'));
+  }
+
+  /**
+   * Update conversation systems
+   */
+  private updateConversationSystems(deltaTime: number): void {
+    this.conversationSystem.updateConversations(deltaTime);
+    this.updateSystemState('conversation', 'active', this.calculateAISubsystemLoad('conversation'));
+  }
+
+  /**
+   * Process system events
+   */
+  private processSystemEvents(deltaTime: number): void {
+    const eventsToProcess = Array.from(this.systemEvents.values())
+      .filter(event => !event.processed)
+      .sort((a, b) => this.getPriorityValue(b.priority) - this.getPriorityValue(a.priority));
+
+    eventsToProcess.forEach(event => {
+      this.processEvent(event);
+      event.processed = true;
+    });
+  }
+
+  /**
+   * Process individual system event
+   */
+  private processEvent(event: SystemEvent): void {
+    switch (event.type) {
+      case 'mission_generated':
+        this.processMissionGenerationEvent(event);
+        break;
+      case 'npc_spawned':
+        this.processNPCSpawnEvent(event);
+        break;
+      case 'conversation_started':
+        this.processConversationStartEvent(event);
+        break;
+      case 'mission_completed':
+        this.processMissionCompletionEvent(event);
+        break;
+      case 'faction_event':
+        this.processFactionEvent(event);
+        break;
+    }
+  }
+
+  /**
+   * Process global AI decisions
+   */
+  private processGlobalAIDecisions(deltaTime: number): void {
+    // Make global decisions based on current state
+    const decisions = this.generateGlobalAIDecisions();
+    
+    decisions.forEach(decision => {
+      this.executeAIDecision(decision);
+      this.aiDecisions.push(decision);
+    });
+
+    // Keep only recent decisions
+    if (this.aiDecisions.length > 100) {
+      this.aiDecisions = this.aiDecisions.slice(-50);
+    }
+  }
+
+  /**
+   * Handle conversation interaction
+   */
+  private handleConversationInteraction(npcId: string): PlayerInteractionResult {
+    const conversationId = this.startConversation(npcId, {});
+    if (conversationId) {
+      return {
+        success: true,
+        conversationId,
+        reputationChange: 0.1,
+        relationshipChange: 0.05,
+        consequences: ['conversation_started']
+      };
+    }
+    
+    return { success: false, reason: 'Failed to start conversation' };
+  }
+
+  /**
+   * Handle mission interaction
+   */
+  private handleMissionInteraction(npcId: string): PlayerInteractionResult {
+    const npc = this.npcRegistry.get(npcId);
+    if (!npc) return { success: false, reason: 'NPC not found' };
+
+    // Check if NPC has missions to offer
+    const missionOffer = this.behaviorSystem.hasMissionForPlayer(npcId, 50);
+    if (missionOffer) {
+      return {
+        success: true,
+        missionOffer,
+        reputationChange: 0.2,
+        relationshipChange: 0.1,
+        consequences: ['mission_offered']
+      };
+    }
+
+    return { success: false, reason: 'No missions available' };
+  }
+
+  /**
+   * Handle trade interaction
+   */
+  private handleTradeInteraction(npcId: string): PlayerInteractionResult {
+    const npc = this.npcRegistry.get(npcId);
+    if (!npc || npc.type !== NPCType.TRADER) {
+      return { success: false, reason: 'NPC is not a trader' };
+    }
+
+    // Generate trade offer
+    const tradeOffer = this.behaviorSystem.generateTradeOffer(npcId, new Map());
+    if (tradeOffer) {
+      return {
+        success: true,
+        tradeOffer,
+        reputationChange: 0.05,
+        relationshipChange: 0.02,
+        consequences: ['trade_offered']
+      };
+    }
+
+    return { success: false, reason: 'No trade opportunities available' };
+  }
+
+  /**
+   * Initialize system states
+   */
+  private initializeSystemStates(): void {
+    const systems = ['ship_ai', 'behavior', 'missions', 'conversation', 'coordinator'];
+    systems.forEach(system => {
+      this.systemStates.set(system, {
+        system: system as any,
+        status: 'idle',
+        performance: 1.0,
+        lastUpdate: 0,
+        load: 0.0,
+        errors: []
+      });
+    });
+  }
+
+  /**
+   * Initialize global AI state
+   */
+  private initializeGlobalAIState(): GlobalAIState {
+    return {
+      totalNPCs: 0,
+      activeNPCs: 0,
+      aiUpdateRate: 0,
+      behaviorComplexity: 0.5,
+      missionGenerationRate: 0,
+      conversationActivity: 0,
+      systemPerformance: 1.0,
+      resourceUsage: 0.1,
+      playerProximity: 1000,
+      factionRelations: new Map(),
+      economicActivity: 0.5,
+      securityLevel: 0.7,
+      criminalActivity: 0.2
+    };
+  }
+
+  /**
+   * Set up inter-system connections
+   */
+  private setupSystemConnections(): void {
+    // Connect mission framework to behavior system
+    // Connect conversation system to behavior system
+    // This would establish event handlers and data sharing
+  }
+
+  /**
+   * Generate spawn position for NPC
+   */
+  private generateSpawnPosition(context: NPCSpawnContext): Vector3D {
+    // Generate appropriate position based on location type
+    return {
+      x: Math.random() * 1000,
+      y: Math.random() * 1000,
+      z: Math.random() * 1000
+    };
+  }
+
+  /**
+   * Determine NPC type based on spawn context
+   */
+  private determineNPCType(context: NPCSpawnContext): NPCType | null {
+    // Weight NPC types based on location and conditions
+    const weights = this.calculateNPCTypeWeights(context);
+    const totalWeight = Object.values(weights).reduce((sum, weight) => sum + weight, 0);
+    
+    let random = Math.random() * totalWeight;
+    for (const [type, weight] of Object.entries(weights)) {
+      random -= weight;
+      if (random <= 0) {
+        return type as NPCType;
+      }
+    }
+    
+    return NPCType.TRADER; // Fallback
+  }
+
+  /**
+   * Calculate NPC type spawn weights
+   */
+  private calculateNPCTypeWeights(context: NPCSpawnContext): Record<string, number> {
+    const weights: Record<string, number> = {
+      [NPCType.TRADER]: 0.4,
+      [NPCType.POLICE]: 0.2,
+      [NPCType.PIRATE]: 0.1,
+      [NPCType.MISSION_GIVER]: 0.15,
+      [NPCType.PATROL]: 0.1,
+      [NPCType.EXPLORER]: 0.05
+    };
+
+    // Adjust weights based on context
+    if (context.securityLevel > 0.8) {
+      weights[NPCType.POLICE] *= 2;
+      weights[NPCType.PIRATE] *= 0.5;
+    }
+
+    if (context.economicConditions) {
+      weights[NPCType.TRADER] *= 1.5;
+    }
+
+    return weights;
+  }
+
+  /**
+   * Select appropriate ship type for NPC
+   */
+  private selectShipType(npcType: NPCType, context: NPCSpawnContext): ShipType {
+    switch (npcType) {
+      case NPCType.TRADER:
+        return Math.random() < 0.6 ? ShipType.HAULER : ShipType.BULK_CARRIER;
+      case NPCType.POLICE:
+        return ShipType.VIPER;
+      case NPCType.PIRATE:
+        return ShipType.MAMBA;
+      case NPCType.MISSION_GIVER:
+        return ShipType.COBRA_MK3;
+      case NPCType.PATROL:
+        return ShipType.KRAIT;
+      case NPCType.EXPLORER:
+        return ShipType.ASP_EXPLORER;
+      default:
+        return ShipType.COBRA_MK3;
+    }
+  }
+
+  /**
+   * Calculate starting credits for NPC
+   */
+  private calculateStartingCredits(npcType: NPCType): number {
+    switch (npcType) {
+      case NPCType.TRADER:
+        return 10000 + Math.random() * 50000;
+      case NPCType.POLICE:
+        return 5000 + Math.random() * 20000;
+      case NPCType.PIRATE:
+        return 2000 + Math.random() * 30000;
+      case NPCType.MISSION_GIVER:
+        return 15000 + Math.random() * 40000;
+      default:
+        return 5000;
+    }
+  }
+
+  /**
+   * Trigger system event
+   */
+  private triggerSystemEvent(event: Omit<SystemEvent, 'id' | 'timestamp' | 'processed' | 'targetNPCs'>, targetNPCs: string[] = []): string {
+    const eventId = `event_${++this.eventCounter}`;
+    const fullEvent: SystemEvent = {
+      id: eventId,
+      ...event,
+      timestamp: Date.now(),
+      processed: false,
+      targetNPCs
+    };
+    
+    this.systemEvents.set(eventId, fullEvent);
+    return eventId;
+  }
+
+  /**
+   * Process mission generation event
+   */
+  private processMissionGenerationEvent(event: SystemEvent): void {
+    // Handle mission generation consequences
+  }
+
+  /**
+   * Process NPC spawn event
+   */
+  private processNPCSpawnEvent(event: SystemEvent): void {
+    // Handle NPC spawn consequences
+  }
+
+  /**
+   * Process conversation start event
+   */
+  private processConversationStartEvent(event: SystemEvent): void {
+    // Handle conversation start consequences
+  }
+
+  /**
+   * Process mission completion event
+   */
+  private processMissionCompletionEvent(event: SystemEvent): void {
+    // Handle mission completion consequences
+  }
+
+  /**
+   * Process faction event
+   */
+  private processFactionEvent(event: SystemEvent): void {
+    // Handle faction event consequences
+  }
+
+  /**
+   * Generate global AI decisions
+   */
+  private generateGlobalAIDecisions(): AIDecision[] {
+    const decisions: AIDecision[] = [];
+
+    // Decide to spawn new NPCs based on player activity
+    if (this.globalAIState.activeNPCs < 10 && Math.random() < 0.01) {
+      decisions.push({
+        npcId: 'global',
+        decision: 'spawn_npc',
+        reasoning: 'Low NPC population detected',
+        priority: 3,
+        confidence: 0.7,
+        consequences: ['npc_spawn'],
+        timestamp: Date.now()
+      });
+    }
+
+    // Decide to generate missions based on activity
+    if (this.missionFramework.getSystemStatus().availableMissions < 5 && Math.random() < 0.005) {
+      decisions.push({
+        npcId: 'global',
+        decision: 'generate_missions',
+        reasoning: 'Low mission availability',
+        priority: 4,
+        confidence: 0.8,
+        consequences: ['mission_generation'],
+        timestamp: Date.now()
+      });
+    }
+
+    return decisions;
+  }
+
+  /**
+   * Execute AI decision
+   */
+  private executeAIDecision(decision: AIDecision): void {
+    switch (decision.decision) {
+      case 'spawn_npc':
+        // Spawn new NPC using spawn context
+        break;
+      case 'generate_missions':
+        // Generate new missions
+        break;
+      // Add other decision types
+    }
+  }
+
+  /**
+   * Calculate behavior complexity
+   */
+  private calculateBehaviorComplexity(): number {
+    let complexity = 0;
+    let activeBehaviors = 0;
+    
+    this.npcRegistry.forEach(npc => {
+      if (npc.status === NPCStatus.ACTIVE) {
+        activeBehaviors++;
+        // Higher complexity for combat-capable NPCs
+        if (npc.type === NPCType.POLICE || npc.type === NPCType.PIRATE) {
+          complexity += 0.8;
+        } else if (npc.type === NPCType.MISSION_GIVER) {
+          complexity += 0.6;
+        } else {
+          complexity += 0.4;
+        }
+      }
+    });
+    
+    return activeBehaviors > 0 ? complexity / activeBehaviors : 0;
+  }
+
+  /**
+   * Calculate system performance
+   */
+  private calculateSystemPerformance(): number {
+    const systems = Array.from(this.systemStates.values());
+    if (systems.length === 0) return 1.0;
+    
+    const avgPerformance = systems.reduce((sum, system) => sum + system.performance, 0) / systems.length;
+    return Math.max(0, Math.min(1, avgPerformance));
+  }
+
+  /**
+   * Calculate resource usage
+   */
+  private calculateResourceUsage(): number {
+    let usage = 0;
+    
+    // Calculate based on active NPCs and conversations
+    usage += this.globalAIState.activeNPCs * 0.01;
+    usage += this.conversationSystem.getSystemStatus().activeConversations * 0.02;
+    usage += this.missionFramework.getSystemStatus().activeMissions * 0.005;
+    
+    return Math.min(1.0, usage);
+  }
+
+  /**
+   * Calculate average player proximity
+   */
+  private calculateAveragePlayerProximity(playerPosition: Vector3D): number {
+    if (this.npcRegistry.size === 0) return 1000;
+    
+    let totalDistance = 0;
+    let npcCount = 0;
+    
+    this.npcRegistry.forEach(npc => {
+      if (npc.status === NPCStatus.ACTIVE) {
+        const distance = this.calculateDistance(playerPosition, npc.position);
+        totalDistance += distance;
+        npcCount++;
+      }
+    });
+    
+    return npcCount > 0 ? totalDistance / npcCount : 1000;
+  }
+
+  /**
+   * Update faction relations
+   */
+  private updateFactionRelations(): void {
+    // Update faction relations based on player actions and NPC activities
+    // This is a simplified implementation
+  }
+
+  /**
+   * Assess economic activity
+   */
+  private assessEconomicActivity(): number {
+    const traders = Array.from(this.npcRegistry.values())
+      .filter(npc => npc.type === NPCType.TRADER && npc.status === NPCStatus.ACTIVE).length;
+    
+    return Math.min(1.0, traders / Math.max(1, this.npcRegistry.size * 0.4));
+  }
+
+  /**
+   * Assess security level
+   */
+  private assessSecurityLevel(): number {
+    const police = Array.from(this.npcRegistry.values())
+      .filter(npc => npc.type === NPCType.POLICE && npc.status === NPCStatus.ACTIVE).length;
+    
+    return Math.min(1.0, police / Math.max(1, this.npcRegistry.size * 0.3));
+  }
+
+  /**
+   * Assess criminal activity
+   */
+  private assessCriminalActivity(): number {
+    const pirates = Array.from(this.npcRegistry.values())
+      .filter(npc => npc.type === NPCType.PIRATE && npc.status === NPCStatus.ACTIVE).length;
+    
+    return Math.min(1.0, pirates / Math.max(1, this.npcRegistry.size * 0.2));
+  }
+
+  /**
+   * Calculate AI subsystem load
+   */
+  private calculateAISubsystemLoad(subsystem: string): number {
+    switch (subsystem) {
+      case 'ship_ai':
+        return this.npcRegistry.size * 0.01;
+      case 'behavior':
+        return this.npcRegistry.size * 0.02;
+      case 'missions':
+        return this.missionFramework.getSystemStatus().totalMissions * 0.005;
+      case 'conversation':
+        return this.conversationSystem.getSystemStatus().activeConversations * 0.03;
+      default:
+        return 0.1;
+    }
+  }
+
+  /**
+   * Update system state
+   */
+  private updateSystemState(system: string, status: 'active' | 'idle' | 'error' | 'maintenance', load: number): void {
+    const state = this.systemStates.get(system);
+    if (state) {
+      state.status = status;
+      state.lastUpdate = Date.now();
+      state.load = load;
+      state.performance = Math.max(0, 1.0 - load);
+    }
+  }
+
+  /**
+   * Update system performance metrics
+   */
+  private updateSystemPerformance(processingTime: number): void {
+    const maxProcessingTime = 16; // 60 FPS target
+    const performance = Math.max(0, 1.0 - (processingTime / maxProcessingTime));
+    
+    this.systemStates.forEach(state => {
+      state.performance = performance;
+    });
+  }
+
+  /**
+   * Get priority numeric value
+   */
+  private getPriorityValue(priority: 'low' | 'medium' | 'high' | 'critical'): number {
+    switch (priority) {
+      case 'low': return 1;
+      case 'medium': return 2;
+      case 'high': return 3;
+      case 'critical': return 4;
+      default: return 1;
+    }
+  }
+
+  /**
+   * Find NPC by conversation ID
+   */
+  private findNPCByConversation(conversationId: string): string | null {
+    for (const npc of this.npcRegistry.values()) {
+      if (npc.conversations.includes(conversationId)) {
+        return npc.id;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Get player-NPC relationship
+   */
+  private getPlayerNPCRelationship(npcId: string): string {
+    // Simplified relationship assessment
+    return 'neutral';
+  }
+
+  /**
+   * Perform cleanup of old data
+   */
+  private performCleanup(deltaTime: number): void {
+    // Clean up old system events
+    const cutoffTime = Date.now() - 300000; // 5 minutes
+    Array.from(this.systemEvents.keys()).forEach(eventId => {
+      const event = this.systemEvents.get(eventId);
+      if (event && event.timestamp < cutoffTime) {
+        this.systemEvents.delete(eventId);
+      }
+    });
+
+    // Clean up old interactions
+    Array.from(this.activeInteractions.keys()).forEach(interactionId => {
+      const interaction = this.activeInteractions.get(interactionId);
+      if (interaction && (Date.now() - interaction.timestamp > 600000)) { // 10 minutes
+        this.activeInteractions.delete(interactionId);
+      }
+    });
+  }
+
+  /**
+   * Calculate distance between two positions
+   */
+  private calculateDistance(pos1: Vector3D, pos2: Vector3D): number {
+    const dx = pos2.x - pos1.x;
+    const dy = pos2.y - pos1.y;
+    const dz = pos2.z - pos1.z;
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  /**
+   * Get global AI state
+   */
+  getGlobalAIState(): GlobalAIState {
+    return { ...this.globalAIState };
+  }
+
+  /**
+   * Get NPC registry
+   */
+  getNPCRegistry(): NPCRegistry[] {
+    return Array.from(this.npcRegistry.values());
+  }
+
+  /**
+   * Get system states
+   */
+  getSystemStates(): AIState[] {
+    return Array.from(this.systemStates.values());
+  }
+
+  /**
+   * Get recent AI decisions
+   */
+  getRecentDecisions(): AIDecision[] {
+    return this.aiDecisions.slice(-10);
+  }
+
+  /**
+   * Get active interactions
+   */
+  getActiveInteractions(): PlayerInteraction[] {
+    return Array.from(this.activeInteractions.values());
+  }
+
+  /**
+   * Get system summary
+   */
+  getSystemSummary(): {
+    globalState: GlobalAIState;
+    npcCount: number;
+    activeConversations: number;
+    availableMissions: number;
+    systemPerformance: number;
+    recentDecisions: number;
+  } {
+    return {
+      globalState: this.getGlobalAIState(),
+      npcCount: this.npcRegistry.size,
+      activeConversations: this.conversationSystem.getSystemStatus().activeConversations,
+      availableMissions: this.missionFramework.getSystemStatus().availableMissions,
+      systemPerformance: this.globalAIState.systemPerformance,
+      recentDecisions: this.aiDecisions.length
+    };
+  }
+}
+
+// Type definitions for return values
+interface PlayerInteractionResult {
+  success: boolean;
+  reason?: string;
+  conversationId?: string;
+  missionOffer?: any;
+  tradeOffer?: any;
+  reputationChange?: number;
+  relationshipChange?: number;
+  consequences?: string[];
+}

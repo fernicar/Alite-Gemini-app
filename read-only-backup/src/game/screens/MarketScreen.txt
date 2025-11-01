@@ -1,0 +1,836 @@
+/**
+ * Market Screen - Trading interface for buying and selling commodities
+ * Shows available goods, prices, and allows transactions
+ */
+
+import { BaseScreen, UIManager, ScreenId } from '../ui/UIManager';
+import { UIPanel, UIButton, UIText, UIProgressBar, UIButtonOptions, UIPanelOptions } from '../ui/components/UIBasicComponents';
+import { Market } from '../models/Market';
+import { Commander } from '../models/Commander';
+import { Vector2D } from '../../types/index';
+
+export interface MarketData {
+  market: Market;
+  commander: Commander;
+  systemName: string;
+  stationName: string;
+}
+
+export interface CommodityListing {
+  name: string;
+  available: number;
+  price: number;
+  averagePrice: number;
+  category: string;
+  description: string;
+}
+
+export class MarketScreen extends BaseScreen {
+  private data: MarketData;
+  private marketPanel: UIPanel;
+  private infoPanel: UIPanel;
+  private cargoPanel: UIPanel;
+  private controlPanel: UIPanel;
+  private commodityButtons: Map<string, UIButton> = new Map();
+  private selectedCommodity?: CommodityListing;
+  private commodityList: UIText[];
+  private priceDisplay: UIText;
+  private stockDisplay: UIText;
+  private avgPriceDisplay: UIText;
+  private buyPriceDisplay: UIText;
+  private sellPriceDisplay: UIText;
+  private cargoList: UIText[];
+  private creditsDisplay: UIText;
+  private cargoSpaceDisplay: UIText;
+  private buyAmountInput: UIInputField;
+  private buyButton: UIButton;
+  private sellButton: UIButton;
+  private currentPage: number = 0;
+  private itemsPerPage: number = 10;
+  private sortBy: 'name' | 'price' | 'available' = 'name';
+  private sortOrder: 'asc' | 'desc' = 'asc';
+
+  constructor(data: MarketData) {
+    const rootComponent = new UIPanel('market-root', {
+      width: 800,
+      height: 600,
+      backgroundColor: '#1a202c',
+      borderWidth: 0,
+      shadow: false,
+      opacity: 1.0
+    });
+
+    super('market', 'Market', rootComponent);
+    this.data = data;
+
+    this.initializeUI();
+  }
+
+  private initializeUI(): void {
+    const root = this.component as UIPanel;
+
+    // Market Panel (main area)
+    this.marketPanel = new UIPanel('commodities', {
+      width: 400,
+      height: 480,
+      backgroundColor: '#2d3748',
+      borderColor: '#40e0ff',
+      borderWidth: 2,
+      cornerRadius: 0,
+      shadow: true,
+      opacity: 0.9
+    });
+    this.marketPanel.position = { x: 20, y: 20 };
+
+    // Info Panel (top right)
+    this.infoPanel = new UIPanel('info', {
+      width: 200,
+      height: 200,
+      backgroundColor: '#2d3748',
+      borderColor: '#40e0ff',
+      borderWidth: 2,
+      cornerRadius: 0,
+      shadow: true,
+      opacity: 0.9
+    });
+    this.infoPanel.position = { x: 440, y: 20 };
+
+    // Cargo Panel (bottom right)
+    this.cargoPanel = new UIPanel('cargo', {
+      width: 200,
+      height: 280,
+      backgroundColor: '#2d3748',
+      borderColor: '#40e0ff',
+      borderWidth: 2,
+      cornerRadius: 0,
+      shadow: true,
+      opacity: 0.9
+    });
+    this.cargoPanel.position = { x: 440, y: 240 };
+
+    // Control Panel (bottom)
+    this.controlPanel = new UIPanel('controls', {
+      width: 780,
+      height: 80,
+      backgroundColor: '#2d3748',
+      borderColor: '#40e0ff',
+      borderWidth: 2,
+      cornerRadius: 0,
+      shadow: true,
+      opacity: 0.9
+    });
+    this.controlPanel.position = { x: 10, y: 500 };
+
+    // Initialize panels
+    this.initializeMarketPanel();
+    this.initializeInfoPanel();
+    this.initializeCargoPanel();
+    this.initializeControlPanel();
+
+    // Add panels to root
+    root.addChild(this.marketPanel);
+    root.addChild(this.infoPanel);
+    root.addChild(this.cargoPanel);
+    root.addChild(this.controlPanel);
+  }
+
+  private initializeMarketPanel(): void {
+    // Title
+    const title = new UIText('market-title', 'COMMODITIES', {
+      fontSize: 16,
+      fontFamily: 'Arial, sans-serif',
+      color: '#40e0ff',
+      textAlign: 'center',
+      bold: true
+    });
+    title.position = { x: 20, y: 10 };
+    title.size = { x: 360, y: 20 };
+    this.marketPanel.addChild(title);
+
+    // Sort controls
+    this.initializeSortControls();
+
+    // Commodity list
+    this.commodityList = [];
+    this.populateCommodityList();
+  }
+
+  private initializeSortControls(): void {
+    // Sort by name
+    const sortNameButton = new UIButton('sort-name', 'NAME', {
+      width: 80,
+      height: 25,
+      backgroundColor: '#4a5568',
+      textColor: '#ffffff',
+      fontSize: 10,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.sortBy = 'name');
+    sortNameButton.position = { x: 20, y: 40 };
+    this.marketPanel.addChild(sortNameButton);
+
+    // Sort by price
+    const sortPriceButton = new UIButton('sort-price', 'PRICE', {
+      width: 80,
+      height: 25,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 10,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.sortBy = 'price');
+    sortPriceButton.position = { x: 110, y: 40 };
+    this.marketPanel.addChild(sortPriceButton);
+
+    // Sort by availability
+    const sortAvailableButton = new UIButton('sort-available', 'STOCK', {
+      width: 80,
+      height: 25,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 10,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.sortBy = 'available');
+    sortAvailableButton.position = { x: 200, y: 40 };
+    this.marketPanel.addChild(sortAvailableButton);
+
+    // Order toggle
+    const orderButton = new UIButton('sort-order', 'ASC', {
+      width: 50,
+      height: 25,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 10,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.toggleSortOrder());
+    orderButton.position = { x: 290, y: 40 };
+    this.marketPanel.addChild(orderButton);
+
+    // Page controls
+    const prevPageButton = new UIButton('prev-page', '<', {
+      width: 30,
+      height: 25,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.previousPage());
+    prevPageButton.position = { x: 350, y: 40 };
+    this.marketPanel.addChild(prevPageButton);
+
+    const nextPageButton = new UIButton('next-page', '>', {
+      width: 30,
+      height: 25,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.nextPage());
+    nextPageButton.position = { x: 350, y: 70 };
+    this.marketPanel.addChild(nextPageButton);
+  }
+
+  private populateCommodityList(): void {
+    // Generate mock commodities for demonstration
+    const commodities = this.generateMockCommodities();
+    
+    // Clear existing list
+    this.commodityList.forEach(text => this.marketPanel.removeChild(text));
+    this.commodityList = [];
+    this.commodityButtons.clear();
+
+    // Add commodities for current page
+    const startIndex = this.currentPage * this.itemsPerPage;
+    const endIndex = Math.min(startIndex + this.itemsPerPage, commodities.length);
+    const pageCommodities = commodities.slice(startIndex, endIndex);
+
+    pageCommodities.forEach((commodity, index) => {
+      const button = new UIButton(`commodity-${commodity.name}`, '', {
+        width: 360,
+        height: 30,
+        backgroundColor: '#1a202c',
+        textColor: 'transparent',
+        borderColor: '#4a5568',
+        borderWidth: 1
+      }, () => this.selectCommodity(commodity));
+      
+      button.position = { x: 20, y: 110 + index * 35 };
+      this.marketPanel.addChild(button);
+      this.commodityButtons.set(commodity.name, button);
+
+      // Commodity name
+      const nameText = new UIText(`name-${commodity.name}`, commodity.name, {
+        fontSize: 12,
+        color: '#ffffff'
+      });
+      nameText.position = { x: 25, y: 115 + index * 35 };
+      nameText.size = { x: 100, y: 20 };
+      this.marketPanel.addChild(nameText);
+      this.commodityList.push(nameText);
+
+      // Stock level
+      const stockColor = this.getStockColor(commodity.available);
+      const stockText = new UIText(`stock-${commodity.name}`, commodity.available.toString(), {
+        fontSize: 12,
+        color: stockColor,
+        textAlign: 'center'
+      });
+      stockText.position = { x: 140, y: 115 + index * 35 };
+      stockText.size = { x: 40, y: 20 };
+      this.marketPanel.addChild(stockText);
+      this.commodityList.push(stockText);
+
+      // Price
+      const priceColor = this.getPriceColor(commodity.price, commodity.averagePrice);
+      const priceText = new UIText(`price-${commodity.name}`, `${commodity.price} Cr`, {
+        fontSize: 12,
+        color: priceColor,
+        textAlign: 'center'
+      });
+      priceText.position = { x: 200, y: 115 + index * 35 };
+      priceText.size = { x: 60, y: 20 };
+      this.marketPanel.addChild(priceText);
+      this.commodityList.push(priceText);
+
+      // Category
+      const categoryText = new UIText(`category-${commodity.name}`, commodity.category, {
+        fontSize: 12,
+        color: '#888888'
+      });
+      categoryText.position = { x: 270, y: 115 + index * 35 };
+      categoryText.size = { x: 80, y: 20 };
+      this.marketPanel.addChild(categoryText);
+      this.commodityList.push(categoryText);
+
+      // Highlight selected commodity
+      if (this.selectedCommodity?.name === commodity.name) {
+        button.options.backgroundColor = '#4a5568';
+      }
+    });
+  }
+
+  private generateMockCommodities(): CommodityListing[] {
+    return [
+      { name: 'Food Cartridges', available: 42, price: 12, averagePrice: 15, category: 'Food', description: 'Basic nutrition supplies' },
+      { name: 'Liquor', available: 8, price: 95, averagePrice: 80, category: 'Luxury', description: 'Premium alcoholic beverages' },
+      { name: 'Luxury Goods', available: 15, price: 420, averagePrice: 450, category: 'Luxury', description: 'High-end consumer items' },
+      { name: 'Computers', available: 23, price: 340, averagePrice: 320, category: 'Technology', description: 'Advanced computing systems' },
+      { name: 'Furs', available: 67, price: 88, averagePrice: 95, category: 'Raw Materials', description: 'Processed animal pelts' },
+      { name: 'Firearms', available: 12, price: 185, averagePrice: 175, category: 'Weapons', description: 'Personal defense weapons' },
+      { name: 'Narcotics', available: 3, price: 1200, averagePrice: 1100, category: 'Illegal', description: 'Controlled substances' },
+      { name: 'Medicine', available: 34, price: 220, averagePrice: 200, category: 'Medical', description: 'Advanced pharmaceuticals' },
+      { name: 'Textiles', available: 89, price: 45, averagePrice: 50, category: 'Raw Materials', description: 'Synthetic fabrics' },
+      { name: 'Gold', available: 5, price: 890, averagePrice: 850, category: 'Precious Metals', description: 'Refined gold bars' },
+      { name: 'Oil', available: 156, price: 32, averagePrice: 35, category: 'Energy', description: 'Petroleum products' },
+      { name: 'Wine', available: 18, price: 165, averagePrice: 150, category: 'Luxury', description: 'Aged wine collections' },
+      { name: 'Platinum', available: 7, price: 1200, averagePrice: 1150, category: 'Precious Metals', description: 'Platinum ingots' },
+      { name: 'Robots', available: 11, price: 890, averagePrice: 920, category: 'Technology', description: 'Automated workers' },
+      { name: 'Spirits', available: 25, price: 78, averagePrice: 85, category: 'Luxury', description: 'Distilled beverages' },
+      { name: 'Tobacco', available: 44, price: 95, averagePrice: 90, category: 'Consumer', description: 'Processed tobacco products' },
+      { name: 'Silver', available: 19, price: 520, averagePrice: 500, category: 'Precious Metals', description: 'Silver bullion' },
+      { name: 'Gemstones', available: 6, price: 2100, averagePrice: 2000, category: 'Precious Stones', description: 'Cut and polished gems' }
+    ];
+  }
+
+  private getStockColor(available: number): string {
+    if (available > 50) return '#48bb78'; // Green - plenty
+    if (available > 20) return '#ecc94b'; // Yellow - moderate
+    return '#f56565'; // Red - scarce
+  }
+
+  private getPriceColor(price: number, averagePrice: number): string {
+    const ratio = price / averagePrice;
+    if (ratio < 0.9) return '#48bb78'; // Green - cheap
+    if (ratio > 1.1) return '#f56565'; // Red - expensive
+    return '#ffffff'; // White - normal
+  }
+
+  private initializeInfoPanel(): void {
+    // Title
+    const title = new UIText('info-title', 'COMMODITY INFO', {
+      fontSize: 14,
+      fontFamily: 'Arial, sans-serif',
+      color: '#40e0ff',
+      textAlign: 'center',
+      bold: true
+    });
+    title.position = { x: 10, y: 10 };
+    title.size = { x: 180, y: 20 };
+    this.infoPanel.addChild(title);
+
+    // Commodity details
+    this.priceDisplay = new UIText('price', 'Price: -', {
+      fontSize: 12,
+      color: '#ffffff'
+    });
+    this.priceDisplay.position = { x: 10, y: 40 };
+    this.priceDisplay.size = { x: 180, y: 20 };
+    this.infoPanel.addChild(this.priceDisplay);
+
+    this.stockDisplay = new UIText('stock', 'Available: -', {
+      fontSize: 12,
+      color: '#ffffff'
+    });
+    this.stockDisplay.position = { x: 10, y: 65 };
+    this.stockDisplay.size = { x: 180, y: 20 };
+    this.infoPanel.addChild(this.stockDisplay);
+
+    this.avgPriceDisplay = new UIText('avg-price', 'Avg Price: -', {
+      fontSize: 12,
+      color: '#888888'
+    });
+    this.avgPriceDisplay.position = { x: 10, y: 90 };
+    this.avgPriceDisplay.size = { x: 180, y: 20 };
+    this.infoPanel.addChild(this.avgPriceDisplay);
+
+    this.buyPriceDisplay = new UIText('buy-price', 'Buy Price: -', {
+      fontSize: 12,
+      color: '#48bb78'
+    });
+    this.buyPriceDisplay.position = { x: 10, y: 115 };
+    this.buyPriceDisplay.size = { x: 180, y: 20 };
+    this.infoPanel.addChild(this.buyPriceDisplay);
+
+    this.sellPriceDisplay = new UIText('sell-price', 'Sell Price: -', {
+      fontSize: 12,
+      color: '#f56565'
+    });
+    this.sellPriceDisplay.position = { x: 10, y: 140 };
+    this.sellPriceDisplay.size = { x: 180, y: 20 };
+    this.infoPanel.addChild(this.sellPriceDisplay);
+
+    // Description
+    const descText = new UIText('description', 'Select a commodity to view details', {
+      fontSize: 11,
+      color: '#cccccc',
+      wordWrap: true,
+      maxWidth: 180
+    });
+    descText.position = { x: 10, y: 165 };
+    descText.size = { x: 180, y: 25 };
+    this.infoPanel.addChild(descText);
+  }
+
+  private initializeCargoPanel(): void {
+    // Title
+    const title = new UIText('cargo-title', 'YOUR CARGO', {
+      fontSize: 14,
+      fontFamily: 'Arial, sans-serif',
+      color: '#40e0ff',
+      textAlign: 'center',
+      bold: true
+    });
+    title.position = { x: 10, y: 10 };
+    title.size = { x: 180, y: 20 };
+    this.cargoPanel.addChild(title);
+
+    // Credits display
+    this.creditsDisplay = new UIText('credits', `Credits: ${this.data.commander.credits}`, {
+      fontSize: 12,
+      color: '#40e0ff',
+      bold: true
+    });
+    this.creditsDisplay.position = { x: 10, y: 40 };
+    this.creditsDisplay.size = { x: 180, y: 20 };
+    this.cargoPanel.addChild(this.creditsDisplay);
+
+    // Cargo space display
+    this.cargoSpaceDisplay = new UIText('cargo-space', 'Cargo Space: 0/0', {
+      fontSize: 12,
+      color: '#ffffff'
+    });
+    this.cargoSpaceDisplay.position = { x: 10, y: 60 };
+    this.cargoSpaceDisplay.size = { x: 180, y: 20 };
+    this.cargoPanel.addChild(this.cargoSpaceDisplay);
+
+    // Cargo list (mock data)
+    this.cargoList = [];
+    const mockCargo = [
+      { name: 'Food Cartridges', amount: 5 },
+      { name: 'Medicine', amount: 2 },
+      { name: 'Luxury Goods', amount: 1 }
+    ];
+
+    mockCargo.forEach((item, index) => {
+      const cargoText = new UIText(`cargo-${item.name}`, `${item.name}: ${item.amount}`, {
+        fontSize: 11,
+        color: '#cccccc'
+      });
+      cargoText.position = { x: 10, y: 90 + index * 18 };
+      cargoText.size = { x: 180, y: 15 };
+      this.cargoPanel.addChild(cargoText);
+      this.cargoList.push(cargoText);
+    });
+  }
+
+  private initializeControlPanel(): void {
+    // Amount input
+    const amountLabel = new UIText('amount-label', 'Amount:', {
+      fontSize: 12,
+      color: '#ffffff'
+    });
+    amountLabel.position = { x: 20, y: 15 };
+    amountLabel.size = { x: 60, y: 20 };
+    this.controlPanel.addChild(amountLabel);
+
+    this.buyAmountInput = new UIInputField('buy-amount', {
+      width: 80,
+      height: 25,
+      placeholder: '0',
+      maxLength: 6,
+      backgroundColor: '#ffffff',
+      textColor: '#000000',
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    });
+    this.buyAmountInput.position = { x: 85, y: 15 };
+    this.controlPanel.addChild(this.buyAmountInput);
+
+    // Buy button
+    this.buyButton = new UIButton('buy', 'BUY', {
+      width: 100,
+      height: 35,
+      backgroundColor: '#48bb78',
+      textColor: '#ffffff',
+      fontSize: 14,
+      borderColor: '#38a169',
+      borderWidth: 2,
+      cornerRadius: 5
+    }, () => this.buyCommodity());
+    this.buyButton.position = { x: 200, y: 10 };
+    this.controlPanel.addChild(this.buyButton);
+
+    // Sell button
+    this.sellButton = new UIButton('sell', 'SELL', {
+      width: 100,
+      height: 35,
+      backgroundColor: '#f56565',
+      textColor: '#ffffff',
+      fontSize: 14,
+      borderColor: '#e53e3e',
+      borderWidth: 2,
+      cornerRadius: 5
+    }, () => this.sellCommodity());
+    this.sellButton.position = { x: 320, y: 10 };
+    this.controlPanel.addChild(this.sellButton);
+
+    // Quick amount buttons
+    const quick1 = new UIButton('quick-1', '1', {
+      width: 30,
+      height: 25,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 10,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.setQuickAmount(1));
+    quick1.position = { x: 450, y: 15 };
+    this.controlPanel.addChild(quick1);
+
+    const quick10 = new UIButton('quick-10', '10', {
+      width: 30,
+      height: 25,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 10,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.setQuickAmount(10));
+    quick10.position = { x: 485, y: 15 };
+    this.controlPanel.addChild(quick10);
+
+    const quickMax = new UIButton('quick-max', 'MAX', {
+      width: 40,
+      height: 25,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 10,
+      borderColor: '#40e0ff',
+      borderWidth: 1
+    }, () => this.setQuickAmount('max'));
+    quickMax.position = { x: 520, y: 15 };
+    this.controlPanel.addChild(quickMax);
+
+    // Back button
+    const backButton = new UIButton('back', 'LEAVE MARKET', {
+      width: 150,
+      height: 35,
+      backgroundColor: '#2d3748',
+      textColor: '#ffffff',
+      fontSize: 12,
+      borderColor: '#40e0ff',
+      borderWidth: 1,
+      cornerRadius: 5
+    }, () => this.leaveMarket());
+    backButton.position = { x: 600, y: 10 };
+    this.controlPanel.addChild(backButton);
+
+    // Market info
+    const marketInfo = new UIText('market-info', `${this.data.systemName} - ${this.data.stationName}`, {
+      fontSize: 12,
+      color: '#40e0ff'
+    });
+    marketInfo.position = { x: 20, y: 45 };
+    marketInfo.size = { x: 300, y: 20 };
+    this.controlPanel.addChild(marketInfo);
+  }
+
+  onEnter(): void {
+    super.onEnter();
+    this.updateDisplays();
+  }
+
+  onExit(): void {
+    super.onExit();
+  }
+
+  onUpdate(deltaTime: number): void {
+    super.onUpdate(deltaTime);
+    // Update any dynamic elements
+  }
+
+  private selectCommodity(commodity: CommodityListing): void {
+    this.selectedCommodity = commodity;
+    this.updateCommodityInfo();
+    this.updateCommoditySelection();
+  }
+
+  private updateCommodityInfo(): void {
+    if (!this.selectedCommodity) {
+      this.priceDisplay.setText('Price: -');
+      this.stockDisplay.setText('Available: -');
+      this.avgPriceDisplay.setText('Avg Price: -');
+      this.buyPriceDisplay.setText('Buy Price: -');
+      this.sellPriceDisplay.setText('Sell Price: -');
+      return;
+    }
+
+    const commodity = this.selectedCommodity;
+    
+    // Calculate buy/sell prices (market spread)
+    const buyPrice = Math.round(commodity.price * 1.1);
+    const sellPrice = Math.round(commodity.price * 0.9);
+
+    this.priceDisplay.setText(`Price: ${commodity.price} Cr`);
+    this.stockDisplay.setText(`Available: ${commodity.available}`);
+    this.avgPriceDisplay.setText(`Avg Price: ${commodity.averagePrice} Cr`);
+    this.buyPriceDisplay.setText(`Buy Price: ${buyPrice} Cr`);
+    this.sellPriceDisplay.setText(`Sell Price: ${sellPrice} Cr`);
+  }
+
+  private updateCommoditySelection(): void {
+    // Reset all buttons
+    this.commodityButtons.forEach((button) => {
+      button.options.backgroundColor = '#1a202c';
+    });
+
+    // Highlight selected
+    if (this.selectedCommodity) {
+      const button = this.commodityButtons.get(this.selectedCommodity.name);
+      if (button) {
+        button.options.backgroundColor = '#4a5568';
+      }
+    }
+  }
+
+  private updateDisplays(): void {
+    this.creditsDisplay.setText(`Credits: ${this.data.commander.credits}`);
+    // Mock cargo space calculation
+    const cargoUsed = 8;
+    const cargoCapacity = 20;
+    this.cargoSpaceDisplay.setText(`Cargo Space: ${cargoUsed}/${cargoCapacity}`);
+  }
+
+  private sortByName(): void {
+    this.sortBy = 'name';
+    this.populateCommodityList();
+  }
+
+  private sortByPrice(): void {
+    this.sortBy = 'price';
+    this.populateCommodityList();
+  }
+
+  private sortByAvailable(): void {
+    this.sortBy = 'available';
+    this.populateCommodityList();
+  }
+
+  private toggleSortOrder(): void {
+    this.sortOrder = this.sortOrder === 'asc' ? 'desc' : 'asc';
+    this.populateCommodityList();
+  }
+
+  private previousPage(): void {
+    if (this.currentPage > 0) {
+      this.currentPage--;
+      this.populateCommodityList();
+    }
+  }
+
+  private nextPage(): void {
+    this.currentPage++;
+    this.populateCommodityList();
+  }
+
+  private setQuickAmount(amount: number | 'max'): void {
+    if (amount === 'max') {
+      // Calculate maximum affordable or cargo capacity
+      if (this.selectedCommodity) {
+        const buyPrice = Math.round(this.selectedCommodity.price * 1.1);
+        const maxByCredits = Math.floor(this.data.commander.credits / buyPrice);
+        const maxByStock = this.selectedCommodity.available;
+        const maxByCargo = 20 - 8; // Mock cargo space
+        
+        const maxAmount = Math.min(maxByCredits, maxByStock, maxByCargo);
+        this.buyAmountInput.setValue(maxAmount.toString());
+      }
+    } else {
+      this.buyAmountInput.setValue(amount.toString());
+    }
+  }
+
+  private buyCommodity(): void {
+    if (!this.selectedCommodity) {
+      alert('Please select a commodity first');
+      return;
+    }
+
+    const amount = parseInt(this.buyAmountInput.getValue()) || 0;
+    if (amount <= 0) {
+      alert('Please enter a valid amount');
+      return;
+    }
+
+    const buyPrice = Math.round(this.selectedCommodity.price * 1.1);
+    const totalCost = amount * buyPrice;
+
+    if (totalCost > this.data.commander.credits) {
+      alert('Not enough credits');
+      return;
+    }
+
+    if (amount > this.selectedCommodity.available) {
+      alert('Not enough stock available');
+      return;
+    }
+
+    // Mock cargo space check
+    if (amount > 12) { // Mock available cargo space
+      alert('Not enough cargo space');
+      return;
+    }
+
+    if (confirm(`Buy ${amount} units of ${this.selectedCommodity.name} for ${totalCost} credits?`)) {
+      // Perform the transaction
+      this.data.commander.credits -= totalCost;
+      this.selectedCommodity.available -= amount;
+      
+      this.updateDisplays();
+      this.updateCommodityInfo();
+      this.populateCommodityList();
+      
+      alert(`Purchased ${amount} units of ${this.selectedCommodity.name}`);
+    }
+  }
+
+  private sellCommodity(): void {
+    if (!this.selectedCommodity) {
+      alert('Please select a commodity first');
+      return;
+    }
+
+    const amount = parseInt(this.buyAmountInput.getValue()) || 0;
+    if (amount <= 0) {
+      alert('Please enter a valid amount');
+      return;
+    }
+
+    // Mock cargo check
+    const playerHasAmount = amount <= 5; // Mock check
+    if (!playerHasAmount) {
+      alert('You don\'t have that much to sell');
+      return;
+    }
+
+    const sellPrice = Math.round(this.selectedCommodity.price * 0.9);
+    const totalRevenue = amount * sellPrice;
+
+    if (confirm(`Sell ${amount} units of ${this.selectedCommodity.name} for ${totalRevenue} credits?`)) {
+      // Perform the transaction
+      this.data.commander.credits += totalRevenue;
+      
+      this.updateDisplays();
+      this.populateCommodityList();
+      
+      alert(`Sold ${amount} units of ${this.selectedCommodity.name} for ${totalRevenue} credits`);
+    }
+  }
+
+  private leaveMarket(): void {
+    if (confirm('Leave the market?')) {
+      this.navigateToScreen('docked');
+    }
+  }
+
+  private navigateToScreen(screenId: ScreenId): void {
+    const uiManager = UIManager.getInstance();
+    uiManager.showScreen(screenId);
+  }
+
+  handleKeyDown(key: string): boolean {
+    if (!this.isVisible || !this.isEnabled) {
+      return false;
+    }
+
+    switch (key.toLowerCase()) {
+      case 'escape':
+      case 'backspace':
+        this.leaveMarket();
+        return true;
+      case 'enter':
+        if (this.selectedCommodity) {
+          this.buyCommodity();
+        }
+        return true;
+      case 'b':
+        this.buyCommodity();
+        return true;
+      case 's':
+        this.sellCommodity();
+        return true;
+    }
+
+    return super.handleKeyDown(key);
+  }
+}
+
+// Helper class for input fields (since we referenced it)
+class UIInputField extends UIPanel {
+  private value: string = '';
+  private isFocused: boolean = false;
+  private maxLength: number;
+  private placeholder: string;
+
+  constructor(id: string, options: any) {
+    super(id, options);
+    this.maxLength = options.maxLength || 255;
+    this.placeholder = options.placeholder || '';
+  }
+
+  setValue(value: string): void {
+    this.value = value.slice(0, this.maxLength);
+  }
+
+  getValue(): string {
+    return this.value;
+  }
+
+  clear(): void {
+    this.value = '';
+  }
+}
