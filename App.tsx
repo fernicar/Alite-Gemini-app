@@ -14,7 +14,7 @@ import { EQUIPMENT_LIST } from './data/equipment';
 import { SHIPS_FOR_SALE } from './data/ships';
 import { MarkdownRenderer } from './components/MarkdownRenderer';
 import { audioService } from './services/audioService';
-import { updateCombatState } from './services/combatService';
+import { updateCombatState, handlePlayerAttack } from './services/combatService';
 
 const PIRATE_SHIP_TYPES = ['Viper Mk I', 'Adder', 'Cobra Mk III'];
 
@@ -345,48 +345,35 @@ const App: React.FC = () => {
     const handleFire = () => {
         if (!target) return;
 
-        const weapons = ship.slots.filter(
-            s => s.type === 'Hardpoint' && s.equippedItem?.category === 'Weapon'
-        );
+        const {
+            playerEnergyUsed,
+            updatedNpcs,
+            newSalvage,
+            targetDestroyed,
+            updatedTarget,
+        } = handlePlayerAttack(ship, target, npcs);
 
-        if (weapons.length === 0) return;
-
-        const totalEnergyCost = weapons.reduce((acc, s) => acc + (s.equippedItem?.powerDraw || 0), 0);
-        const totalDamage = weapons.reduce((acc, s) => acc + (s.equippedItem?.stats?.damage || 0), 0);
-        
-        if (ship.energy < totalEnergyCost) return;
+        if (playerEnergyUsed === 0) {
+            // Not enough energy or no weapons, maybe play a 'click' sound.
+            return;
+        }
 
         audioService.playLaserSound();
-        setShip(s => ({ ...s, energy: s.energy - totalEnergyCost }));
-
+        setShip(s => ({ ...s, energy: s.energy - playerEnergyUsed }));
+    
         const hadHostiles = npcs.some(n => n.isHostile);
-
-        const newNpcs = npcs.map(npc => {
-            if (npc.id === target.id) {
-                const newShields = npc.shields - totalDamage;
-                if (newShields < 0) {
-                    // Damage bleeds through to the hull
-                    return { ...npc, shields: 0, hull: npc.hull + newShields };
-                }
-                return { ...npc, shields: newShields };
-            }
-            return npc;
-        });
-
-        const updatedTarget = newNpcs.find(n => n.id === target.id);
-
-        if (updatedTarget && updatedTarget.hull <= 0) {
-            // Target was destroyed
+    
+        setNpcs(updatedNpcs);
+    
+        if (targetDestroyed) {
             audioService.playExplosionSound();
-            setSalvage(s => [...s, {
-                id: `salvage-${updatedTarget.id}`,
-                contents: { name: 'Scrap Metal', quantity: Math.ceil(Math.random() * 5), weight: 1 },
-                position: updatedTarget.position,
-            }]);
+            if (newSalvage) {
+                setSalvage(s => [...s, newSalvage]);
+            }
             setTarget(null);
 
             if (activeMission && activeMission.type === 'Bounty' && activeMission.status === 'InProgress') {
-                if (updatedTarget.type === activeMission.targetNPC?.type && currentSystem.id === activeMission.systemId) {
+                if (target.type === activeMission.targetNPC?.type && currentSystem.id === activeMission.systemId) {
                     setActiveMission(prev => prev ? ({ ...prev, status: 'Completed' }) : null);
                     alert(`Target ${activeMission.title} destroyed! Return to a station in this system to claim your reward.`);
                 }
@@ -396,13 +383,9 @@ const App: React.FC = () => {
             setTarget(updatedTarget);
         }
 
-        const remainingNpcs = newNpcs.filter(n => n.hull > 0);
-
-        if (hadHostiles && remainingNpcs.every(n => !n.isHostile)) {
+        if (hadHostiles && updatedNpcs.every(n => !n.isHostile)) {
             setSystemCleared(true);
         }
-
-        setNpcs(remainingNpcs);
     };
 
     const handleTargetNext = () => {
