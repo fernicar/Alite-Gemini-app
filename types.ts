@@ -7,6 +7,8 @@ export interface StarSystem {
   economy: 'Industrial' | 'Agricultural' | 'Mining' | 'High-Tech' | 'Refinery' | 'Tourism';
   government: 'Anarchy' | 'Feudal' | 'Corporate' | 'Democracy' | 'Alliance';
   description: string;
+  techLevel: number;
+  population: number;
 }
 
 export type CommodityCategory = 'Consumer Goods' | 'Industrial Goods' | 'Raw Materials' | 'Technology' | 'Luxury' | 'Military';

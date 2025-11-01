@@ -1,6 +1,7 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { Ship, StarSystem, MarketGood, CargoItem } from '../types';
-import { generateMarketData } from '../services/marketService';
+import { marketService } from '../services/marketService';
 import { ShipStatusPanel } from './ShipStatusPanel';
 import { COMMODITIES } from '../data/commodities';
 
@@ -16,7 +17,7 @@ const MarketplaceView: React.FC<{
   const [error, setError] = useState<string>('');
 
   useEffect(() => {
-    setMarketData(generateMarketData(currentSystem));
+    setMarketData(marketService.getMarketData(currentSystem));
     setSelectedCommodity(null);
   }, [currentSystem]);
 
@@ -51,77 +52,20 @@ const MarketplaceView: React.FC<{
     }
     setError('');
 
-    const commodityInfo = COMMODITIES.find(c => c.name === selectedCommodity.name);
-    if (!commodityInfo) {
-      setError("Commodity data not found.");
-      return;
+    const result = type === 'buy'
+        ? marketService.buyCommodity(ship, currentSystem, selectedCommodity.name, tradeQuantity)
+        : marketService.sellCommodity(ship, currentSystem, selectedCommodity.name, tradeQuantity);
+    
+    if (result.success) {
+        setShip(result.ship!);
+        setMarketData(result.market!);
+        // After trade, update the selected commodity view with new data
+        const updatedCommodity = result.market!.find(c => c.name === selectedCommodity.name);
+        setSelectedCommodity(updatedCommodity || null);
+        setTradeQuantity(1);
+    } else {
+        setError(result.error || 'Trade failed.');
     }
-
-    const totalWeight = commodityInfo.weight * tradeQuantity;
-    const currentWeight = ship.cargo.reduce((acc, item) => acc + (item.quantity * item.weight), 0);
-
-    if (type === 'buy') {
-      const totalPrice = selectedCommodity.buyPrice * tradeQuantity;
-      if (ship.credits < totalPrice) {
-        setError("Insufficient credits.");
-        return;
-      }
-      if (currentWeight + totalWeight > ship.cargoCapacity) {
-        setError("Insufficient cargo space.");
-        return;
-      }
-      if (tradeQuantity > selectedCommodity.quantity) {
-        setError("Station does not have enough stock.");
-        return;
-      }
-
-      setShip(prevShip => {
-        const newCargo = [...prevShip.cargo];
-        const existingItem = newCargo.find(item => item.name === selectedCommodity.name);
-        if (existingItem) {
-          existingItem.quantity += tradeQuantity;
-        } else {
-          newCargo.push({ name: selectedCommodity.name, quantity: tradeQuantity, weight: commodityInfo.weight });
-        }
-        return {
-          ...prevShip,
-          credits: prevShip.credits - totalPrice,
-          cargo: newCargo,
-        };
-      });
-
-      setMarketData(prevMarket => prevMarket.map(item => 
-        item.name === selectedCommodity.name ? { ...item, quantity: item.quantity - tradeQuantity } : item
-      ));
-
-    } else { // sell
-      const playerQuantity = currentCargo.get(selectedCommodity.name) || 0;
-      if (tradeQuantity > playerQuantity) {
-        setError("You don't have enough to sell.");
-        return;
-      }
-      const totalPrice = selectedCommodity.sellPrice * tradeQuantity;
-
-      setShip(prevShip => {
-        const newCargo = prevShip.cargo.map(item => {
-          if (item.name === selectedCommodity.name) {
-            return { ...item, quantity: item.quantity - tradeQuantity };
-          }
-          return item;
-        }).filter(item => item.quantity > 0);
-        return {
-          ...prevShip,
-          credits: prevShip.credits + totalPrice,
-          cargo: newCargo,
-        };
-      });
-      
-      setMarketData(prevMarket => prevMarket.map(item => 
-        item.name === selectedCommodity.name ? { ...item, quantity: item.quantity + tradeQuantity } : item
-      ));
-    }
-    setTradeQuantity(1);
-    setSelectedCommodity(null);
   };
   
   const maxTrade = (type: 'buy' | 'sell') => {
@@ -132,8 +76,8 @@ const MarketplaceView: React.FC<{
     const currentWeight = ship.cargo.reduce((acc, item) => acc + (item.quantity * item.weight), 0);
     
     if (type === 'buy') {
-      const maxByCredits = Math.floor(ship.credits / selectedCommodity.buyPrice);
-      const maxBySpace = Math.floor((ship.cargoCapacity - currentWeight) / commodityInfo.weight);
+      const maxByCredits = selectedCommodity.buyPrice > 0 ? Math.floor(ship.credits / selectedCommodity.buyPrice) : 0;
+      const maxBySpace = commodityInfo.weight > 0 ? Math.floor((ship.cargoCapacity - currentWeight) / commodityInfo.weight) : Infinity;
       const maxByStock = selectedCommodity.quantity;
       return Math.max(0, Math.min(maxByCredits, maxBySpace, maxByStock));
     } else { // sell

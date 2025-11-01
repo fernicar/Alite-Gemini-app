@@ -75,6 +75,38 @@ class GalaxyGenerator {
         return this.random.choice(descriptions);
     }
 
+    private generateTechLevel(economy: StarSystem['economy'], government: StarSystem['government']): number {
+        let baseTechLevel = 5;
+        
+        switch (economy) {
+          case 'High-Tech': baseTechLevel += 4; break;
+          case 'Industrial': baseTechLevel += 2; break;
+          case 'Refinery': baseTechLevel += 1; break;
+          case 'Tourism': baseTechLevel += 0; break;
+          case 'Mining': baseTechLevel -= 1; break;
+          case 'Agricultural': baseTechLevel -= 2; break;
+        }
+
+        switch (government) {
+            case 'Corporate':
+            case 'Democracy':
+                baseTechLevel += 2; break;
+            case 'Alliance':
+                baseTechLevel += 1; break;
+            case 'Feudal':
+                baseTechLevel -= 1; break;
+            case 'Anarchy':
+                baseTechLevel -= 3; break;
+        }
+
+        return Math.max(1, Math.min(15, baseTechLevel + this.random.nextInt(-2, 2)));
+    }
+
+    private generatePopulation(techLevel: number): number {
+        const basePop = Math.pow(techLevel, 2) * 10000;
+        return Math.floor(basePop * (this.random.next() * 1.5 + 0.5));
+    }
+
     public generate(): StarSystem[] {
         const systems: StarSystem[] = [];
         const positions: {x: number, y: number}[] = [];
@@ -103,6 +135,8 @@ class GalaxyGenerator {
             const economy = this.random.choice(ECONOMY_TYPES);
             const government = this.random.choice(GOVERNMENT_TYPES);
             const description = this.generateSystemDescription(name, economy, government);
+            const techLevel = this.generateTechLevel(economy, government);
+            const population = this.generatePopulation(techLevel);
             
             systems.push({
                 id: i,
@@ -112,6 +146,8 @@ class GalaxyGenerator {
                 economy,
                 government,
                 description,
+                techLevel,
+                population,
             });
         }
         return systems;
