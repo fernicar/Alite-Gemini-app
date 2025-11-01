@@ -1,8 +1,8 @@
 
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Ship, StarSystem, NPC, Salvage, CargoItem, ShipSlot, Mission, EquipmentItem, ShipSpec } from './types';
-import { GALAXY_MAP, GALAXY_WIDTH, GALAXY_HEIGHT } from './constants';
 import { generateSystemDescription } from './services/geminiService';
+import { getGalaxy, GALAXY_WIDTH, GALAXY_HEIGHT } from './services/galaxyService';
 import { JumpIcon } from './components/icons';
 import { ShipStatusPanel } from './components/ShipStatusPanel';
 import SystemView from './components/SystemView';
@@ -19,6 +19,7 @@ import { updateCombatState, handlePlayerAttack } from './services/combatService'
 import { updatePlayerShip } from './services/playerService';
 
 const PIRATE_SHIP_TYPES = ['Viper Mk I', 'Adder', 'Cobra Mk III'];
+const GALAXY_MAP = getGalaxy();
 
 // Helper to create the initial ship state without side-effects
 const createInitialShip = (): Ship => {
@@ -108,6 +109,7 @@ const createNpcShip = (shipType: string, npcType: 'Pirate' | 'Trader' | 'Police'
 
 
 const initialShip = createInitialShip();
+const initialSystem = GALAXY_MAP.find(s => s.name === 'Lave') || GALAXY_MAP[0];
 
 const Header: React.FC = () => (
   <header className="col-span-full bg-black/30 backdrop-blur-sm border-b border-cyan-400/20 p-4 flex items-center justify-between shadow-lg shadow-cyan-500/10">
@@ -183,8 +185,8 @@ const App: React.FC = () => {
     const shipRef = useRef(ship);
     useEffect(() => { shipRef.current = ship; }, [ship]);
 
-    const [currentSystem, setCurrentSystem] = useState<StarSystem>(GALAXY_MAP[0]);
-    const [selectedSystem, setSelectedSystem] = useState<StarSystem>(GALAXY_MAP[0]);
+    const [currentSystem, setCurrentSystem] = useState<StarSystem>(initialSystem);
+    const [selectedSystem, setSelectedSystem] = useState<StarSystem>(initialSystem);
     const [detailedDescription, setDetailedDescription] = useState<string>('');
     const [descriptionLoading, setDescriptionLoading] = useState<boolean>(false);
     const [npcs, setNpcs] = useState<NPC[]>([]);
