@@ -1,5 +1,9 @@
 
+
 import { physicsService3D } from './physicsService3D';
+import * as CANNON from 'cannon-es';
+import { SHIPS_FOR_SALE } from '../data/ships';
+import { Ship } from '../types';
 
 class PlayerController3D {
     private mousePosition = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
@@ -17,7 +21,13 @@ class PlayerController3D {
         this.mousePosition.y = e.clientY;
     };
     
-    public handlePlayerInput(pressedKeys: Set<string>, flightAssist: boolean, mouseAim: boolean) {
+    public handlePlayerInput(pressedKeys: Set<string>, mouseAim: boolean) {
+        const shipBody = physicsService3D.getShipBody();
+        if (!shipBody) return;
+
+        const shipSpec = SHIPS_FOR_SALE.find(sfs => sfs.type === (shipBody as any).userData.data.type)?.spec;
+        if (!shipSpec) return;
+
         let yaw = 0;
         let pitch = 0;
         let roll = 0;
@@ -32,7 +42,7 @@ class PlayerController3D {
             const deltaY = this.mousePosition.y - centerY;
 
             const deadZone = 30; // pixels
-            const maxRadius = Math.min(centerX, centerY) * 0.8; // Use 80% of the smaller screen dimension half
+            const maxRadius = Math.min(centerX, centerY) * 0.8;
 
             const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
 
@@ -40,49 +50,39 @@ class PlayerController3D {
                 const effectiveDistance = Math.min(distance, maxRadius);
                 const turnStrength = (effectiveDistance - deadZone) / (maxRadius - deadZone);
                 
-                yaw = -(deltaX / maxRadius) * turnStrength * 2;
-                pitch = -(deltaY / maxRadius) * turnStrength * 2;
+                yaw = -(deltaX / maxRadius) * turnStrength;
+                pitch = -(deltaY / maxRadius) * turnStrength;
             }
 
-            // Keyboard roll is still active
-            if (pressedKeys.has('shift') && pressedKeys.has('a')) roll = -1; // Roll Left
-            if (pressedKeys.has('shift') && pressedKeys.has('d')) roll = 1;  // Roll Right
+            if (pressedKeys.has('shift') && pressedKeys.has('a')) roll = -1;
+            if (pressedKeys.has('shift') && pressedKeys.has('d')) roll = 1;
 
         } else {
-            // Yaw (turn left/right) on A/D
-            if (pressedKeys.has('a') && !pressedKeys.has('shift')) yaw = 1;
-            if (pressedKeys.has('d') && !pressedKeys.has('shift')) yaw = -1;
-            
-            // Pitch (nose up/down) on R/F
-            if (pressedKeys.has('r')) pitch = -1; // R for nose up
-            if (pressedKeys.has('f')) pitch = 1;  // F for nose down
-
-            // Roll on Shift + A/D
-            if (pressedKeys.has('shift') && pressedKeys.has('a')) roll = -1; // Roll Left
-            if (pressedKeys.has('shift') && pressedKeys.has('d')) roll = 1;  // Roll Right
+            if ((pressedKeys.has('a') && !pressedKeys.has('shift')) || pressedKeys.has('arrowleft')) yaw = 1;
+            if ((pressedKeys.has('d') && !pressedKeys.has('shift')) || pressedKeys.has('arrowright')) yaw = -1;
+            if (pressedKeys.has('r')) pitch = -1;
+            if (pressedKeys.has('f')) pitch = 1;
+            if (pressedKeys.has('shift') && pressedKeys.has('a')) roll = 1;
+            if (pressedKeys.has('shift') && pressedKeys.has('d')) roll = -1;
         }
 
-        // --- Translation ---
-        if (pressedKeys.has('w')) thrust = 1; 
-        if (pressedKeys.has('s')) thrust = -0.5;
+        if (pressedKeys.has('w') || pressedKeys.has('arrowup')) thrust = 1; 
+        if (pressedKeys.has('s') || pressedKeys.has('arrowdown')) thrust = -0.5;
         if (pressedKeys.has('q')) strafe.x = -1; 
         if (pressedKeys.has('e')) strafe.x = 1; 
-        if (pressedKeys.has(' ')) strafe.y = 1; 
-        if (pressedKeys.has('control')) strafe.y = -1;
+        if (pressedKeys.has('pageup') || pressedKeys.has(' ')) strafe.y = 1; 
+        if (pressedKeys.has('control') || pressedKeys.has('c')) strafe.y = -1;
 
-        // Apply rotational inputs as torques
-        physicsService3D.applyYaw(yaw);
-        physicsService3D.applyPitch(pitch);
-        physicsService3D.applyRoll(roll);
+        const turnTorque = shipSpec.turnRate * shipSpec.mass * 20;
+        const localTorque = new CANNON.Vec3(
+            pitch * turnTorque * 0.8, // Pitch is usually a bit slower
+            yaw * turnTorque,
+            roll * turnTorque * 1.2 // Roll is fastest
+        );
+        physicsService3D.applyLocalTorque(localTorque);
 
-        // Handle translational inputs based on flight assist mode
-        if (flightAssist) {
-            physicsService3D.setAssistedThrust(thrust);
-            physicsService3D.setAssistedStrafe(strafe);
-        } else {
-            physicsService3D.applyThrust(thrust);
-            physicsService3D.applyStrafe(strafe);
-        }
+        physicsService3D.setAssistedThrust(thrust);
+        physicsService3D.setAssistedStrafe(strafe);
     }
 }
 

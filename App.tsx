@@ -19,10 +19,10 @@ import { audioService } from './services/audioService';
 import { playerShipService } from './services/playerShipService';
 import { physicsService3D } from './services/physicsService3D';
 import { playerController3D } from './services/playerController3D';
-import { SystemViewHUD } from './components/SystemViewHUD';
 import { effectsService } from './services/effectsService';
 import { aiService } from './services/aiService';
 import * as CANNON from 'cannon-es';
+import * as THREE from 'three';
 
 
 const GALAXY_MAP = getGalaxy();
@@ -111,8 +111,8 @@ const App: React.FC = () => {
     
     const [activeMission, setActiveMission] = useState<Mission | null>(null);
     const pressedKeys = useRef(new Set<string>());
-    const [flightAssist, setFlightAssist] = useState(true);
     const [mouseAim, setMouseAim] = useState(false);
+    const [missileStatus, setMissileStatus] = useState<'unarmed' | 'armed' | 'locked'>('unarmed');
 
     const [npcs, setNpcs] = useState<NpcEntity[]>([]);
     const npcsRef = useRef<NpcEntity[]>([]);
@@ -130,10 +130,9 @@ const App: React.FC = () => {
     useEffect(() => { celestialsRef.current = celestials; }, [celestials]);
     const salvageRef = useRef<Salvage[]>([]);
     useEffect(() => { salvageRef.current = salvage; }, [salvage]);
-    const flightAssistRef = useRef(flightAssist);
-    useEffect(() => { flightAssistRef.current = flightAssist; }, [flightAssist]);
     const mouseAimRef = useRef(mouseAim);
     useEffect(() => { mouseAimRef.current = mouseAim; }, [mouseAim]);
+    const cameraDirectionRef = useRef(new THREE.Vector3(0, 0, -1));
 
 
     // State to force re-renders when services update
@@ -340,24 +339,50 @@ const App: React.FC = () => {
         setDetailedDescription('');
     }, [selectedSystem, currentSystem, jumpDistance]);
 
+    useEffect(() => {
+        // Missile lock logic
+        if (missileStatus === 'armed' && target) {
+            setMissileStatus('locked');
+        } else if (missileStatus === 'locked' && !target) {
+            setMissileStatus('armed');
+        }
+    }, [target, missileStatus]);
+
+    const handleArmMissile = useCallback(() => {
+        if (ship.missiles > 0) {
+            setMissileStatus(currentStatus => currentStatus === 'unarmed' ? 'armed' : 'unarmed');
+        }
+    }, [ship.missiles]);
+
     const handleFire = useCallback(() => {
-        if (!target) return;
+        if (missileStatus === 'locked') {
+            if (target && playerShipService.fireMissile()) {
+                const missileDamage = 50; // TODO: from missile equipment
+                physicsService3D.fireProjectile(ship.id, missileDamage, 400, 'missile', target.entity.data.id);
+                audioService.playMissileLaunchSound();
+                setMissileStatus('unarmed');
+            }
+        } else if (missileStatus === 'armed') {
+            setMissileStatus('unarmed');
+        } else { // 'unarmed'
+            const weapons = ship.slots.filter(
+                s => s.type === 'Hardpoint' && s.equippedItem?.category === 'Weapon'
+            );
+            if (weapons.length === 0) return;
         
-        const weapons = ship.slots.filter(
-            s => s.type === 'Hardpoint' && s.equippedItem?.category === 'Weapon'
-        );
-        if (weapons.length === 0) return;
-    
-        const totalEnergyCost = weapons.reduce((acc, s) => acc + (s.equippedItem?.powerDraw || 0), 0);
-        if (ship.energy < totalEnergyCost) return;
-    
-        playerShipService.useEnergy(totalEnergyCost);
-        audioService.playLaserSound();
-    
-        const totalDamage = weapons.reduce((acc, s) => acc + (s.equippedItem?.stats?.damage || 0), 0);
+            const totalEnergyCost = weapons.reduce((acc, s) => acc + (s.equippedItem?.powerDraw || 0), 0);
+            if (ship.energy < totalEnergyCost) return;
         
-        physicsService3D.fireProjectile(ship.id, totalDamage);
-    }, [ship, target]);
+            playerShipService.useEnergy(totalEnergyCost);
+            audioService.playLaserSound();
+        
+            const totalDamage = weapons.reduce((acc, s) => acc + (s.equippedItem?.stats?.damage || 0), 0);
+            
+            // Pass camera direction to `fireProjectile` for parallax correction.
+            // When firing lasers, we aim with the reticle, so targetId should be undefined.
+            physicsService3D.fireProjectile(ship.id, totalDamage, 800, 'laser', undefined, cameraDirectionRef.current);
+        }
+    }, [ship, target, missileStatus]);
 
     const handleScoop = useCallback((salvageId: string) => {
         const item = salvage.find(s => s.id === salvageId);
@@ -421,26 +446,32 @@ const App: React.FC = () => {
       const handleKeyDown = (e: KeyboardEvent) => {
         const key = e.key.toLowerCase();
         
-        if (key === 'z') {
-            if (!pressedKeys.current.has('z')) { // on press, not hold
-                setFlightAssist(prev => !prev);
-            }
-        }
         if (key === 'm') {
             if (!pressedKeys.current.has('m')) {
                 setMouseAim(prev => !prev);
             }
         }
         
-        pressedKeys.current.add(key);
-        
         if (view === 'SYSTEM') {
             if (key === 't') handleTargetNext();
-            if (key === 'arrowup') handlePipChange('sys');
-            if (key === 'arrowleft') handlePipChange('eng');
-            if (key === 'arrowdown') handlePipChange('wep');
-            if (key === 'arrowright') resetPips();
+            if (key === 'u') handlePipChange('sys');
+            if (key === 'i') handlePipChange('eng');
+            if (key === 'o') handlePipChange('wep');
+            if (key === 'p') resetPips();
+            if (key === 'n') {
+                if (!pressedKeys.current.has('n')) {
+                    handleArmMissile();
+                }
+            }
+            if (key === ' ') {
+                e.preventDefault();
+                if (!pressedKeys.current.has(' ')) {
+                    handleFire();
+                }
+            }
         }
+        
+        pressedKeys.current.add(key);
       };
       const handleKeyUp = (e: KeyboardEvent) => pressedKeys.current.delete(e.key.toLowerCase());
 
@@ -450,7 +481,7 @@ const App: React.FC = () => {
         window.removeEventListener('keydown', handleKeyDown);
         window.removeEventListener('keyup', handleKeyUp);
       };
-    }, [handleTargetNext, handlePipChange, resetPips, view]);
+    }, [view, handleTargetNext, handlePipChange, resetPips, handleArmMissile, handleFire]);
 
     useEffect(() => {
         if (view === 'SYSTEM' && mouseAim) {
@@ -485,7 +516,7 @@ const App: React.FC = () => {
             lastTime = timestamp;
 
             // 1. Handle player input
-            playerController3D.handlePlayerInput(pressedKeys.current, flightAssistRef.current, mouseAimRef.current);
+            playerController3D.handlePlayerInput(pressedKeys.current, mouseAimRef.current);
 
             // 2. Handle simple NPC AI
             npcsRef.current.forEach(npc => {
@@ -528,7 +559,7 @@ const App: React.FC = () => {
             }
             
             // 5. Update thruster sound based on input
-            const thrustInput = (pressedKeys.current.has('w') ? 1 : (pressedKeys.current.has('s') ? -0.5 : 0));
+            const thrustInput = (pressedKeys.current.has('w') || pressedKeys.current.has('arrowup') ? 1 : (pressedKeys.current.has('s') || pressedKeys.current.has('arrowdown') ? -0.5 : 0));
             audioService.updateThrusterSound(thrustInput);
     
             animationFrameId = requestAnimationFrame(gameLoop);
@@ -583,8 +614,29 @@ const App: React.FC = () => {
             case 'SYSTEM':
                 return (
                   <div style={{ position: 'relative', width: '100%', height: '100%', flexGrow: 1 }}>
-                    <SystemView currentSystem={currentSystem} ship={ship} onReturnToGalaxy={() => setView('GALAXY')} onDock={handleDock} canDock={canDock} npcs={npcs} celestials={celestials} salvage={salvage} target={target} onFire={handleFire} onTargetNext={handleTargetNext} onScoop={handleScoop} projectiles={projectiles} visualEffects={visualEffects} shipBody={shipBody} pressedKeys={pressedKeys.current} flightAssist={flightAssist} mouseAim={mouseAim} scoopableSalvage={scoopableSalvage} />
-                    <SystemViewHUD shipBody={shipBody} pressedKeys={pressedKeys.current} target={target} flightAssist={flightAssist} energyPips={ship.energyPips} mouseAim={mouseAim} />
+                    <SystemView
+                        cameraDirectionRef={cameraDirectionRef}
+                        currentSystem={currentSystem}
+                        ship={ship}
+                        onReturnToGalaxy={() => setView('GALAXY')}
+                        onDock={handleDock}
+                        canDock={canDock}
+                        npcs={npcs}
+                        celestials={celestials}
+                        salvage={salvage}
+                        target={target}
+                        onFire={handleFire}
+                        onTargetNext={handleTargetNext}
+                        onScoop={handleScoop}
+                        projectiles={projectiles}
+                        visualEffects={visualEffects}
+                        shipBody={shipBody}
+                        pressedKeys={pressedKeys.current}
+                        mouseAim={mouseAim}
+                        scoopableSalvage={scoopableSalvage}
+                        missileStatus={missileStatus}
+                        energyPips={ship.energyPips}
+                    />
                   </div>
                 );
             case 'DOCKED':

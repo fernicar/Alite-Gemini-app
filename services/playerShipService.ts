@@ -62,6 +62,18 @@ class PlayerShipService {
         // This is handled by playerController3D now
     }
 
+    public fireMissile(): boolean {
+        if (this.ship.missiles > 0) {
+            this.ship = {
+                ...this.ship,
+                missiles: this.ship.missiles - 1,
+            };
+            this.notify();
+            return true;
+        }
+        return false;
+    }
+
     public applyDamage(amount: number): { type: 'shield' | 'hull', newHull: number, newShields: number } {
         let newShields = this.ship.shields;
         let newHull = this.ship.hull;

@@ -1,3 +1,5 @@
+
+
 import React, { useMemo, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
@@ -7,6 +9,7 @@ import { ShipStatusPanel } from './ShipStatusPanel';
 import { StationIcon, FireIcon, SalvageIcon } from './icons';
 import { TargetInfoPanel } from './TargetInfoPanel';
 import { audioService } from '../services/audioService';
+import { SystemViewHUD } from './SystemViewHUD';
 
 interface SystemViewProps {
   currentSystem: StarSystem;
@@ -25,13 +28,15 @@ interface SystemViewProps {
   visualEffects: VisualEffect[];
   shipBody: CANNON.Body | null;
   pressedKeys: Set<string>;
-  flightAssist: boolean;
   mouseAim: boolean;
   scoopableSalvage: Salvage | null;
+  cameraDirectionRef: React.MutableRefObject<THREE.Vector3>;
+  missileStatus: 'unarmed' | 'armed' | 'locked';
+  energyPips: { sys: number; eng: number; wep: number };
 }
 
 const SystemView: React.FC<SystemViewProps> = (props) => {
-  const { onReturnToGalaxy, onDock, onFire, onTargetNext, onScoop, canDock, scoopableSalvage } = props;
+  const { onReturnToGalaxy, onDock, onFire, onTargetNext, onScoop, canDock, scoopableSalvage, missileStatus } = props;
   const mountRef = useRef<HTMLDivElement>(null);
   const npcMeshes = useRef(new Map<string, THREE.Group>());
   const celestialMeshes = useRef(new Map<string, THREE.Group>());
@@ -39,6 +44,7 @@ const SystemView: React.FC<SystemViewProps> = (props) => {
   const effectMeshes = useRef(new Map<string, THREE.Object3D>());
   const salvageMeshes = useRef(new Map<string, THREE.Mesh>());
   const targetIndicatorRef = useRef<THREE.BoxHelper | null>(null);
+  const [camera, setCamera] = useState<THREE.PerspectiveCamera | null>(null);
 
   const [damageEffect, setDamageEffect] = useState<'hull' | 'shield' | null>(null);
   const prevShipState = useRef(props.ship);
@@ -81,7 +87,8 @@ const SystemView: React.FC<SystemViewProps> = (props) => {
 
     // Scene setup
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(75, currentMount.clientWidth / currentMount.clientHeight, 0.1, 50000);
+    const newCamera = new THREE.PerspectiveCamera(75, currentMount.clientWidth / currentMount.clientHeight, 0.1, 50000);
+    setCamera(newCamera);
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setClearColor(0x000000); // Set background to black
     renderer.setSize(currentMount.clientWidth, currentMount.clientHeight);
@@ -140,7 +147,7 @@ const SystemView: React.FC<SystemViewProps> = (props) => {
             case 'Star':
                 mesh = new THREE.Mesh(
                     new THREE.SphereGeometry(cel.data.radius, 32, 32),
-                    new THREE.MeshBasicMaterial({ color: 0xffddaa, emissive: 0xffddaa, emissiveIntensity: 2 })
+                    new THREE.MeshPhongMaterial({ color: 0xffddaa, emissive: 0xffddaa, emissiveIntensity: 2 })
                 );
                 break;
             case 'Planet':
@@ -180,20 +187,21 @@ const SystemView: React.FC<SystemViewProps> = (props) => {
     
     const handleResize = () => {
         if (currentMount) {
-            camera.aspect = currentMount.clientWidth / currentMount.clientHeight;
-            camera.updateProjectionMatrix();
+            newCamera.aspect = currentMount.clientWidth / currentMount.clientHeight;
+            newCamera.updateProjectionMatrix();
             renderer.setSize(currentMount.clientWidth, currentMount.clientHeight);
         }
     };
     
     window.addEventListener('resize', handleResize);
+    handleResize(); // Call once initially to set size
 
     // Animation loop
     let animationFrameId: number;
     const animate = () => {
         animationFrameId = requestAnimationFrame(animate);
         
-        const { npcs, projectiles, visualEffects, salvage, target, pressedKeys, shipBody: currentShipBody } = propsRef.current;
+        const { npcs, projectiles, visualEffects, salvage, target, pressedKeys, shipBody: currentShipBody, cameraDirectionRef } = propsRef.current;
 
         // Rotate station
         const stationMesh = celestialMeshes.current.get('station-1');
@@ -206,20 +214,25 @@ const SystemView: React.FC<SystemViewProps> = (props) => {
             playerShipMesh.quaternion.copy(currentShipBody.quaternion as unknown as THREE.Quaternion);
 
             // Thruster visibility
-            thrusterFlame.visible = pressedKeys.has('w');
+            thrusterFlame.visible = pressedKeys.has('w') || pressedKeys.has('arrowup');
             if (thrusterFlame.visible) {
                  thrusterFlame.scale.set(1, 1, 1 + Math.random() * 0.2); // Flicker effect
             }
             
             // Smoother camera follow (third-person view)
             const cameraOffset = new THREE.Vector3(0, 25, 60);
-            const targetPosition = playerShipMesh.position.clone().add(cameraOffset.applyQuaternion(playerShipMesh.quaternion));
-            currentCameraPosition.lerp(targetPosition, 0.05);
-            camera.position.copy(currentCameraPosition);
+            const worldOffset = cameraOffset.clone().applyQuaternion(playerShipMesh.quaternion);
+            const targetPosition = playerShipMesh.position.clone().add(worldOffset);
+            
+            currentCameraPosition.lerp(targetPosition, 0.1);
+            newCamera.position.copy(currentCameraPosition);
 
             const lookAtTarget = playerShipMesh.position.clone();
-            currentLookat.lerp(lookAtTarget, 0.1);
-            camera.lookAt(currentLookat);
+            
+            currentLookat.lerp(lookAtTarget, 0.15);
+            newCamera.lookAt(currentLookat);
+
+            newCamera.getWorldDirection(cameraDirectionRef.current);
         }
 
         // NPC ship sync
@@ -252,14 +265,28 @@ const SystemView: React.FC<SystemViewProps> = (props) => {
         projectiles.forEach(p => {
             let mesh = projectileMeshes.current.get(p.id);
             if (!mesh) {
-                const geo = new THREE.SphereGeometry(0.5, 8, 8);
-                const mat = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
-                mesh = new THREE.Mesh(geo, mat);
+                if (p.type === 'missile') {
+                    const geo = new THREE.CylinderGeometry(0.5, 0.5, 4, 8);
+                    const mat = new THREE.MeshPhongMaterial({ color: 0xffffff, emissive: 0xaaaaaa });
+                    mesh = new THREE.Mesh(geo, mat);
+                } else { // laser
+                    const geo = new THREE.SphereGeometry(0.5, 8, 8);
+                    const mat = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+                    mesh = new THREE.Mesh(geo, mat);
+                }
+                
                 mesh.position.set(p.position.x, p.position.y, p.position.z);
                 scene.add(mesh);
                 projectileMeshes.current.set(p.id, mesh);
             }
             mesh.position.set(p.position.x, p.position.y, p.position.z);
+            if (p.type === 'missile' && p.velocity) {
+                // Orient missile
+                const dir = new THREE.Vector3(p.velocity.x, p.velocity.y, p.velocity.z).normalize();
+                if (dir.lengthSq() > 0) {
+                  mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+                }
+            }
         });
         const currentProjectileIds = new Set(projectiles.map(p => p.id));
         projectileMeshes.current.forEach((mesh, id) => {
@@ -352,7 +379,7 @@ const SystemView: React.FC<SystemViewProps> = (props) => {
         }
 
 
-        renderer.render(scene, camera);
+        renderer.render(scene, newCamera);
     };
     animate();
 
@@ -379,7 +406,7 @@ const SystemView: React.FC<SystemViewProps> = (props) => {
     };
   }, [props.shipBody]);
 
-  const { ship, currentSystem, flightAssist, mouseAim } = props;
+  const { ship, currentSystem, mouseAim } = props;
   const isCritical = ship.hull / ship.maxHull < 0.25;
 
   const isDockingHazardous = false; // TODO
@@ -392,69 +419,73 @@ const SystemView: React.FC<SystemViewProps> = (props) => {
   }, [ship.slots]);
 
   return (
-    <main className={`grid grid-cols-1 lg:grid-cols-[1fr_350px] absolute inset-0 transition-all duration-300
-      ${damageEffect === 'hull' ? 'animate-hull-damage' : ''}
-      ${damageEffect === 'shield' ? 'animate-shield-damage' : ''}
-      ${isCritical ? 'critical-vignette' : ''}
-    `}>
+    <div className={`w-full h-full relative ${
+        damageEffect === 'hull' ? 'animate-hull-damage' : ''
+      } ${damageEffect === 'shield' ? 'animate-shield-damage' : ''} ${
+        isCritical ? 'critical-vignette' : ''
+      }`}>
       <div ref={mountRef} className="absolute inset-0 w-full h-full" />
       
-      <section className="bg-transparent rounded-lg relative overflow-hidden flex flex-col pointer-events-none">
-        <div className="absolute top-4 left-4 z-10 pointer-events-auto">
-          <button
-            onClick={onReturnToGalaxy}
-            className="bg-orange-600 hover:bg-orange-500 text-white font-bold py-2 px-4 rounded transition duration-200"
-          >
-            Galaxy Map
-          </button>
-        </div>
-      </section>
-
-      <aside className="space-y-4 flex flex-col z-10 p-4">
-        <ShipStatusPanel ship={ship} />
-        <TargetInfoPanel target={props.target} shipBody={props.shipBody} />
-        <div className="bg-slate-800/50 p-4 rounded-lg border border-slate-700 space-y-2">
-            <h3 className="font-orbitron text-lg text-orange-300 border-b border-orange-300/30 pb-2">CONTROLS</h3>
-            <div className="text-xs text-gray-400 space-y-1">
-                <p><b>W/S:</b> Thrust | <b>A/D:</b> Yaw</p>
-                <p><b>R/F:</b> Pitch | <b>Shift+A/D:</b> Roll</p>
-                <p><b>Q/E:</b> Strafe L/R | <b>Spc/Ctrl:</b> Strafe U/D</p>
-                <p><b>Z:</b> FA Toggle ({flightAssist ? 'ON' : 'OFF'}) | <b>T:</b> Next Target</p>
-                <p><b>M:</b> Mouse Aim ({mouseAim ? 'ON' : 'OFF'})</p>
-                <p><b>C:</b> Dock | <b>Arrows:</b> Pips (SYS/ENG/WEP)</p>
-            </div>
+      <div className="absolute inset-0 grid grid-cols-1 lg:grid-cols-[1fr_350px] pointer-events-none">
+        <section className="bg-transparent rounded-lg relative overflow-hidden flex flex-col">
+            <div className="absolute top-4 left-4 z-10 pointer-events-auto">
             <button
-                onClick={onTargetNext}
-                className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-4 rounded transition duration-200"
+                onClick={onReturnToGalaxy}
+                className="bg-orange-600 hover:bg-orange-500 text-white font-bold py-2 px-4 rounded transition duration-200"
             >
-                Target Next
+                Galaxy Map
             </button>
-             <button
-                onClick={onFire}
-                disabled={!props.target || ship.energy < fireEnergyCost}
-                className="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-2 px-4 rounded transition duration-200 flex items-center justify-center gap-2 disabled:bg-gray-500 disabled:cursor-not-allowed"
-            >
-                <FireIcon className="w-5 h-5" /> Fire
-            </button>
-             <button
-                onClick={onDock}
-                disabled={!canDock}
-                title={isDockingHazardous ? "Cannot dock: hostiles nearby" : (canDock ? "Proceed to docking (C)" : "Move closer to station to dock")}
-                className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-4 rounded transition duration-200 disabled:bg-gray-500 disabled:cursor-not-allowed"
-            >
-                Dock at Station
-            </button>
-             <button
-                onClick={() => scoopableSalvage && onScoop(scoopableSalvage.id)}
-                disabled={!canScoop}
-                title={canScoop ? `Scoop ${scoopableSalvage.contents.name}` : "No salvage in range"}
-                className="w-full bg-yellow-600 hover:bg-yellow-500 text-white font-bold py-2 px-4 rounded transition duration-200 disabled:bg-gray-500 disabled-cursor-not-allowed flex items-center justify-center gap-2"
-            >
-                <SalvageIcon className="w-5 h-5" /> Scoop
-            </button>
-        </div>
-      </aside>
-    </main>
+            </div>
+        </section>
+
+        <aside className="space-y-4 flex flex-col z-10 p-4 pointer-events-auto">
+            <ShipStatusPanel ship={ship} />
+            <TargetInfoPanel target={props.target} shipBody={props.shipBody} />
+            <div className="bg-slate-800/50 p-4 rounded-lg border border-slate-700 space-y-2">
+                <h3 className="font-orbitron text-lg text-orange-300 border-b border-orange-300/30 pb-2">CONTROLS</h3>
+                <div className="text-xs text-gray-400 space-y-1">
+                    <p><b>W/↑:</b> Thrust | <b>S/↓:</b> Reverse</p>
+                    <p><b>A/←:</b> Yaw Left | <b>D/→:</b> Yaw Right</p>
+                    <p><b>R/F:</b> Pitch | <b>Shift+A/D:</b> Roll</p>
+                    <p><b>Q/E:</b> Strafe L/R | <b>PgUp/Ctrl:</b> Strafe U/D</p>
+                    <p><b>M:</b> Mouse Aim ({mouseAim ? 'ON' : 'OFF'}) | <b>T:</b> Next Target</p>
+                    <p><b>Space:</b> Fire | <b>N:</b> Arm Missile</p>
+                    <p><b>C:</b> Dock | <b>U/I/O:</b> Pips (SYS/ENG/WEP) | <b>P:</b> Reset</p>
+                </div>
+                <button
+                    onClick={onTargetNext}
+                    className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-4 rounded transition duration-200"
+                >
+                    Target Next
+                </button>
+                <button
+                    onClick={onFire}
+                    disabled={(ship.energy < fireEnergyCost && missileStatus !== 'locked') || missileStatus === 'armed'}
+                    className="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-2 px-4 rounded transition duration-200 flex items-center justify-center gap-2 disabled:bg-gray-500 disabled:cursor-not-allowed"
+                >
+                    <FireIcon className="w-5 h-5" /> Fire
+                </button>
+                <button
+                    onClick={onDock}
+                    disabled={!canDock}
+                    title={isDockingHazardous ? "Cannot dock: hostiles nearby" : (canDock ? "Proceed to docking (C)" : "Move closer to station to dock")}
+                    className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-4 rounded transition duration-200 disabled:bg-gray-500 disabled:cursor-not-allowed"
+                >
+                    Dock at Station
+                </button>
+                <button
+                    onClick={() => scoopableSalvage && onScoop(scoopableSalvage.id)}
+                    disabled={!canScoop}
+                    title={canScoop ? `Scoop ${scoopableSalvage.contents.name}` : "No salvage in range"}
+                    className="w-full bg-yellow-600 hover:bg-yellow-500 text-white font-bold py-2 px-4 rounded transition duration-200 disabled:bg-gray-500 disabled-cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                    <SalvageIcon className="w-5 h-5" /> Scoop
+                </button>
+            </div>
+        </aside>
+      </div>
+      <SystemViewHUD {...props} camera={camera} />
+    </div>
   );
 };
 

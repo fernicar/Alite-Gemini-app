@@ -77,6 +77,7 @@ export interface ShipSpec {
     slots: { type: ShipSlotType; size: number }[];
     basePrice: number;
     mass: number;
+    maxMissiles?: number;
 }
 
 export interface ShipForSale {
@@ -133,6 +134,8 @@ export interface Ship {
   angle: number; // degrees
   id: string;
   energyPips: { sys: number; eng: number; wep: number };
+  missiles: number;
+  maxMissiles: number;
 }
 
 export interface Salvage {
@@ -175,9 +178,10 @@ export interface Projectile {
   position: { x: number; y: number; z: number };
   velocity: { x: number; y: number; z: number };
   angle: number;
-  type: 'laser';
+  type: 'laser' | 'missile';
   damage: number;
   remainingLife: number; // in ms
+  targetId?: string;
 }
 
 export interface VisualEffect {

@@ -1,4 +1,5 @@
 
+
 import React, { useEffect, useRef, useState } from 'react';
 import * as CANNON from 'cannon-es';
 import * as THREE from 'three';
@@ -8,20 +9,21 @@ interface SystemViewHUDProps {
   shipBody: CANNON.Body | null;
   pressedKeys: Set<string>;
   target: Target;
-  flightAssist: boolean;
   energyPips: { sys: number; eng: number; wep: number };
   mouseAim: boolean;
+  camera: THREE.Camera | null;
 }
 
 const Pip: React.FC<{ active: boolean }> = ({ active }) => (
     <div className={`pip ${active ? 'active' : ''}`} />
 );
 
-export const SystemViewHUD: React.FC<SystemViewHUDProps> = ({ shipBody, pressedKeys, target, flightAssist, energyPips, mouseAim }) => {
+export const SystemViewHUD: React.FC<SystemViewHUDProps> = ({ shipBody, pressedKeys, target, energyPips, mouseAim, camera }) => {
   const [velocity, setVelocity] = useState(0);
   const [attitude, setAttitude] = useState({ pitch: 0, roll: 0, yaw: 0 });
   const [targetYaw, setTargetYaw] = useState(0);
   const [cursorPos, setCursorPos] = useState({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+  const [leadIndicatorPos, setLeadIndicatorPos] = useState({ x: 0, y: 0, visible: false });
   const threeEuler = useRef(new THREE.Euler()).current;
   const compassTapeRef = useRef<HTMLDivElement>(null);
 
@@ -56,14 +58,64 @@ export const SystemViewHUD: React.FC<SystemViewHUDProps> = ({ shipBody, pressedK
       });
 
       // Calculate yaw to target
-      if (target) {
+      if (target && camera) {
         const shipPos = shipBody.position;
         const targetPos = target.entity.body.position;
+        const targetVel = target.entity.body.velocity;
+
         const dx = targetPos.x - shipPos.x;
         const dz = targetPos.z - shipPos.z;
         // atan2(z,x) for compass heading, then convert to degrees
         const angleToTarget = THREE.MathUtils.radToDeg(Math.atan2(dx, dz));
         setTargetYaw(angleToTarget);
+        
+        // Lead target indicator logic
+        const Vp = 800; // Projectile speed, should be dynamic based on weapon
+        const Ps = shipBody.position;
+        const Pt = target.entity.body.position;
+        const Vt = target.entity.body.velocity;
+
+        const deltaP = new CANNON.Vec3(Pt.x - Ps.x, Pt.y - Ps.y, Pt.z - Ps.z);
+        
+        const a = Vt.dot(Vt) - Vp*Vp;
+        const b = 2 * deltaP.dot(Vt);
+        const c = deltaP.dot(deltaP);
+        
+        const discriminant = b*b - 4*a*c;
+        
+        if (discriminant >= 0) {
+            const t1 = (-b + Math.sqrt(discriminant)) / (2*a);
+            const t2 = (-b - Math.sqrt(discriminant)) / (2*a);
+            
+            const t = Math.min(t1, t2) > 0 ? Math.min(t1, t2) : Math.max(t1, t2);
+
+            if (t > 0) {
+                const Pi = new THREE.Vector3(
+                    Pt.x + Vt.x * t,
+                    Pt.y + Vt.y * t,
+                    Pt.z + Vt.z * t
+                );
+                
+                const screenPos = Pi.clone().project(camera);
+                
+                // convert normalized device coordinates to screen pixels
+                const x = (screenPos.x * 0.5 + 0.5) * window.innerWidth;
+                const y = (-screenPos.y * 0.5 + 0.5) * window.innerHeight;
+                
+                // Only show if it's in front of camera
+                const isVisible = screenPos.z < 1;
+                setLeadIndicatorPos({ x, y, visible: isVisible });
+            } else {
+                 setLeadIndicatorPos({ x: 0, y: 0, visible: false });
+            }
+        } else {
+             setLeadIndicatorPos({ x: 0, y: 0, visible: false });
+        }
+
+      } else {
+          if (leadIndicatorPos.visible) {
+              setLeadIndicatorPos({ x:0, y:0, visible: false});
+          }
       }
 
 
@@ -72,7 +124,7 @@ export const SystemViewHUD: React.FC<SystemViewHUDProps> = ({ shipBody, pressedK
 
     animationFrameId = requestAnimationFrame(updateHUD);
     return () => cancelAnimationFrame(animationFrameId);
-  }, [shipBody, threeEuler, target]);
+  }, [shipBody, threeEuler, target, camera, leadIndicatorPos.visible]);
 
   // Compass tape transform
   useEffect(() => {
@@ -143,6 +195,10 @@ export const SystemViewHUD: React.FC<SystemViewHUDProps> = ({ shipBody, pressedK
 
   return (
     <div className="hud">
+      <div className="aiming-reticle" />
+      {leadIndicatorPos.visible && (
+        <div className="lead-indicator" style={{ left: leadIndicatorPos.x, top: leadIndicatorPos.y }} />
+      )}
       {mouseAim && (
         <div 
             className="flight-cursor"
@@ -155,10 +211,8 @@ export const SystemViewHUD: React.FC<SystemViewHUDProps> = ({ shipBody, pressedK
       <div className="hud-velocity">
         {velocity.toFixed(0)} m/s
       </div>
-      
-      <div className="hud-flight-assist" style={{ color: flightAssist ? '#00e5ff' : '#ff8c00' }}>
-        FLIGHT ASSIST {flightAssist ? 'ON' : 'OFF'}
-      </div>
+
+      <div className="hud-flight-assist">FLIGHT ASSIST ON</div>
 
       <div className="hud-mouse-aim" style={{ color: mouseAim ? '#00e5ff' : '#ff8c00' }}>
         MOUSE AIM {mouseAim ? 'ON' : 'OFF'}

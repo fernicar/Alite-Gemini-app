@@ -1,5 +1,3 @@
-
-
 import { Ship, ShipSlot, ShipSpec, EquipmentItem } from '../types';
 import { SHIPS_FOR_SALE } from '../data/ships';
 import { EQUIPMENT_LIST } from '../data/equipment';
@@ -97,6 +95,9 @@ export const createShipFromSpec = (type: string, name: string, credits: number):
         velocity: { x: 0, y: 0, z: 0 },
         angle: 0,
         energyPips: { sys: 2, eng: 2, wep: 2 },
+        // FIX: Add missing properties `missiles` and `maxMissiles` to conform to the Ship type.
+        missiles: spec.maxMissiles || 0,
+        maxMissiles: spec.maxMissiles || 0,
     };
 }
 

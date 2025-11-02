@@ -1,7 +1,8 @@
 
+
 import React from 'react';
 import { Ship, Mission } from '../types';
-import { ShieldIcon, FuelIcon, CargoIcon, CreditsIcon, HullIcon, EnergyIcon, MissionIcon } from './icons';
+import { ShieldIcon, FuelIcon, CargoIcon, CreditsIcon, HullIcon, EnergyIcon, MissionIcon, MissileIcon } from './icons';
 
 export const ShipStatusPanel: React.FC<{ ship: Ship; activeMission?: Mission | null }> = ({ ship, activeMission }) => (
   <div className="bg-slate-800/50 p-4 rounded-lg border border-slate-700 space-y-4">
@@ -42,6 +43,11 @@ export const ShipStatusPanel: React.FC<{ ship: Ship; activeMission?: Mission | n
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2"><CargoIcon className="w-5 h-5 text-yellow-400" /> Cargo</div>
         <div className="font-mono text-yellow-300">{ship.cargo.reduce((acc, item) => acc + (item.quantity * item.weight), 0)} / {ship.cargoCapacity} T</div>
+      </div>
+
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2"><MissileIcon className="w-5 h-5 text-red-400" /> Missiles</div>
+        <div className="font-mono text-red-300">{ship.missiles} / {ship.maxMissiles}</div>
       </div>
 
       <div className="flex items-center justify-between">

@@ -1,6 +1,7 @@
 import * as CANNON from 'cannon-es';
 import { Ship, NPC, Celestial, Projectile } from '../types';
 import { SHIPS_FOR_SALE } from '../data/ships';
+import * as THREE from 'three';
 
 const COLLISION_GROUPS = {
     SHIP: 1,
@@ -16,7 +17,6 @@ class PhysicsService3D {
     private projectileCounter = 0;
     private subscribers: (() => void)[] = [];
     private collisionSubscribers: ((collision: { projectile: Projectile, target: NPC | Ship }) => void)[] = [];
-    private flightAssist = true;
     private assistedThrust = 0;
     private assistedStrafe = { x: 0, y: 0 };
     private shipPerformance = {
@@ -86,12 +86,12 @@ class PhysicsService3D {
             mass: shipSpec.mass,
             shape: shape,
             position: new CANNON.Vec3(ship.position.x, ship.position.y, ship.position.z),
-            angularDamping: 0.5,
-            linearDamping: 0.1,
+            angularDamping: 0.98,
+            linearDamping: 0.0,
             collisionFilterGroup: COLLISION_GROUPS.SHIP,
             collisionFilterMask: -1, // Collide with everything
         });
-        (this.shipBody as any).userData = { type: 'player', data: ship };
+        (this.shipBody as any).userData = { type: 'player', data: ship, arcadeSpeed: 0 };
 
         this.world.addBody(this.shipBody);
     }
@@ -149,52 +149,10 @@ class PhysicsService3D {
         this.npcBodies.set(celestial.id, body); // Store with NPCs for simplicity
     }
 
-
-    public applyThrust(amount: number) { // +1 for forward, -0.5 for reverse
+    public applyLocalTorque(localTorque: CANNON.Vec3) {
         if (!this.shipBody) return;
-        const thrustForce = 250000;
-        const reverseThrustForce = 125000;
-        
-        const forceValue = amount > 0 ? amount * thrustForce : amount * reverseThrustForce;
-        const localForce = new CANNON.Vec3(0, 0, -forceValue);
-        const worldForce = this.shipBody.quaternion.vmult(localForce);
-        this.shipBody.applyForce(worldForce, this.shipBody.position);
-    }
-    
-    public applyStrafe(strafe: { x: number; y: number }) {
-        if (!this.shipBody) return;
-        const strafeForce = 150000;
-        const localForce = new CANNON.Vec3(strafe.x * strafeForce, strafe.y * strafeForce, 0);
-        const worldForce = this.shipBody.quaternion.vmult(localForce);
-        this.shipBody.applyForce(worldForce, this.shipBody.position);
-    }
-    
-    public applyYaw(amount: number) {
-        if (!this.shipBody) return;
-        const turnTorque = 250000 * this.shipPerformance.turnRateMultiplier; 
-        const localTorque = new CANNON.Vec3(0, amount * turnTorque, 0); 
         const worldTorque = this.shipBody.quaternion.vmult(localTorque);
         this.shipBody.applyTorque(worldTorque);
-    }
-    
-    public applyPitch(amount: number) {
-        if (!this.shipBody) return;
-        const turnTorque = 250000 * this.shipPerformance.turnRateMultiplier;
-        const localTorque = new CANNON.Vec3(amount * turnTorque, 0, 0); 
-        const worldTorque = this.shipBody.quaternion.vmult(localTorque);
-        this.shipBody.applyTorque(worldTorque);
-    }
-    
-    public applyRoll(amount: number) {
-        if (!this.shipBody) return;
-        const turnTorque = 100000 * this.shipPerformance.turnRateMultiplier;
-        const localTorque = new CANNON.Vec3(0, 0, amount * turnTorque);
-        const worldTorque = this.shipBody.quaternion.vmult(localTorque);
-        this.shipBody.applyTorque(worldTorque);
-    }
-
-    public setFlightAssist(enabled: boolean) {
-        this.flightAssist = enabled;
     }
 
     public setAssistedThrust(thrust: number) {
@@ -205,55 +163,13 @@ class PhysicsService3D {
         this.assistedStrafe = strafe;
     }
 
-    private updateFlightAssistOn(deltaTime: number) {
-        if (!this.shipBody) return;
-        const body = this.shipBody;
-    
-        const shipData = (body as any).userData.data as Ship;
-        const shipSpec = SHIPS_FOR_SALE.find(sfs => sfs.type === shipData.type)?.spec;
-        if (!shipSpec) return;
-    
-        // 1. Handle Translation
-        const maxSpeed = shipSpec.speed * this.shipPerformance.topSpeedMultiplier;
-        const acceleration = 200; 
-        const currentSpeed = body.velocity.length();
-    
-        let targetSpeed = currentSpeed + (this.assistedThrust * acceleration * deltaTime);
-        if (this.assistedThrust === 0) {
-            targetSpeed *= (1 - deltaTime * 1.5);
-        }
-        targetSpeed = Math.max(this.assistedThrust < 0 ? -maxSpeed * 0.5 : 0, Math.min(targetSpeed, maxSpeed));
-    
-        const forwardVec = body.quaternion.vmult(new CANNON.Vec3(0, 0, -1));
-        const rightVec = body.quaternion.vmult(new CANNON.Vec3(1, 0, 0));
-        const upVec = body.quaternion.vmult(new CANNON.Vec3(0, 1, 0));
-    
-        let targetVelocity = forwardVec.scale(targetSpeed);
-        
-        const strafeSpeed = maxSpeed * 0.5;
-        const strafeVelocity = rightVec.scale(this.assistedStrafe.x * strafeSpeed)
-                                    .vadd(upVec.scale(this.assistedStrafe.y * strafeSpeed));
-    
-        targetVelocity.vadd(strafeVelocity, targetVelocity);
-    
-        const lerpFactor = 1 - Math.pow(0.01, deltaTime);
-        body.velocity.lerp(targetVelocity, lerpFactor, body.velocity);
-    
-        // 2. Handle Rotation Dampening
-        const hasRotationalInput = body.torque.lengthSquared() > 0.001;
-        if (!hasRotationalInput) {
-            const dampeningFactor = 1 - Math.pow(0.001, deltaTime);
-            body.angularVelocity.scale(1 - dampeningFactor, body.angularVelocity);
-        }
-    }
-
     public applyNpcThrust(npcId: string, amount: number) {
         const body = this.npcBodies.get(npcId);
         if(!body) return;
         const thrustForce = 100000; // NPCs are a bit weaker
         const localForce = new CANNON.Vec3(0, 0, -amount * thrustForce);
         const worldForce = body.quaternion.vmult(localForce);
-        body.applyForce(worldForce, body.position);
+        body.applyForce(worldForce);
     }
     
     public applyNpcYaw(npcId: string, amount: number) {
@@ -265,7 +181,7 @@ class PhysicsService3D {
         body.applyTorque(worldTorque);
     }
 
-    public fireProjectile(ownerId: string, damage: number, speed: number = 800) {
+    public fireProjectile(ownerId: string, damage: number, speed: number = 800, type: 'laser' | 'missile' = 'laser', targetId?: string, direction?: THREE.Vector3) {
         let ownerBody: CANNON.Body | null = null;
         if (this.shipBody && (this.shipBody as any).userData.data.id === ownerId) {
             ownerBody = this.shipBody;
@@ -278,9 +194,9 @@ class PhysicsService3D {
             return;
         }
 
-        const projectileShape = new CANNON.Sphere(0.5);
+        const projectileShape = type === 'missile' ? new CANNON.Cylinder(0.5, 0.5, 4, 8) : new CANNON.Sphere(0.5);
         const projectileBody = new CANNON.Body({
-            mass: 0.1,
+            mass: type === 'missile' ? 1.0 : 0.1,
             shape: projectileShape,
             linearDamping: 0,
             collisionFilterGroup: COLLISION_GROUPS.PROJECTILE,
@@ -291,8 +207,51 @@ class PhysicsService3D {
         const worldStartPosition = ownerBody.quaternion.vmult(startPositionOffset);
         projectileBody.position.copy(ownerBody.position).vadd(worldStartPosition, projectileBody.position);
         
-        const velocityVector = new CANNON.Vec3(0, 0, -speed);
-        const worldVelocity = ownerBody.quaternion.vmult(velocityVector);
+        let projectileDirectionVec: THREE.Vector3;
+
+        if (direction) {
+            const firePoint = new THREE.Vector3(
+                projectileBody.position.x,
+                projectileBody.position.y,
+                projectileBody.position.z
+            );
+
+            // Calculate camera position based on ship's orientation
+            const cameraOffset = new THREE.Vector3(0, 25, 60);
+            const shipQuaternion = new THREE.Quaternion(
+                ownerBody.quaternion.x,
+                ownerBody.quaternion.y,
+                ownerBody.quaternion.z,
+                ownerBody.quaternion.w
+            );
+            const worldOffset = cameraOffset.applyQuaternion(shipQuaternion);
+            const shipPosition = new THREE.Vector3(
+                ownerBody.position.x,
+                ownerBody.position.y,
+                ownerBody.position.z
+            );
+            // This is the ideal (unsmoothed) camera position
+            const cameraPosition = shipPosition.add(worldOffset);
+
+            const aimPoint = new THREE.Vector3()
+                .copy(cameraPosition)
+                .add(new THREE.Vector3().copy(direction).multiplyScalar(10000)); // Point far away
+
+            projectileDirectionVec = new THREE.Vector3().subVectors(aimPoint, firePoint).normalize();
+
+        } else {
+            // Fallback to ship's forward direction
+            const forward = new CANNON.Vec3(0, 0, -1);
+            const worldForward = ownerBody.quaternion.vmult(forward);
+            projectileDirectionVec = new THREE.Vector3(worldForward.x, worldForward.y, worldForward.z);
+        }
+        
+        const worldVelocity = new CANNON.Vec3(
+            projectileDirectionVec.x * speed,
+            projectileDirectionVec.y * speed,
+            projectileDirectionVec.z * speed
+        );
+
         projectileBody.velocity.copy(ownerBody.velocity).vadd(worldVelocity, projectileBody.velocity);
         
         const projectileId = `proj-${this.projectileCounter++}`;
@@ -303,9 +262,10 @@ class PhysicsService3D {
             position: { x: projectileBody.position.x, y: projectileBody.position.y, z: projectileBody.position.z },
             velocity: { x: projectileBody.velocity.x, y: projectileBody.velocity.y, z: projectileBody.velocity.z },
             angle: 0, // Not used in 3D
-            type: 'laser',
+            type: type,
             damage,
-            remainingLife: 3000, // 3 seconds
+            remainingLife: type === 'missile' ? 8000 : 3000, // missiles live longer
+            targetId,
         };
 
         (projectileBody as any).userData = { type: 'projectile', data: projectileData, shouldRemove: false };
@@ -333,9 +293,33 @@ class PhysicsService3D {
 
 
     public update(deltaTime: number) {
-        if (this.shipBody && this.flightAssist) {
-            this.updateFlightAssistOn(deltaTime);
+        if (this.shipBody) {
+            const shipUserData = (this.shipBody as any).userData;
+            if (!shipUserData) return;
+            const shipData = shipUserData.data as Ship;
+            const shipSpec = SHIPS_FOR_SALE.find(sfs => sfs.type === shipData.type)?.spec;
+            if (!shipSpec) return;
+    
+            // Flight Assist: Apply damping when no input
+            if (this.assistedThrust === 0 && this.assistedStrafe.x === 0 && this.assistedStrafe.y === 0) {
+                this.shipBody.linearDamping = 0.8;
+            } else {
+                this.shipBody.linearDamping = 0.0;
+            }
+    
+            const thrustForce = shipSpec.speed * shipSpec.mass * 10;
+            const strafeForce = thrustForce * 0.75;
+    
+            const localForce = new CANNON.Vec3(
+                this.assistedStrafe.x * strafeForce,
+                this.assistedStrafe.y * strafeForce,
+                -this.assistedThrust * thrustForce
+            );
+    
+            const worldForce = this.shipBody.quaternion.vmult(localForce);
+            this.shipBody.applyForce(worldForce);
         }
+        
         this.world.step(1 / 60, deltaTime, 3);
         
         const projectilesToRemove: string[] = [];

@@ -106,6 +106,11 @@ class AudioService {
     this.playSound('square', 440, 0.2, 0.1);
   }
 
+  public playMissileLaunchSound() {
+    this.playSound('sawtooth', 100, 1.5, 0.6);
+    this.playSound('square', 50, 1.5, 0.4);
+  }
+
   public playExplosionSound() {
     this.playSound('sawtooth', 16, 1.5, 0.8);
     this.playSound('sawtooth', 200, 0.8, 0.7);
