@@ -1,5 +1,4 @@
 
-
 import React, { useMemo, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
@@ -28,7 +27,6 @@ interface SystemViewProps {
   visualEffects: VisualEffect[];
   shipBody: CANNON.Body | null;
   pressedKeys: Set<string>;
-  mouseAim: boolean;
   scoopableSalvage: Salvage | null;
   cameraDirectionRef: React.MutableRefObject<THREE.Vector3>;
   missileStatus: 'unarmed' | 'armed' | 'locked';
@@ -74,12 +72,6 @@ const SystemView: React.FC<SystemViewProps> = (props) => {
   }, [damageEffect]);
 
    useEffect(() => {
-    if (propsRef.current.pressedKeys.has('c')) {
-      propsRef.current.onDock();
-    }
-   }, [props.pressedKeys, props.onDock]);
-
-  useEffect(() => {
     const { shipBody } = props;
     if (!mountRef.current || !shipBody) return;
 
@@ -127,15 +119,15 @@ const SystemView: React.FC<SystemViewProps> = (props) => {
     const mainBody = new THREE.Mesh(new THREE.BoxGeometry(10, 4, 25), bodyMat);
     playerShipMesh.add(mainBody);
     const cockpit = new THREE.Mesh(new THREE.BoxGeometry(6, 3, 5), bodyMat);
-    cockpit.position.set(0, 2.5, 8);
+    cockpit.position.set(0, 2.5, -10); // Cockpit at the front (-Z)
     playerShipMesh.add(cockpit);
     scene.add(playerShipMesh);
     
     // Main Thruster Effect
     const thrusterMat = new THREE.MeshBasicMaterial({ color: 0xffd700, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
     const thrusterFlame = new THREE.Mesh(new THREE.ConeGeometry(2.5, 20, 8), thrusterMat);
-    thrusterFlame.position.z = -22.5; // At the back of the ship
-    thrusterFlame.rotation.x = Math.PI / 2;
+    thrusterFlame.position.z = 15; // At the back of the ship (+Z)
+    thrusterFlame.rotation.x = -Math.PI / 2; // Point cone backward
     thrusterFlame.visible = false;
     playerShipMesh.add(thrusterFlame);
     
@@ -221,14 +213,25 @@ const SystemView: React.FC<SystemViewProps> = (props) => {
             
             // Smoother camera follow (third-person view)
             const cameraOffset = new THREE.Vector3(0, 25, 60);
-            const worldOffset = cameraOffset.clone().applyQuaternion(playerShipMesh.quaternion);
-            const targetPosition = playerShipMesh.position.clone().add(worldOffset);
-            
-            currentCameraPosition.lerp(targetPosition, 0.1);
+
+            // 1. Calculate camera's desired position in world space
+            const idealCameraPos = new THREE.Vector3().copy(cameraOffset);
+            idealCameraPos.applyQuaternion(playerShipMesh.quaternion);
+            idealCameraPos.add(playerShipMesh.position);
+
+            // 2. Smoothly move camera to the ideal position
+            currentCameraPosition.lerp(idealCameraPos, 0.1);
             newCamera.position.copy(currentCameraPosition);
 
-            const lookAtTarget = playerShipMesh.position.clone();
+            // 3. Determine the ship's "up" direction in world space
+            const shipUp = new THREE.Vector3(0, 1, 0);
+            shipUp.applyQuaternion(playerShipMesh.quaternion);
             
+            // 4. Set the camera's up vector to match the ship's up vector, preventing gimbal lock and ensuring roll follows ship
+            newCamera.up.copy(shipUp);
+
+            // 5. Smoothly look at the ship's position
+            const lookAtTarget = playerShipMesh.position.clone();
             currentLookat.lerp(lookAtTarget, 0.15);
             newCamera.lookAt(currentLookat);
 
@@ -406,7 +409,7 @@ const SystemView: React.FC<SystemViewProps> = (props) => {
     };
   }, [props.shipBody]);
 
-  const { ship, currentSystem, mouseAim } = props;
+  const { ship, currentSystem } = props;
   const isCritical = ship.hull / ship.maxHull < 0.25;
 
   const isDockingHazardous = false; // TODO
@@ -438,17 +441,18 @@ const SystemView: React.FC<SystemViewProps> = (props) => {
             </div>
         </section>
 
-        <aside className="space-y-4 flex flex-col z-10 p-4 pointer-events-auto">
+        <aside className="flex flex-col z-10 p-4 pointer-events-auto max-h-full overflow-y-auto custom-scrollbar gap-4 bg-gradient-to-l from-black/50 to-transparent lg:bg-none">
             <ShipStatusPanel ship={ship} />
             <TargetInfoPanel target={props.target} shipBody={props.shipBody} />
             <div className="bg-slate-800/50 p-4 rounded-lg border border-slate-700 space-y-2">
                 <h3 className="font-orbitron text-lg text-orange-300 border-b border-orange-300/30 pb-2">CONTROLS</h3>
                 <div className="text-xs text-gray-400 space-y-1">
-                    <p><b>W/↑:</b> Thrust | <b>S/↓:</b> Reverse</p>
-                    <p><b>A/←:</b> Yaw Left | <b>D/→:</b> Yaw Right</p>
-                    <p><b>R/F:</b> Pitch | <b>Shift+A/D:</b> Roll</p>
-                    <p><b>Q/E:</b> Strafe L/R | <b>PgUp/Ctrl:</b> Strafe U/D</p>
-                    <p><b>M:</b> Mouse Aim ({mouseAim ? 'ON' : 'OFF'}) | <b>T:</b> Next Target</p>
+                    <p><b>Mouse:</b> Pitch & Roll</p>
+                    <p><b>W/S/↑/↓:</b> Thrust Fwd/Rev</p>
+                    <p><b>A/D/←/→:</b> Yaw Left/Right</p>
+                    <p><b>Q/E:</b> Strafe Left/Right</p>
+                    <p><b>R/F:</b> Strafe Up/Down</p>
+                    <p><b>T:</b> Next Target</p>
                     <p><b>Space:</b> Fire | <b>N:</b> Arm Missile</p>
                     <p><b>C:</b> Dock | <b>U/I/O:</b> Pips (SYS/ENG/WEP) | <b>P:</b> Reset</p>
                 </div>

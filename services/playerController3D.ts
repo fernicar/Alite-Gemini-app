@@ -1,9 +1,8 @@
 
-
 import { physicsService3D } from './physicsService3D';
 import * as CANNON from 'cannon-es';
 import { SHIPS_FOR_SALE } from '../data/ships';
-import { Ship } from '../types';
+import * as THREE from 'three';
 
 class PlayerController3D {
     private mousePosition = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
@@ -21,68 +20,101 @@ class PlayerController3D {
         this.mousePosition.y = e.clientY;
     };
     
-    public handlePlayerInput(pressedKeys: Set<string>, mouseAim: boolean) {
+    public handlePlayerInput(pressedKeys: Set<string>) {
         const shipBody = physicsService3D.getShipBody();
         if (!shipBody) return;
 
         const shipSpec = SHIPS_FOR_SALE.find(sfs => sfs.type === (shipBody as any).userData.data.type)?.spec;
         if (!shipSpec) return;
 
-        let yaw = 0;
-        let pitch = 0;
-        let roll = 0;
-        let thrust = 0;
-        let strafe = { x: 0, y: 0 };
+        let yawInput = 0;
+        let pitchInput = 0;
+        let rollInput = 0;
+        let thrustInput = 0;
+        let strafeInput = { x: 0, y: 0 }; // x for horizontal, y for vertical
 
-        if (mouseAim) {
-            const centerX = window.innerWidth / 2;
-            const centerY = window.innerHeight / 2;
-            
-            const deltaX = this.mousePosition.x - centerX;
-            const deltaY = this.mousePosition.y - centerY;
+        // --- Gyro-Mouse Controls (Pitch & Roll) ---
+        const centerX = window.innerWidth / 2;
+        const centerY = window.innerHeight / 2;
+        const deltaX = this.mousePosition.x - centerX;
+        const deltaY = this.mousePosition.y - centerY;
+        
+        // The further the mouse from the center, the faster the turn.
+        // Clamp to a reasonable max rotation.
+        pitchInput = -THREE.MathUtils.clamp(deltaY / (centerY * 0.8), -1, 1);
+        rollInput = -THREE.MathUtils.clamp(deltaX / (centerX * 0.8), -1, 1);
 
-            const deadZone = 30; // pixels
-            const maxRadius = Math.min(centerX, centerY) * 0.8;
+        // --- Keyboard Controls ---
+        if (pressedKeys.has('a')) yawInput = 1;
+        if (pressedKeys.has('d')) yawInput = -1;
 
-            const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+        if (pressedKeys.has('w') || pressedKeys.has('arrowup')) thrustInput = 1;
+        if (pressedKeys.has('s') || pressedKeys.has('arrowdown')) thrustInput = -0.5; // Less reverse thrust
 
-            if (distance > deadZone) {
-                const effectiveDistance = Math.min(distance, maxRadius);
-                const turnStrength = (effectiveDistance - deadZone) / (maxRadius - deadZone);
-                
-                yaw = -(deltaX / maxRadius) * turnStrength;
-                pitch = -(deltaY / maxRadius) * turnStrength;
-            }
+        if (pressedKeys.has('q')) strafeInput.x = -1; // Strafe Left
+        if (pressedKeys.has('e')) strafeInput.x = 1;  // Strafe Right
 
-            if (pressedKeys.has('shift') && pressedKeys.has('a')) roll = -1;
-            if (pressedKeys.has('shift') && pressedKeys.has('d')) roll = 1;
+        if (pressedKeys.has('r')) strafeInput.y = 1;  // Strafe Up
+        if (pressedKeys.has('f')) strafeInput.y = -1; // Strafe Down
 
-        } else {
-            if ((pressedKeys.has('a') && !pressedKeys.has('shift')) || pressedKeys.has('arrowleft')) yaw = 1;
-            if ((pressedKeys.has('d') && !pressedKeys.has('shift')) || pressedKeys.has('arrowright')) yaw = -1;
-            if (pressedKeys.has('r')) pitch = -1;
-            if (pressedKeys.has('f')) pitch = 1;
-            if (pressedKeys.has('shift') && pressedKeys.has('a')) roll = 1;
-            if (pressedKeys.has('shift') && pressedKeys.has('d')) roll = -1;
+        // Wake the ship's physics body if any input is detected
+        if (yawInput !== 0 || pitchInput !== 0 || rollInput !== 0 || thrustInput !== 0 || strafeInput.x !== 0 || strafeInput.y !== 0) {
+            shipBody.wakeUp();
         }
+        
+        // --- Apply Physics ---
 
-        if (pressedKeys.has('w') || pressedKeys.has('arrowup')) thrust = 1; 
-        if (pressedKeys.has('s') || pressedKeys.has('arrowdown')) thrust = -0.5;
-        if (pressedKeys.has('q')) strafe.x = -1; 
-        if (pressedKeys.has('e')) strafe.x = 1; 
-        if (pressedKeys.has('pageup') || pressedKeys.has(' ')) strafe.y = 1; 
-        if (pressedKeys.has('control') || pressedKeys.has('c')) strafe.y = -1;
+        // 1. Rotation (Using a P-controller for smooth, assisted flight)
+        const MAX_ROTATION_SPEED = Math.PI * 0.8; // Max ~144 deg/s rotation
+        const rotationCorrectionFactor = shipSpec.mass * 5; // How quickly the ship corrects to the target rotation speed. Tunable.
 
-        const turnTorque = shipSpec.turnRate * shipSpec.mass * 20;
-        const localTorque = new CANNON.Vec3(
-            pitch * turnTorque * 0.8, // Pitch is usually a bit slower
-            yaw * turnTorque,
-            roll * turnTorque * 1.2 // Roll is fastest
+        // Desired angular velocity in the ship's local frame
+        const targetLocalAngularVelocity = new CANNON.Vec3(
+            pitchInput * MAX_ROTATION_SPEED,
+            yawInput * MAX_ROTATION_SPEED,
+            rollInput * MAX_ROTATION_SPEED
         );
-        physicsService3D.applyLocalTorque(localTorque);
 
-        physicsService3D.setAssistedThrust(thrust);
-        physicsService3D.setAssistedStrafe(strafe);
+        // Current angular velocity in world frame, convert to local
+        const worldAngularVelocity = shipBody.angularVelocity;
+        const shipInverseQuaternion = shipBody.quaternion.inverse();
+        const localAngularVelocity = shipInverseQuaternion.vmult(worldAngularVelocity);
+
+        // Calculate the error (difference) between desired and current rotation
+        const angularVelocityError = new CANNON.Vec3();
+        targetLocalAngularVelocity.vsub(localAngularVelocity, angularVelocityError);
+        
+        // Apply a corrective torque proportional to the error
+        // This makes the ship automatically turn towards the desired rotation speed
+        const localTorque = new CANNON.Vec3(
+            angularVelocityError.x * rotationCorrectionFactor,
+            angularVelocityError.y * rotationCorrectionFactor,
+            angularVelocityError.z * rotationCorrectionFactor
+        );
+
+        // Convert local torque to world space and apply it
+        const worldTorque = shipBody.quaternion.vmult(localTorque);
+        shipBody.applyTorque(worldTorque);
+
+
+        // 2. Translation (Apply force)
+        const mainThrustForce = shipSpec.mass * shipSpec.acceleration * 10; // Re-tuned multiplier
+        const strafeThrustForce = mainThrustForce * 0.6;
+
+        const localForce = new CANNON.Vec3(
+            strafeInput.x * strafeThrustForce,
+            strafeInput.y * strafeThrustForce,
+            -thrustInput * mainThrustForce // Thrust along local -Z axis (forward)
+        );
+        const worldForce = shipBody.quaternion.vmult(localForce);
+        shipBody.applyForce(worldForce);
+
+        // 3. Speed Cap
+        const maxSpeed = shipSpec.speed;
+        if (shipBody.velocity.length() > maxSpeed) {
+            shipBody.velocity.normalize();
+            shipBody.velocity.scale(maxSpeed, shipBody.velocity);
+        }
     }
 }
 

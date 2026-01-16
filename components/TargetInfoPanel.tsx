@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect } from 'react';
 import { NPC, Celestial } from '../types';
 import { ShieldIcon, HullIcon } from './icons';
@@ -34,14 +35,15 @@ export const TargetInfoPanel: React.FC<{ target: Target, shipBody: CANNON.Body |
     );
   }
 
-  // FIX: Use a variable for the display name since NPC has no `name` property.
-  const displayName = target.type === 'npc' ? target.entity.data.shipType : target.entity.data.name;
+  const displayName = target.type === 'npc' 
+    ? `${target.entity.data.type} (${target.entity.data.shipType})` 
+    : target.entity.data.name;
   const isHostile = target.type === 'npc' && target.entity.data.isHostile;
 
   return (
     <div className={`bg-slate-800/50 p-4 rounded-lg border ${isHostile ? 'border-red-500' : 'border-slate-700'} space-y-3`}>
         <div className="flex justify-between items-center border-b pb-2" style={{ borderColor: isHostile ? 'rgba(239, 68, 68, 0.3)' : 'rgba(255,255,255,0.1)'}}>
-            <h3 className={`font-orbitron text-lg ${isHostile ? 'text-red-400' : 'text-orange-300'}`}>{target.entity.data.type}: {displayName}</h3>
+            <h3 className={`font-orbitron text-lg ${isHostile ? 'text-red-400' : 'text-orange-300'}`}>{displayName}</h3>
             {isHostile && <span className="text-red-500 text-xs font-bold animate-pulse">HOSTILE</span>}
         </div>
         <div className="font-mono text-sm text-yellow-300">

@@ -1,4 +1,5 @@
 
+
 import React, { useState, useMemo, useEffect } from 'react';
 import { Ship, StarSystem, ShipForSale } from '../types';
 import { SHIPS_FOR_SALE } from '../data/ships';
@@ -32,9 +33,23 @@ const ShipyardView: React.FC<{
     const [showConfirm, setShowConfirm] = useState(false);
 
     const currentShipSpec = useMemo(() => {
+        // FIX: Add missing properties to fallback object to conform to ShipSpec and prevent type errors.
         return SHIPS_FOR_SALE.find(s => s.type === ship.type)?.spec || {
-            hull: ship.maxHull, shields: ship.maxShields, maxFuel: ship.maxFuel, cargoCapacity: ship.cargoCapacity, speed: 0, jumpRange: 0, slots: [], basePrice: ship.basePrice, manufacturer: 'Unknown', class: 'Multi-purpose'
-        }
+            manufacturer: 'Unknown',
+            class: 'Multi-purpose',
+            hull: ship.maxHull,
+            shields: ship.maxShields,
+            maxFuel: ship.maxFuel,
+            cargoCapacity: ship.cargoCapacity,
+            maxEnergy: ship.maxEnergy,
+            speed: 0,
+            turnRate: 0,
+            acceleration: 0,
+            jumpRange: 0,
+            slots: [],
+            basePrice: ship.basePrice,
+            mass: 0,
+        };
     }, [ship]);
 
     const tradeInData = useMemo(() => {

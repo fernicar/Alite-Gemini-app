@@ -1,4 +1,5 @@
 
+
 import { ShipForSale } from '../types';
 
 export const SHIPS_FOR_SALE: ShipForSale[] = [
@@ -14,6 +15,8 @@ export const SHIPS_FOR_SALE: ShipForSale[] = [
             maxEnergy: 12,
             speed: 340,
             turnRate: 74,
+            // FIX: Add 'acceleration' property.
+            acceleration: 80,
             jumpRange: 8,
             mass: 50,
             slots: [
@@ -42,6 +45,8 @@ export const SHIPS_FOR_SALE: ShipForSale[] = [
             maxEnergy: 10,
             speed: 280,
             turnRate: 80,
+            // FIX: Add 'acceleration' property.
+            acceleration: 60,
             jumpRange: 10,
             mass: 180,
             slots: [
@@ -72,6 +77,8 @@ export const SHIPS_FOR_SALE: ShipForSale[] = [
             maxEnergy: 9,
             speed: 300,
             turnRate: 40,
+            // FIX: Add 'acceleration' property.
+            acceleration: 65,
             jumpRange: 12,
             mass: 120,
             slots: [
@@ -101,6 +108,8 @@ export const SHIPS_FOR_SALE: ShipForSale[] = [
             maxEnergy: 20,
             speed: 200,
             turnRate: 30,
+            // FIX: Add 'acceleration' property.
+            acceleration: 30,
             jumpRange: 15,
             mass: 350,
             slots: [

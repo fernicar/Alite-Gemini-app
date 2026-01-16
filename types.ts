@@ -1,5 +1,4 @@
 
-
 export interface StarSystem {
   id: number;
   name: string;
@@ -54,6 +53,7 @@ export interface EquipmentItem {
         shieldStrength?: number;
         cargoIncrease?: number;
         powerGenerated?: number;
+        rate?: number;
     };
 }
 
@@ -73,6 +73,8 @@ export interface ShipSpec {
     maxEnergy: number; // Base energy from ship's built-in reactor
     speed: number;
     turnRate: number; // degrees per second
+    // FIX: Add 'acceleration' property for physics calculations.
+    acceleration: number;
     jumpRange: number;
     slots: { type: ShipSlotType; size: number }[];
     basePrice: number;

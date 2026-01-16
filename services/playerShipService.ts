@@ -132,7 +132,7 @@ class PlayerShipService {
     public useEnergy(amount: number) {
         this.ship = {
             ...this.ship,
-            energy: Math.max(0, this.ship.energy - amount)
+            hull: Math.max(0, this.ship.energy - amount)
         };
         this.notify();
     }

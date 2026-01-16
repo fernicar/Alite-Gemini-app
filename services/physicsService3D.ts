@@ -1,3 +1,4 @@
+
 import * as CANNON from 'cannon-es';
 import { Ship, NPC, Celestial, Projectile } from '../types';
 import { SHIPS_FOR_SALE } from '../data/ships';
@@ -17,8 +18,6 @@ class PhysicsService3D {
     private projectileCounter = 0;
     private subscribers: (() => void)[] = [];
     private collisionSubscribers: ((collision: { projectile: Projectile, target: NPC | Ship }) => void)[] = [];
-    private assistedThrust = 0;
-    private assistedStrafe = { x: 0, y: 0 };
     private shipPerformance = {
         topSpeedMultiplier: 1.0,
         turnRateMultiplier: 1.0,
@@ -35,7 +34,7 @@ class PhysicsService3D {
             const bodyB = event.bodyB as any;
 
             const projectileBody = (bodyA.userData?.type === 'projectile') ? bodyA : (bodyB.userData?.type === 'projectile') ? bodyB : null;
-            const shipBodyHit = (bodyA.userData?.type === 'npc' || bodyA.userData?.type === 'player' || bodyA.userData?.type === 'celestial') ? bodyA : (bodyB.userData?.type === 'npc' || bodyB.userData?.type === 'player' || bodyB.userData?.type === 'celestial') ? bodyB : null;
+            const shipBodyHit = (bodyA.userData?.type === 'npc' || bodyA.userData?.type === 'player' || bodyA.userData?.type === 'celestial') ? bodyA : (bodyB.userData?.type === 'npc' || bodyB.userData?.type === 'player' || bodyA.userData?.type === 'celestial') ? bodyB : null;
 
             if (projectileBody && shipBodyHit && shipBodyHit.userData?.type !== 'celestial') {
                 const projectileData = projectileBody.userData.data as Projectile;
@@ -86,8 +85,8 @@ class PhysicsService3D {
             mass: shipSpec.mass,
             shape: shape,
             position: new CANNON.Vec3(ship.position.x, ship.position.y, ship.position.z),
-            angularDamping: 0.98,
-            linearDamping: 0.0,
+            angularDamping: 0.5, // Natural damping in space, P-controller handles stopping
+            linearDamping: 0.08,
             collisionFilterGroup: COLLISION_GROUPS.SHIP,
             collisionFilterMask: -1, // Collide with everything
         });
@@ -147,20 +146,6 @@ class PhysicsService3D {
 
         this.world.addBody(body);
         this.npcBodies.set(celestial.id, body); // Store with NPCs for simplicity
-    }
-
-    public applyLocalTorque(localTorque: CANNON.Vec3) {
-        if (!this.shipBody) return;
-        const worldTorque = this.shipBody.quaternion.vmult(localTorque);
-        this.shipBody.applyTorque(worldTorque);
-    }
-
-    public setAssistedThrust(thrust: number) {
-        this.assistedThrust = thrust;
-    }
-
-    public setAssistedStrafe(strafe: { x: number, y: number }) {
-        this.assistedStrafe = strafe;
     }
 
     public applyNpcThrust(npcId: string, amount: number) {
@@ -293,33 +278,6 @@ class PhysicsService3D {
 
 
     public update(deltaTime: number) {
-        if (this.shipBody) {
-            const shipUserData = (this.shipBody as any).userData;
-            if (!shipUserData) return;
-            const shipData = shipUserData.data as Ship;
-            const shipSpec = SHIPS_FOR_SALE.find(sfs => sfs.type === shipData.type)?.spec;
-            if (!shipSpec) return;
-    
-            // Flight Assist: Apply damping when no input
-            if (this.assistedThrust === 0 && this.assistedStrafe.x === 0 && this.assistedStrafe.y === 0) {
-                this.shipBody.linearDamping = 0.8;
-            } else {
-                this.shipBody.linearDamping = 0.0;
-            }
-    
-            const thrustForce = shipSpec.speed * shipSpec.mass * 10;
-            const strafeForce = thrustForce * 0.75;
-    
-            const localForce = new CANNON.Vec3(
-                this.assistedStrafe.x * strafeForce,
-                this.assistedStrafe.y * strafeForce,
-                -this.assistedThrust * thrustForce
-            );
-    
-            const worldForce = this.shipBody.quaternion.vmult(localForce);
-            this.shipBody.applyForce(worldForce);
-        }
-        
         this.world.step(1 / 60, deltaTime, 3);
         
         const projectilesToRemove: string[] = [];

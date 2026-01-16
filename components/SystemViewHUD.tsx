@@ -10,7 +10,6 @@ interface SystemViewHUDProps {
   pressedKeys: Set<string>;
   target: Target;
   energyPips: { sys: number; eng: number; wep: number };
-  mouseAim: boolean;
   camera: THREE.Camera | null;
 }
 
@@ -18,7 +17,7 @@ const Pip: React.FC<{ active: boolean }> = ({ active }) => (
     <div className={`pip ${active ? 'active' : ''}`} />
 );
 
-export const SystemViewHUD: React.FC<SystemViewHUDProps> = ({ shipBody, pressedKeys, target, energyPips, mouseAim, camera }) => {
+export const SystemViewHUD: React.FC<SystemViewHUDProps> = ({ shipBody, pressedKeys, target, energyPips, camera }) => {
   const [velocity, setVelocity] = useState(0);
   const [attitude, setAttitude] = useState({ pitch: 0, roll: 0, yaw: 0 });
   const [targetYaw, setTargetYaw] = useState(0);
@@ -31,13 +30,11 @@ export const SystemViewHUD: React.FC<SystemViewHUDProps> = ({ shipBody, pressedK
     const handleMouseMove = (e: MouseEvent) => {
         setCursorPos({ x: e.clientX, y: e.clientY });
     };
-    if (mouseAim) {
-        window.addEventListener('mousemove', handleMouseMove);
-    }
+    window.addEventListener('mousemove', handleMouseMove);
     return () => {
         window.removeEventListener('mousemove', handleMouseMove);
     };
-  }, [mouseAim]);
+  }, []);
 
   useEffect(() => {
     if (!shipBody) return;
@@ -199,24 +196,18 @@ export const SystemViewHUD: React.FC<SystemViewHUDProps> = ({ shipBody, pressedK
       {leadIndicatorPos.visible && (
         <div className="lead-indicator" style={{ left: leadIndicatorPos.x, top: leadIndicatorPos.y }} />
       )}
-      {mouseAim && (
-        <div 
-            className="flight-cursor"
-            style={{
-                left: `${cursorPos.x}px`,
-                top: `${cursorPos.y}px`,
-            }}
-        />
-      )}
+      <div 
+          className="flight-cursor"
+          style={{
+              left: `${cursorPos.x}px`,
+              top: `${cursorPos.y}px`,
+          }}
+      />
       <div className="hud-velocity">
         {velocity.toFixed(0)} m/s
       </div>
 
       <div className="hud-flight-assist">FLIGHT ASSIST ON</div>
-
-      <div className="hud-mouse-aim" style={{ color: mouseAim ? '#00e5ff' : '#ff8c00' }}>
-        MOUSE AIM {mouseAim ? 'ON' : 'OFF'}
-      </div>
 
       <div className="hud-compass">
         <div ref={compassTapeRef} className="hud-compass-tape"></div>

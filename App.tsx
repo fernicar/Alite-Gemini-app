@@ -1,5 +1,4 @@
 
-
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Ship, StarSystem, NPC, Salvage, CargoItem, ShipSlot, Mission, EquipmentItem, ShipSpec, Projectile, VisualEffect, PhysicsState, Celestial } from './types';
 import { generateSystemDescription } from './services/geminiService';
@@ -21,6 +20,9 @@ import { physicsService3D } from './services/physicsService3D';
 import { playerController3D } from './services/playerController3D';
 import { effectsService } from './services/effectsService';
 import { aiService } from './services/aiService';
+import { weaponService } from './services/WeaponService';
+import { damageService } from './services/DamageService';
+import { salvageService } from './services/SalvageService';
 import * as CANNON from 'cannon-es';
 import * as THREE from 'three';
 
@@ -111,7 +113,6 @@ const App: React.FC = () => {
     
     const [activeMission, setActiveMission] = useState<Mission | null>(null);
     const pressedKeys = useRef(new Set<string>());
-    const [mouseAim, setMouseAim] = useState(false);
     const [missileStatus, setMissileStatus] = useState<'unarmed' | 'armed' | 'locked'>('unarmed');
 
     const [npcs, setNpcs] = useState<NpcEntity[]>([]);
@@ -130,96 +131,54 @@ const App: React.FC = () => {
     useEffect(() => { celestialsRef.current = celestials; }, [celestials]);
     const salvageRef = useRef<Salvage[]>([]);
     useEffect(() => { salvageRef.current = salvage; }, [salvage]);
-    const mouseAimRef = useRef(mouseAim);
-    useEffect(() => { mouseAimRef.current = mouseAim; }, [mouseAim]);
     const cameraDirectionRef = useRef(new THREE.Vector3(0, 0, -1));
 
 
     // State to force re-renders when services update
-    const [_, forceUpdate] = useState(0);
+    const [ship, setShip] = useState(() => playerShipService.getShip());
 
-    const targetables = useMemo(() => [...npcs.map(n => ({ type: 'npc' as const, entity: n })), ...celestials.map(c => ({ type: 'celestial' as const, entity: c }))], [npcs, celestials]);
+    const targetables = useMemo(() => npcs.map(n => ({ type: 'npc' as const, entity: n })), [npcs]);
 
     const handleTargetNext = useCallback(() => {
         if (targetables.length === 0) return;
-        const currentIndex = target ? targetables.findIndex(t => t.entity.data.id === target.entity.data.id) : -1;
+        const currentIndex = target?.type === 'npc' ? targetables.findIndex(t => t.entity.data.id === target.entity.data.id) : -1;
         const nextIndex = (currentIndex + 1) % targetables.length;
         setTarget(targetables[nextIndex]);
     }, [targetables, target]);
 
-    const ship = useMemo(() => playerShipService.getShip(), [_, playerShipService]);
-    const shipBody = useMemo(() => physicsService3D.getShipBody(), [_, playerShipService]);
+    const shipBody = useMemo(() => physicsService3D.getShipBody(), [ship]);
     const shipBodyRef = useRef(shipBody);
     useEffect(() => { shipBodyRef.current = shipBody; }, [shipBody]);
-
-    const handleHit = useCallback((projectile: Projectile, hitTarget: NPC | Ship) => {
-        if ('isHostile' in hitTarget) { // It's an NPC
-            const targetNpcEntity = npcsRef.current.find(n => n.data.id === hitTarget.id);
-            if (!targetNpcEntity) return;
-
-            let { shields, hull } = targetNpcEntity.data;
-            
-            if (shields > 0) {
-                effectsService.createShieldImpact(targetNpcEntity.data.position, 0);
-                const shieldDamage = Math.min(shields, projectile.damage);
-                shields -= shieldDamage;
-                const spillover = projectile.damage - shieldDamage;
-                if (spillover > 0) hull -= spillover;
-            } else {
-                effectsService.createHullImpact(targetNpcEntity.data.position);
-                hull -= projectile.damage;
-            }
-
-            if (hull <= 0) {
-                effectsService.createExplosion(targetNpcEntity.data.position, 'large');
-                audioService.playExplosionSound();
-                setTarget(currentTarget => {
-                    if (currentTarget?.entity.data.id === hitTarget.id) {
-                        return null;
-                    }
-                    return currentTarget;
-                });
-                setSalvage(s => [...s, {
-                    id: `salvage-${hitTarget.id}`,
-                    contents: { name: 'Scrap Metal', quantity: Math.ceil(Math.random() * 5), weight: 1 },
-                    position: targetNpcEntity.data.position,
-                }]);
-                aiService.removeNpc(hitTarget.id);
-            } else {
-                // FIX: Use `targetNpcEntity.data` which is guaranteed to be up-to-date from the component state,
-                // instead of `hitTarget` which could be stale data from the physics body. This also resolves the TS error.
-                const updatedNpc = { ...targetNpcEntity.data, shields, hull };
-                aiService.updateNpc(updatedNpc);
-            }
-
-        } else { // It's the player
-            const { type } = playerShipService.applyDamage(projectile.damage);
-            const currentShipPosition = playerShipService.getShip().position;
-            if (type === 'shield') {
-                effectsService.createShieldImpact(currentShipPosition, 0); 
-            } else {
-                effectsService.createHullImpact(currentShipPosition);
-            }
-        }
-    }, []);
 
     useEffect(() => {
         if (view !== 'SYSTEM') {
             return;
         }
         
-        const reRender = () => forceUpdate(c => c + 1);
-
-        const unsubPlayerShip = playerShipService.subscribe(reRender);
+        const unsubPlayerShip = playerShipService.subscribe(() => setShip(playerShipService.getShip()));
         const unsubPhysics3D = physicsService3D.subscribe(() => {
             setProjectiles(physicsService3D.getProjectiles());
-            reRender();
         });
         const unsubEffects = effectsService.subscribe(() => {
             setVisualEffects([...effectsService.getEffects()]);
         });
+        const unsubSalvage = salvageService.subscribe(() => {
+            setSalvage([...salvageService.getSalvage()]);
+        });
+        
+        // Handle collisions using DamageService
         const unsubCollision = physicsService3D.onCollision(({ projectile, target }) => {
-            handleHit(projectile, target as NPC | Ship);
+            damageService.processCollision(projectile, target);
+        });
+
+        // Handle target destruction to clear target selection
+        const unsubDestruction = damageService.onTargetDestroyed((result) => {
+            setTarget(currentTarget => {
+                if (currentTarget?.entity.data.id === result.targetId) {
+                    return null;
+                }
+                return currentTarget;
+            });
         });
 
         const handleAiUpdate = () => {
@@ -230,6 +189,10 @@ const App: React.FC = () => {
             const newEntities = aiNpcsData.map(npcData => {
                 if (currentNpcMap.has(npcData.id)) {
                     const existingEntity = currentNpcMap.get(npcData.id)!;
+                    // Ensure the physics body's user data is updated with the latest NPC data
+                    if (existingEntity.body) {
+                        (existingEntity.body as any).userData.data = npcData;
+                    }
                     return { ...existingEntity, data: npcData };
                 } else {
                     physicsService3D.initializeNpc(npcData);
@@ -273,13 +236,16 @@ const App: React.FC = () => {
         setCelestials(celestialEntities);
 
         aiService.spawnEntities(currentSystem);
+        salvageService.clearSalvage(); // Clear salvage when entering new system or mode
 
         return () => {
             unsubPlayerShip();
             unsubPhysics3D();
             unsubEffects();
             unsubCollision();
+            unsubDestruction();
             unsubAi();
+            unsubSalvage();
 
             if (physicsService3D.getShipBody()) {
                 physicsService3D.removeBody(physicsService3D.getShipBody());
@@ -305,7 +271,7 @@ const App: React.FC = () => {
             setVisualEffects([]);
             setProjectiles([]);
         }
-    }, [view, currentSystem, handleHit]);
+    }, [view, currentSystem]);
 
 
     const handleSelectSystem = useCallback((system: StarSystem) => {
@@ -364,23 +330,8 @@ const App: React.FC = () => {
             }
         } else if (missileStatus === 'armed') {
             setMissileStatus('unarmed');
-        } else { // 'unarmed'
-            const weapons = ship.slots.filter(
-                s => s.type === 'Hardpoint' && s.equippedItem?.category === 'Weapon'
-            );
-            if (weapons.length === 0) return;
-        
-            const totalEnergyCost = weapons.reduce((acc, s) => acc + (s.equippedItem?.powerDraw || 0), 0);
-            if (ship.energy < totalEnergyCost) return;
-        
-            playerShipService.useEnergy(totalEnergyCost);
-            audioService.playLaserSound();
-        
-            const totalDamage = weapons.reduce((acc, s) => acc + (s.equippedItem?.stats?.damage || 0), 0);
-            
-            // Pass camera direction to `fireProjectile` for parallax correction.
-            // When firing lasers, we aim with the reticle, so targetId should be undefined.
-            physicsService3D.fireProjectile(ship.id, totalDamage, 800, 'laser', undefined, cameraDirectionRef.current);
+        } else { // 'unarmed' - fire lasers via WeaponService
+            weaponService.firePlayerWeapons(cameraDirectionRef.current);
         }
     }, [ship, target, missileStatus]);
 
@@ -405,7 +356,7 @@ const App: React.FC = () => {
         }
         playerShipService.setShip({ ...currentShip, cargo: newCargo });
     
-        setSalvage(prev => prev.filter(s => s.id !== salvageId));
+        salvageService.removeSalvage(salvageId);
         setScoopableSalvage(null);
         
         audioService.playCargoScoopSound();
@@ -442,15 +393,21 @@ const App: React.FC = () => {
         audioService.playPipChangeSound();
     }, []);
 
+    const handleDock = useCallback(() => {
+      if (!canDock) return;
+      if (activeMission && activeMission.status === 'Completed' && activeMission.systemId === currentSystem.id) {
+          const currentShip = playerShipService.getShip();
+          playerShipService.setShip({ ...currentShip, credits: currentShip.credits + activeMission.reward });
+          alert(`Mission Complete! ${activeMission.reward.toLocaleString()} credits awarded.`);
+          setActiveMission(null);
+      }
+      audioService.playDockingSound(); 
+      setView('DOCKED');
+    }, [canDock, activeMission, currentSystem.id]);
+
     useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
         const key = e.key.toLowerCase();
-        
-        if (key === 'm') {
-            if (!pressedKeys.current.has('m')) {
-                setMouseAim(prev => !prev);
-            }
-        }
         
         if (view === 'SYSTEM') {
             if (key === 't') handleTargetNext();
@@ -469,6 +426,11 @@ const App: React.FC = () => {
                     handleFire();
                 }
             }
+            if (key === 'c') {
+                if (!pressedKeys.current.has('c')) {
+                    handleDock();
+                }
+            }
         }
         
         pressedKeys.current.add(key);
@@ -481,15 +443,15 @@ const App: React.FC = () => {
         window.removeEventListener('keydown', handleKeyDown);
         window.removeEventListener('keyup', handleKeyUp);
       };
-    }, [view, handleTargetNext, handlePipChange, resetPips, handleArmMissile, handleFire]);
+    }, [view, handleTargetNext, handlePipChange, resetPips, handleArmMissile, handleFire, handleDock]);
 
     useEffect(() => {
-        if (view === 'SYSTEM' && mouseAim) {
+        if (view === 'SYSTEM') {
             document.body.style.cursor = 'none';
         } else {
             document.body.style.cursor = 'default';
         }
-    }, [view, mouseAim]);
+    }, [view]);
     
     useEffect(() => {
         if (view === 'SYSTEM') {
@@ -516,17 +478,62 @@ const App: React.FC = () => {
             lastTime = timestamp;
 
             // 1. Handle player input
-            playerController3D.handlePlayerInput(pressedKeys.current, mouseAimRef.current);
+            playerController3D.handlePlayerInput(pressedKeys.current);
+            weaponService.update(deltaTime);
 
             // 2. Handle simple NPC AI
-            npcsRef.current.forEach(npc => {
-                if (Math.random() < 0.01) {
-                    physicsService3D.applyNpcYaw(npc.data.id, (Math.random() - 0.5) * 0.5);
-                }
-                if (npc.data.type === 'Pirate' || npc.data.type === 'Trader') {
-                    if (Math.random() < 0.02) {
-                       physicsService3D.applyNpcThrust(npc.data.id, Math.random() * 0.3 + 0.1);
-                    }
+            const playerBody = shipBodyRef.current;
+            const playerShip = playerShipService.getShip();
+
+            npcsRef.current.forEach(npcEntity => {
+                const { data: npc, body: npcBody } = npcEntity;
+
+                switch (npc.aiState) {
+                    case 'ATTACKING':
+                        if (playerBody && npc.targetId === playerShip.id) {
+                            const toPlayer = new CANNON.Vec3().copy(playerBody.position).vsub(npcBody.position);
+                            const distance = toPlayer.length();
+
+                            const forward = new CANNON.Vec3(0, 0, -1);
+                            const worldForward = npcBody.quaternion.vmult(forward);
+                            const cross = worldForward.cross(toPlayer.unit());
+                            npcBody.applyTorque(cross.scale(100000));
+                            
+                            if (distance > 400) {
+                                physicsService3D.applyNpcThrust(npc.id, 0.5);
+                            } else if (distance < 200) {
+                                physicsService3D.applyNpcThrust(npc.id, -0.2);
+                            }
+
+                            if (distance < 800 && Math.random() < 0.03) { // Fire occasionally
+                                const weaponDamage = 5;
+                                physicsService3D.fireProjectile(npc.id, weaponDamage, 600, 'laser', playerShip.id);
+                            }
+                        }
+                        break;
+                    case 'FLEEING':
+                        if (playerBody && npc.targetId === playerShip.id) {
+                            const awayFromPlayer = new CANNON.Vec3().copy(npcBody.position).vsub(playerBody.position);
+
+                            const forward = new CANNON.Vec3(0, 0, -1);
+                            const worldForward = npcBody.quaternion.vmult(forward);
+                            const cross = worldForward.cross(awayFromPlayer.unit());
+                            npcBody.applyTorque(cross.scale(80000));
+                            
+                            physicsService3D.applyNpcThrust(npc.id, 0.8);
+                        }
+                        break;
+                    case 'PATROLLING':
+                    default:
+                        if (Math.random() < 0.01) {
+                            physicsService3D.applyNpcYaw(npc.id, (Math.random() - 0.5) * 0.5);
+                        }
+                        if (npc.type === 'Pirate' || npc.type === 'Trader') {
+                            if (Math.random() < 0.02) {
+                               physicsService3D.applyNpcThrust(npc.id, Math.random() * 0.3 + 0.1);
+                            }
+                        }
+                        break;
                 }
             });
             
@@ -582,18 +589,6 @@ const App: React.FC = () => {
       }
     }, [ship.hull, view]);
 
-    const handleDock = () => {
-      if (!canDock) return;
-      if (activeMission && activeMission.status === 'Completed' && activeMission.systemId === currentSystem.id) {
-          const currentShip = playerShipService.getShip();
-          playerShipService.setShip({ ...currentShip, credits: currentShip.credits + activeMission.reward });
-          alert(`Mission Complete! ${activeMission.reward.toLocaleString()} credits awarded.`);
-          setActiveMission(null);
-      }
-      audioService.playDockingSound(); 
-      setView('DOCKED');
-    }
-
     const handleUndock = () => {
         audioService.playUndockingSound();
         setView('SYSTEM');
@@ -632,7 +627,6 @@ const App: React.FC = () => {
                         visualEffects={visualEffects}
                         shipBody={shipBody}
                         pressedKeys={pressedKeys.current}
-                        mouseAim={mouseAim}
                         scoopableSalvage={scoopableSalvage}
                         missileStatus={missileStatus}
                         energyPips={ship.energyPips}
@@ -672,7 +666,7 @@ const App: React.FC = () => {
                           return (
                             <div key={system.id}
                               className="absolute"
-                              style={{ left: `${(system.x / GALAXY_WIDTH) * 100}%`, top: `${(system.y / GALAXY_HEIGHT) * 100}%`, transform: 'translate(-50%, -50%)' }}
+                              style={{ left: `${((GALAXY_WIDTH - system.x) / GALAXY_WIDTH) * 100}%`, top: `${((GALAXY_HEIGHT - system.y) / GALAXY_HEIGHT) * 100}%`, transform: 'translate(-50%, -50%)' }}
                             >
                               <button
                                 onClick={() => { audioService.playUIClick(); handleSelectSystem(system); }}
@@ -687,10 +681,10 @@ const App: React.FC = () => {
                         {currentSystem && selectedSystem && currentSystem.id !== selectedSystem.id && (
                           <svg className="absolute inset-0 w-full h-full pointer-events-none">
                             <line
-                              x1={`${(currentSystem.x / GALAXY_WIDTH) * 100}%`}
-                              y1={`${(currentSystem.y / GALAXY_HEIGHT) * 100}%`}
-                              x2={`${(selectedSystem.x / GALAXY_WIDTH) * 100}%`}
-                              y2={`${(selectedSystem.y / GALAXY_HEIGHT) * 100}%`}
+                              x1={`${((GALAXY_WIDTH - currentSystem.x) / GALAXY_WIDTH) * 100}%`}
+                              y1={`${((GALAXY_HEIGHT - currentSystem.y) / GALAXY_HEIGHT) * 100}%`}
+                              x2={`${((GALAXY_WIDTH - selectedSystem.x) / GALAXY_WIDTH) * 100}%`}
+                              y2={`${((GALAXY_HEIGHT - selectedSystem.y) / GALAXY_HEIGHT) * 100}%`}
                               stroke="rgba(251, 146, 60, 0.5)"
                               strokeWidth="1"
                               strokeDasharray="4 4"
