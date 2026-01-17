@@ -399,7 +399,8 @@ const App: React.FC = () => {
         } else if (missileStatus === 'armed') {
             setMissileStatus('unarmed');
         } else { // 'unarmed' - fire lasers via WeaponService
-            weaponService.firePlayerWeapons(cameraDirectionRef.current);
+            // Pass no arguments to fire in the ship's facing direction
+            weaponService.firePlayerWeapons();
         }
     }, [ship, target, missileStatus]);
 
