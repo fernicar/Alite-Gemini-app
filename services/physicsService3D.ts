@@ -1,4 +1,5 @@
 
+
 import * as CANNON from 'cannon-es';
 import { Ship, NPC, Celestial, Projectile } from '../types';
 import { SHIPS_FOR_SALE } from '../data/ships';
@@ -25,8 +26,10 @@ class PhysicsService3D {
     private collisionSubscribers: ((collision: { projectile: Projectile, target: NPC | Ship }) => void)[] = [];
     
     // Config
-    private linearFactor = new CANNON.Vec3(1, 0, 1); // Only move X, Z
-    private angularFactor = new CANNON.Vec3(0, 1, 0); // Only rotate Y (Yaw)
+    // Allow full 3D movement for simulation, but we'll damp vertical movement for gameplay feel if desired.
+    // Elite is fully 3D.
+    private linearFactor = new CANNON.Vec3(1, 1, 1); 
+    private angularFactor = new CANNON.Vec3(1, 1, 1);
 
     constructor() {
         this.world = new CANNON.World({
@@ -100,21 +103,8 @@ class PhysicsService3D {
     // Helper to calculate radius based on ship specs
     private calculateHitboxRadius(shipType: string): number {
         const spec = SHIPS_FOR_SALE.find(s => s.type === shipType)?.spec;
-        // Default size if spec missing
         if (!spec) return 4; 
-        
-        // Use the ship dimensions from XML/Data to size the physics body
-        // Default logic in SystemView uses these dimensions * 0.1
-        // Example Cobra: W180 L90 -> Scaled W18 L9.
-        // We want the hitbox to cover the visual mesh.
-        // A simple approximation is half the largest dimension.
-        // SHIPS_FOR_SALE currently doesn't have dimensions in the TS file (it's in the component logic),
-        // but we can infer or map. Since data/ships.ts doesn't have W/H/L, 
-        // we'll map common types or default to a larger size than before.
-        // The default Sphere(4) was diameter 8. A scaled Cobra is ~18 wide. 
-        // We should increase the default radius.
-        
-        return 9; // ~18 unit diameter, matches typical scaled ship width
+        return 9; 
     }
 
     public initializeShip(ship: Ship) {
@@ -127,7 +117,7 @@ class PhysicsService3D {
         this.shipBody = new CANNON.Body({
             mass: shipSpec.mass,
             shape: shape,
-            position: new CANNON.Vec3(ship.position.x, 0, ship.position.z),
+            position: new CANNON.Vec3(ship.position.x, ship.position.y, ship.position.z),
             linearDamping: 0.5,
             angularDamping: 0.9,
             linearFactor: this.linearFactor,
@@ -150,7 +140,7 @@ class PhysicsService3D {
         const body = new CANNON.Body({
             mass: shipSpec.mass,
             shape: shape,
-            position: new CANNON.Vec3(npc.position.x, 0, npc.position.z),
+            position: new CANNON.Vec3(npc.position.x, npc.position.y, npc.position.z),
             linearDamping: 0.5,
             angularDamping: 0.9,
             linearFactor: this.linearFactor,
@@ -181,7 +171,7 @@ class PhysicsService3D {
         const body = new CANNON.Body({
             mass: 0,
             shape: shape,
-            position: new CANNON.Vec3(celestial.position.x, 0, celestial.position.z),
+            position: new CANNON.Vec3(celestial.position.x, celestial.position.y, celestial.position.z),
             collisionFilterGroup: COLLISION_GROUPS.OBSTACLE,
             collisionFilterMask: COLLISION_GROUPS.PLAYER | COLLISION_GROUPS.NPC | COLLISION_GROUPS.PROJ_PLAYER | COLLISION_GROUPS.PROJ_NPC,
         });
@@ -191,6 +181,7 @@ class PhysicsService3D {
         this.npcBodies.set(celestial.id, body);
     }
 
+    // AI Helper: Apply a force to move forward
     public applyNpcThrust(npcId: string, amount: number) {
         const body = this.npcBodies.get(npcId);
         if (!body) return;
@@ -204,21 +195,60 @@ class PhysicsService3D {
         const worldForward = body.quaternion.vmult(localForward);
         
         const force = mass * 200 * amount;
-
         body.applyForce(worldForward.scale(force));
     }
 
+    // AI Helper: Steer body towards a target position using torque
+    public steerNpcTowards(npcId: string, targetPos: CANNON.Vec3) {
+        const body = this.npcBodies.get(npcId);
+        if (!body) return;
+
+        // Calculate vector to target
+        const toTarget = targetPos.vsub(body.position);
+        toTarget.normalize();
+        
+        // Current forward vector (assuming -Z is forward)
+        const localForward = new CANNON.Vec3(0, 0, -1);
+        const currentForward = body.quaternion.vmult(localForward);
+        
+        // Calculate rotation needed (cross product axis and angle)
+        // This is a simplified steering behavior.
+        // We want to align currentForward with toTarget.
+        
+        const rotationAxis = currentForward.cross(toTarget);
+        // If vectors are opposite, axis is zero, handle edge case if needed
+        
+        // Apply torque proportional to the angle difference
+        // Damping is handled by angularDamping on the body
+        const STEER_STRENGTH = 150000;
+        
+        body.applyTorque(rotationAxis.scale(STEER_STRENGTH));
+        
+        // Additional stabilization: try to align up vector to Y to prevent weird rolling
+        // This keeps ships mostly "upright" relative to the galactic plane
+        const localUp = new CANNON.Vec3(0, 1, 0);
+        const currentUp = body.quaternion.vmult(localUp);
+        const globalUp = new CANNON.Vec3(0, 1, 0);
+        const stabilizationAxis = currentUp.cross(globalUp);
+        body.applyTorque(stabilizationAxis.scale(STEER_STRENGTH * 0.5));
+    }
+
+    // AI Helper: Apply torque to yaw (rotate around local Y)
     public applyNpcYaw(npcId: string, amount: number) {
         const body = this.npcBodies.get(npcId);
         if (!body) return;
 
-        const TURN_SPEED = 2.0;
-        body.angularVelocity.y = amount * TURN_SPEED;
-    }
+        const npcData = (body as any).userData.data as NPC;
+        const shipSpec = SHIPS_FOR_SALE.find(s => s.type === npcData.shipType)?.spec;
+        const mass = shipSpec ? shipSpec.mass : 100;
+        
+        // Torque amount - arbitrary scaling for gameplay
+        const torque = mass * 1000 * amount;
 
-    // AI Logic Helpers
-    public updateNPCLogic(npcId: string, targetPosition: CANNON.Vec3) {
-        // ... (Existing logic remains valid)
+        const localUp = new CANNON.Vec3(0, 1, 0);
+        const worldUp = body.quaternion.vmult(localUp);
+        
+        body.applyTorque(worldUp.scale(torque));
     }
 
     public fireProjectile(ownerId: string, damage: number, speed: number = 800, type: 'laser' | 'missile' = 'laser', targetId?: string, direction?: THREE.Vector3) {
@@ -236,7 +266,14 @@ class PhysicsService3D {
 
         // Calculate heading
         const localForward = new CANNON.Vec3(0, 0, -1);
-        const worldForward = ownerBody.quaternion.vmult(localForward);
+        let worldForward: CANNON.Vec3;
+        
+        if (direction) {
+             // If manual direction provided (e.g. from mouse aim), use it
+             worldForward = new CANNON.Vec3(direction.x, direction.y, direction.z).unit();
+        } else {
+             worldForward = ownerBody.quaternion.vmult(localForward);
+        }
 
         // Spawn position: tip of the ship. Increase offset to avoid self-collision with larger hitboxes
         const spawnOffset = 18; 
@@ -244,7 +281,7 @@ class PhysicsService3D {
 
         const projectileBody = new CANNON.Body({
             mass: 0.1,
-            shape: new CANNON.Sphere(2), // Slightly larger projectile for better hit detection
+            shape: new CANNON.Sphere(2), 
             position: spawnPos,
             linearDamping: 0,
             collisionFilterGroup: isPlayer ? COLLISION_GROUPS.PROJ_PLAYER : COLLISION_GROUPS.PROJ_NPC,
@@ -260,22 +297,31 @@ class PhysicsService3D {
         const muzzleVelocity = worldForward.scale(speed);
         projectileBody.velocity = ownerBody.velocity.vadd(muzzleVelocity);
         
-        // Projectile rotation
-        projectileBody.quaternion.copy(ownerBody.quaternion);
+        // Projectile rotation to match velocity direction
+        const targetQ = new CANNON.Quaternion();
+        // Point -Z towards velocity
+        const zAxis = new CANNON.Vec3(0,0,-1);
+        const velocityDir = projectileBody.velocity.unit();
+        // A simple way to orient is lookAt logic, but for now just copying owner rotation is 'okay' for instant spawn
+        // Better:
+        const axis = zAxis.cross(velocityDir);
+        const angle = Math.acos(zAxis.dot(velocityDir));
+        targetQ.setFromAxisAngle(axis, angle);
+        projectileBody.quaternion.copy(targetQ);
 
         const projectileId = `proj-${this.projectileCounter++}`;
         
-        // Calc visual angle
+        // Calc visual angle (mostly for 2D fallback radar)
         const euler = new CANNON.Vec3();
         ownerBody.quaternion.toEuler(euler);
-        const angle = euler.y;
+        const visualAngle = euler.y;
 
         const projectileData: Projectile = {
             id: projectileId,
             ownerId,
-            position: { x: spawnPos.x, y: 0, z: spawnPos.z },
-            velocity: { x: projectileBody.velocity.x, y: 0, z: projectileBody.velocity.z },
-            angle: angle,
+            position: { x: spawnPos.x, y: spawnPos.y, z: spawnPos.z },
+            velocity: { x: projectileBody.velocity.x, y: projectileBody.velocity.y, z: projectileBody.velocity.z },
+            angle: visualAngle,
             type: type,
             damage,
             remainingLife: type === 'missile' ? 5000 : 2000,
@@ -312,16 +358,6 @@ class PhysicsService3D {
         
         const projectilesToRemove: string[] = [];
         this.projectiles.forEach((p, id) => {
-            // Hard Lock Y to 0 and angular velocity
-            p.body.position.y = 0;
-            p.body.velocity.y = 0;
-            p.body.angularVelocity.set(0, 0, 0);
-            
-            // Ensure quaternion stays planar (only Y rotation)
-            const euler = new CANNON.Vec3();
-            p.body.quaternion.toEuler(euler);
-            p.body.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), euler.y);
-
             p.data.remainingLife -= deltaTime * 1000;
             if (p.data.remainingLife <= 0 || (p.body as any).userData.shouldRemove) {
                 projectilesToRemove.push(id);
@@ -330,12 +366,13 @@ class PhysicsService3D {
                 p.data.position.y = p.body.position.y;
                 p.data.position.z = p.body.position.z;
                 
-                // Update velocity for visual orientation
                 p.data.velocity.x = p.body.velocity.x;
-                p.data.velocity.y = 0;
+                p.data.velocity.y = p.body.velocity.y;
                 p.data.velocity.z = p.body.velocity.z;
                 
-                // Update angle for visual rotation
+                // Keep orientation updated for visual if needed
+                const euler = new CANNON.Vec3();
+                p.body.quaternion.toEuler(euler);
                 p.data.angle = euler.y;
             }
         });
@@ -346,29 +383,6 @@ class PhysicsService3D {
                 this.world.removeBody(p.body);
                 this.projectiles.delete(id);
             }
-        });
-        
-        // Enforce 2D constraints
-        if (this.shipBody) {
-             this.shipBody.position.y = 0;
-             this.shipBody.velocity.y = 0;
-             this.shipBody.angularVelocity.x = 0;
-             this.shipBody.angularVelocity.z = 0;
-             
-             const euler = new CANNON.Vec3();
-             this.shipBody.quaternion.toEuler(euler);
-             this.shipBody.quaternion.setFromAxisAngle(new CANNON.Vec3(0,1,0), euler.y);
-        }
-        
-        this.npcBodies.forEach(body => {
-             body.position.y = 0;
-             body.velocity.y = 0;
-             body.angularVelocity.x = 0;
-             body.angularVelocity.z = 0;
-             
-             const euler = new CANNON.Vec3();
-             body.quaternion.toEuler(euler);
-             body.quaternion.setFromAxisAngle(new CANNON.Vec3(0,1,0), euler.y);
         });
 
         this.notify();

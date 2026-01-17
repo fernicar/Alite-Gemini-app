@@ -1,4 +1,5 @@
 
+
 export interface StarSystem {
   id: number;
   name: string;
@@ -87,7 +88,7 @@ export interface ShipForSale {
     price: number;
 }
 
-export type AIState = 'IDLE' | 'PATROLLING' | 'ATTACKING' | 'FLEEING';
+export type AIState = 'IDLE' | 'PATROLLING' | 'TRAVEL_TO_STATION' | 'INTERCEPT' | 'DOGFIGHT' | 'FLEEING' | 'DOCKING';
 
 export interface NPC {
   id: string;
@@ -104,6 +105,7 @@ export interface NPC {
   angle: number;
   targetId?: string;
   name?: string; // Add name for specific targets
+  navigationTarget?: { x: number; y: number; z: number }; // For travelling logic
 }
 
 export interface Celestial {

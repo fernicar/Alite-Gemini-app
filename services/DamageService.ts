@@ -1,4 +1,5 @@
 
+
 import { Ship, NPC, Projectile } from '../types';
 import { effectsService } from './effectsService';
 import { audioService } from './audioService';
@@ -86,7 +87,7 @@ class DamageService {
             // AI Reaction
             if (projectile.ownerId === playerShipService.getShip().id) {
                 if (npc.type === 'Pirate' || npc.type === 'Police') {
-                    newAiState = 'ATTACKING';
+                    newAiState = 'DOGFIGHT';
                     newTargetId = projectile.ownerId;
                 } else if (npc.type === 'Trader') {
                     newAiState = 'FLEEING';
