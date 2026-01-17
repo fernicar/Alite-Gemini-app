@@ -73,7 +73,6 @@ export interface ShipSpec {
     maxEnergy: number; // Base energy from ship's built-in reactor
     speed: number;
     turnRate: number; // degrees per second
-    // FIX: Add 'acceleration' property for physics calculations.
     acceleration: number;
     jumpRange: number;
     slots: { type: ShipSlotType; size: number }[];
@@ -104,6 +103,7 @@ export interface NPC {
   velocity: { x: number; y: number; z: number };
   angle: number;
   targetId?: string;
+  name?: string; // Add name for specific targets
 }
 
 export interface Celestial {
@@ -138,6 +138,7 @@ export interface Ship {
   energyPips: { sys: number; eng: number; wep: number };
   missiles: number;
   maxMissiles: number;
+  legalStatus: 'Clean' | 'Offender' | 'Fugitive';
 }
 
 export interface Salvage {
@@ -150,14 +151,18 @@ export interface Mission {
   id: string;
   title: string;
   description: string;
-  type: 'Bounty' | 'Delivery';
+  type: 'Bounty' | 'Delivery' | 'Assassination';
   reward: number;
-  targetNPC?: {
-    type: 'Pirate';
-    shipType: string;
-  };
-  status: 'Available' | 'InProgress' | 'Completed';
-  systemId: number; // The system where the mission objective is
+  status: 'Available' | 'InProgress' | 'Completed' | 'Failed';
+  
+  // Mission Logic
+  systemId: number; // The system where the mission takes place (or destination)
+  targetName?: string; // For assassination
+  targetShipType?: string; // For bounty/assassination
+  requiredKills?: number; // For bounty
+  currentKills?: number; // Progress
+  cargoRequired?: CargoItem; // For delivery
+  destinationSystemId?: number; // Explicit destination if different from origin
 }
 
 export interface PhysicsState {
@@ -173,7 +178,6 @@ export interface PhysicsState {
     turnRate: number; // degrees per second
 }
 
-// FIX: Update Projectile type to match its implementation in projectileService.ts
 export interface Projectile {
   id: string;
   ownerId: string;

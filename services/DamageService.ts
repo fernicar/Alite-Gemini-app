@@ -5,6 +5,7 @@ import { audioService } from './audioService';
 import { playerShipService } from './playerShipService';
 import { aiService } from './aiService';
 import { salvageService } from './SalvageService';
+import { missionService } from './missionService';
 
 export interface DamageResult {
     targetId: string;
@@ -15,6 +16,14 @@ export interface DamageResult {
 
 class DamageService {
     private destructionSubscribers: ((result: DamageResult) => void)[] = [];
+    
+    // We need to know the current system ID to pass to mission service.
+    // Ideally this service shouldn't know about 'system', but for this prototype integration:
+    private currentSystemId: number = 0;
+
+    public setCurrentSystemId(id: number) {
+        this.currentSystemId = id;
+    }
 
     public onTargetDestroyed(callback: (result: DamageResult) => void): () => void {
         this.destructionSubscribers.push(callback);
@@ -29,15 +38,28 @@ class DamageService {
 
     public processCollision(projectile: Projectile, target: Ship | NPC): DamageResult {
         const isPlayer = !('aiState' in target);
-        let currentHull = target.hull;
-        let currentShields = target.shields;
-        const maxShields = target.maxShields;
+        let actualTarget = target;
+
+        // Fetch latest state if NPC to prevent stale closures/references
+        if (!isPlayer) {
+            const freshNpc = aiService.getNpcs().find(n => n.id === target.id);
+            if (freshNpc) {
+                actualTarget = freshNpc;
+            }
+        } else {
+             // For player, get latest state
+             actualTarget = playerShipService.getShip();
+        }
+
+        let currentHull = actualTarget.hull;
+        let currentShields = actualTarget.shields;
+        const maxShields = actualTarget.maxShields;
         
         // Visuals
         if (currentShields > 0) {
-            effectsService.createShieldImpact(target.position, 0);
+            effectsService.createShieldImpact(actualTarget.position, 0);
         } else {
-            effectsService.createHullImpact(target.position);
+            effectsService.createHullImpact(actualTarget.position);
         }
 
         // Damage Calculation
@@ -57,7 +79,7 @@ class DamageService {
              const updatedShip = playerShipService.getShip();
              currentHull = updatedShip.hull; // sync local var for destruction check
         } else {
-            const npc = target as NPC;
+            const npc = actualTarget as NPC;
             let newAiState = npc.aiState;
             let newTargetId = npc.targetId;
 
@@ -84,20 +106,22 @@ class DamageService {
             aiService.updateNpc(updatedNpc);
         }
 
-        const result: DamageResult = { targetId: target.id, destroyed: false, damage, isPlayer };
+        const result: DamageResult = { targetId: actualTarget.id, destroyed: false, damage, isPlayer };
 
         // Destruction Check
         if (currentHull <= 0) {
-            effectsService.createExplosion(target.position, 'large');
+            effectsService.createExplosion(actualTarget.position, 'large');
             audioService.playExplosionSound();
             
             if (!isPlayer) {
-                salvageService.spawnSalvage(target.position, { 
+                salvageService.spawnSalvage(actualTarget.position, { 
                     name: 'Scrap Metal', 
                     quantity: Math.ceil(Math.random() * 5), 
                     weight: 1 
                 });
-                aiService.removeNpc(target.id);
+                aiService.removeNpc(actualTarget.id);
+                // Notify Mission Service
+                missionService.onNpcDestroyed(actualTarget as NPC, this.currentSystemId);
             }
             
             result.destroyed = true;

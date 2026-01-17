@@ -1,3 +1,4 @@
+
 import { StarSystem, Mission } from '../types';
 
 const PIRATE_NAMES = ['"One-Eye" Jack', 'Silas "The Ghost" Kane', 'Mara "Red Blade"'];
@@ -18,10 +19,8 @@ export const generateMissions = (system: StarSystem): Mission[] => {
             description: `A notorious pirate, ${pirateName}, has been causing trouble in the ${system.name} system. They were last seen flying a ${shipType}. Destroy their ship to claim the bounty.`,
             type: 'Bounty',
             reward: 5000 + Math.floor(Math.random() * 5000),
-            targetNPC: {
-                type: 'Pirate',
-                shipType: shipType,
-            },
+            targetName: pirateName,
+            targetShipType: shipType,
             status: 'Available',
             systemId: system.id,
         });

@@ -11,6 +11,8 @@ import MarketplaceView from './components/MarketplaceView';
 import ShipyardView from './components/ShipyardView';
 import OutfittingView from './components/OutfittingView';
 import MissionBoardView from './components/MissionBoardView';
+import { HyperspaceView } from './components/HyperspaceView';
+import { StartScreen } from './components/StartScreen';
 import { EQUIPMENT_LIST } from './data/equipment';
 import { SHIPS_FOR_SALE } from './data/ships';
 import { MarkdownRenderer } from './components/MarkdownRenderer';
@@ -23,6 +25,9 @@ import { aiService } from './services/aiService';
 import { weaponService } from './services/WeaponService';
 import { damageService } from './services/DamageService';
 import { salvageService } from './services/SalvageService';
+import { missionService } from './services/missionService';
+import { persistenceService } from './services/persistenceService';
+import { Modal } from './components/Modal';
 import * as CANNON from 'cannon-es';
 import * as THREE from 'three';
 
@@ -47,18 +52,18 @@ const SystemInfoPanel: React.FC<{
   canJump: boolean;
   isCurrentSystem: boolean;
 }> = ({ system, onGenerateDescription, description, isLoading, onJump, onEnterSystem, canJump, isCurrentSystem }) => (
-  <div className="bg-slate-800/50 p-4 rounded-lg border border-slate-700 h-full flex flex-col">
-    <h2 className="font-orbitron text-lg text-orange-300 border-b border-orange-300/30 pb-2 mb-4">SYSTEM INFO</h2>
+  <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-700 h-full flex flex-col">
+    <h2 className="font-orbitron text-md text-orange-300 border-b border-orange-300/30 pb-1 mb-2">SYSTEM INFO</h2>
     {system ? (
       <div className="flex-grow flex flex-col">
-        <h3 className="text-xl font-bold text-cyan-300">{system.name}</h3>
-        <p className="text-sm text-gray-400 mb-4">{system.description}</p>
-        <div className="text-xs space-y-2 mb-4">
+        <h3 className="text-lg font-bold text-cyan-300">{system.name}</h3>
+        <p className="text-xs text-gray-400 mb-2">{system.description}</p>
+        <div className="text-xs space-y-1 mb-2">
           <p><strong>Economy:</strong> <span className="text-yellow-300">{system.economy}</span></p>
           <p><strong>Government:</strong> <span className="text-purple-300">{system.government}</span></p>
         </div>
         
-        <div className="flex-grow bg-black/30 p-3 rounded-md overflow-y-auto custom-scrollbar">
+        <div className="flex-grow bg-black/30 p-2 rounded-md overflow-y-auto custom-scrollbar text-xs">
           {isLoading ? (
             <p className="text-cyan-400 animate-pulse">Generating detailed briefing...</p>
           ) : (
@@ -66,46 +71,57 @@ const SystemInfoPanel: React.FC<{
           )}
         </div>
         
-        <div className="mt-4 space-y-2">
+        <div className="mt-2 grid grid-cols-2 gap-2">
           <button 
             onClick={() => { audioService.playUIClick(); onGenerateDescription(); }}
             disabled={isLoading}
-            className="w-full bg-slate-600 hover:bg-slate-500 text-white font-bold py-2 px-4 rounded transition duration-200 disabled:bg-slate-700 disabled:cursor-not-allowed"
+            className="w-full bg-slate-600 hover:bg-slate-500 text-white font-bold py-1 px-2 rounded transition duration-200 disabled:bg-slate-700 disabled:cursor-not-allowed text-xs h-full flex items-center justify-center"
           >
             {isLoading ? 'Loading...' : 'Get AI Briefing'}
           </button>
           {isCurrentSystem ? (
-             <button onClick={() => { audioService.playUIClick(); onEnterSystem(); }} className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-4 rounded transition duration-200 flex items-center justify-center gap-2">
+             <button onClick={() => { audioService.playUIClick(); onEnterSystem(); }} className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-1 px-2 rounded transition duration-200 flex items-center justify-center gap-2 text-xs h-full">
                 Enter System View
             </button>
           ) : (
             <button 
                 onClick={() => { audioService.playUIClick(); onJump(); }} 
                 disabled={!canJump}
-                className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2 px-4 rounded transition duration-200 flex items-center justify-center gap-2 disabled:bg-gray-500 disabled:cursor-not-allowed"
+                className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-1 px-2 rounded transition duration-200 flex items-center justify-center gap-2 disabled:bg-gray-500 disabled:cursor-not-allowed text-xs h-full"
             >
-                <JumpIcon className="w-5 h-5" />
+                <JumpIcon className="w-4 h-4" />
                 Jump to System
             </button>
           )}
         </div>
       </div>
     ) : (
-      <p className="text-gray-500">Select a system to view details.</p>
+      <p className="text-gray-500 text-xs">Select a system to view details.</p>
     )}
   </div>
 );
 
-type View = 'GALAXY' | 'SYSTEM' | 'DOCKED' | 'MARKETPLACE' | 'SHIPYARD' | 'OUTFITTING' | 'MISSION_BOARD' | 'GAME_OVER';
+type View = 'START' | 'GALAXY' | 'SYSTEM' | 'DOCKED' | 'MARKETPLACE' | 'SHIPYARD' | 'OUTFITTING' | 'MISSION_BOARD' | 'GAME_OVER' | 'HYPERSPACE';
 
 export type NpcEntity = { data: NPC; body: CANNON.Body };
 export type CelestialEntity = { data: Celestial; body: CANNON.Body };
 export type Target = { type: 'npc', entity: NpcEntity } | { type: 'celestial', entity: CelestialEntity } | null;
 
+interface ModalConfig {
+  isOpen: boolean;
+  title: string;
+  message: string;
+  onConfirm: () => void;
+  onCancel?: () => void;
+  isConfirm?: boolean;
+}
 
 const App: React.FC = () => {
-    const [view, setView] = useState<View>('GALAXY');
+    const [view, setView] = useState<View>('START');
     
+    // Track how we are entering the system: 'JUMP' (Far away) or 'UNDOCK' (Near station)
+    const [systemEntryMode, setSystemEntryMode] = useState<'JUMP' | 'UNDOCK'>('UNDOCK');
+
     const [currentSystem, setCurrentSystem] = useState<StarSystem>(initialSystem);
     const [selectedSystem, setSelectedSystem] = useState<StarSystem>(initialSystem);
     const [detailedDescription, setDetailedDescription] = useState<string>('');
@@ -125,6 +141,8 @@ const App: React.FC = () => {
     const [visualEffects, setVisualEffects] = useState<VisualEffect[]>([]);
     const [salvage, setSalvage] = useState<Salvage[]>([]);
     const [scoopableSalvage, setScoopableSalvage] = useState<Salvage | null>(null);
+    
+    const [modalConfig, setModalConfig] = useState<ModalConfig>({ isOpen: false, title: '', message: '', onConfirm: () => {} });
 
     // Refs for game loop
     const celestialsRef = useRef<CelestialEntity[]>([]);
@@ -146,9 +164,26 @@ const App: React.FC = () => {
         setTarget(targetables[nextIndex]);
     }, [targetables, target]);
 
-    const shipBody = useMemo(() => physicsService3D.getShipBody(), [ship]);
-    const shipBodyRef = useRef(shipBody);
+    const [shipBody, setShipBody] = useState<CANNON.Body | null>(null);
+    const shipBodyRef = useRef<CANNON.Body | null>(null);
     useEffect(() => { shipBodyRef.current = shipBody; }, [shipBody]);
+
+    useEffect(() => {
+        // Update mission service with current system ID whenever it changes
+        damageService.setCurrentSystemId(currentSystem.id);
+        
+        // Subscribe to mission updates for global UI state
+        const unsubMission = missionService.subscribe(() => {
+             setActiveMission(missionService.getActiveMission());
+        });
+        
+        // Auto-save on system change (if not start)
+        if (view !== 'START' && view !== 'HYPERSPACE') {
+            persistenceService.save(playerShipService.getShip(), currentSystem);
+        }
+
+        return unsubMission;
+    }, [currentSystem, view]);
 
     useEffect(() => {
         if (view !== 'SYSTEM') {
@@ -195,35 +230,59 @@ const App: React.FC = () => {
                     }
                     return { ...existingEntity, data: npcData };
                 } else {
-                    physicsService3D.initializeNpc(npcData);
                     const body = physicsService3D.getNpcBody(npcData.id);
                     return body ? { data: npcData, body } : null;
                 }
             }).filter((e): e is NpcEntity => e !== null);
 
-            const newNpcIds = new Set(aiNpcsData.map(n => n.id));
-            currentNpcEntities.forEach(entity => {
-                if (!newNpcIds.has(entity.data.id)) {
-                    physicsService3D.removeNpcBody(entity.data.id);
-                }
+            // Synchronize selected target with updated entity data
+            setTarget(currentTarget => {
+                if (!currentTarget || currentTarget.type !== 'npc') return currentTarget;
+                const updatedEntity = newEntities.find(e => e.data.id === currentTarget.entity.data.id);
+                return updatedEntity ? { ...currentTarget, entity: updatedEntity } : currentTarget;
             });
-            
+
             setNpcs(newEntities);
         };
         
         const unsubAi = aiService.subscribe(handleAiUpdate);
 
 
-        // Initialize 3D physics for the player ship
-        const currentShip = playerShipService.getShip();
-        physicsService3D.initializeShip(currentShip);
-
-        // Initialize Celestials
+        // Initialize Celestials (Defined here so we can reference Station position for undocking)
+        // Station coordinates
+        const stationPos = { x: 5000, y: 200, z: -1000 };
         const initialCelestials: Celestial[] = [
             { id: 'sun-1', type: 'Star', name: `${currentSystem.name} Prime`, position: { x: 0, y: 1000, z: -15000 }, radius: 2000 },
-            { id: 'planet-1', type: 'Planet', name: `${currentSystem.name} I`, position: { x: 5000, y: 200, z: 0 }, radius: 600 },
-            { id: 'station-1', type: 'Station', name: `${currentSystem.name} Station`, position: { x: 5000, y: 200, z: -1000 }, radius: 200 },
+            { id: 'planet-1', type: 'Planet', name: `${currentSystem.name} I`, position: { x: stationPos.x, y: 200, z: 0 }, radius: 600 },
+            { id: 'station-1', type: 'Station', name: `${currentSystem.name} Station`, position: stationPos, radius: 200 },
         ];
+
+        // Initialize 3D physics for the player ship based on Entry Mode
+        const currentShip = playerShipService.getShip();
+        
+        if (systemEntryMode === 'UNDOCK') {
+            // Spawn just outside station, facing away (roughly +Z relative to station, but depends on layout)
+            // Let's spawn at station Z + 400 (safe distance)
+            currentShip.position = { 
+                x: stationPos.x, 
+                y: stationPos.y, 
+                z: stationPos.z + 400 
+            };
+            // Set initial velocity away from station
+            currentShip.velocity = { x: 0, y: 0, z: 50 };
+        } else {
+            // JUMP mode - standard hyperspace arrival point (0,0,0 usually or specific point)
+            currentShip.position = { x: 0, y: 0, z: 0 };
+            currentShip.velocity = { x: 0, y: 0, z: 0 };
+        }
+
+        // Initialize Physics with the updated ship position
+        physicsService3D.initializeShip(currentShip);
+        setShipBody(physicsService3D.getShipBody());
+        
+        // If undocking, we want to update the service immediately so the view is correct
+        playerShipService.setShip(currentShip);
+
 
         const celestialEntities: CelestialEntity[] = [];
         initialCelestials.forEach(celestial => {
@@ -251,6 +310,7 @@ const App: React.FC = () => {
                 physicsService3D.removeBody(physicsService3D.getShipBody());
             }
             physicsService3D.shipBody = null;
+            setShipBody(null);
 
             npcsRef.current.forEach(entity => {
                 physicsService3D.removeNpcBody(entity.data.id);
@@ -271,7 +331,7 @@ const App: React.FC = () => {
             setVisualEffects([]);
             setProjectiles([]);
         }
-    }, [view, currentSystem]);
+    }, [view, currentSystem, systemEntryMode]); // Added systemEntryMode dependency
 
 
     const handleSelectSystem = useCallback((system: StarSystem) => {
@@ -298,12 +358,20 @@ const App: React.FC = () => {
         if (!selectedSystem || !currentSystem || currentShip.fuel < jumpDistance) return;
         
         audioService.playJumpSound();
-        
         playerShipService.setShip({ ...currentShip, fuel: currentShip.fuel - jumpDistance });
+        
+        // Transition to Hyperspace view first
+        setView('HYPERSPACE');
+        // Save immediately before jump to avoid loss
+        persistenceService.save(playerShipService.getShip(), selectedSystem);
+    }, [selectedSystem, currentSystem, jumpDistance]);
 
+    const handleHyperspaceComplete = useCallback(() => {
         setCurrentSystem(selectedSystem);
         setDetailedDescription('');
-    }, [selectedSystem, currentSystem, jumpDistance]);
+        setSystemEntryMode('JUMP'); // Arriving via Hyperspace
+        setView('SYSTEM');
+    }, [selectedSystem]);
 
     useEffect(() => {
         // Missile lock logic
@@ -343,7 +411,12 @@ const App: React.FC = () => {
         const totalWeight = currentShip.cargo.reduce((acc, c) => acc + (c.quantity * c.weight), 0);
         
         if (totalWeight + (item.contents.quantity * item.contents.weight) > currentShip.cargoCapacity) {
-          alert("Not enough cargo space!");
+          setModalConfig({
+              isOpen: true,
+              title: "Cargo Full",
+              message: "Not enough cargo space!",
+              onConfirm: () => setModalConfig(prev => ({...prev, isOpen: false}))
+          });
           return;
         }
     
@@ -360,7 +433,12 @@ const App: React.FC = () => {
         setScoopableSalvage(null);
         
         audioService.playCargoScoopSound();
-        alert(`Cargo acquired: ${item.contents.quantity}T ${item.contents.name}`);
+        setModalConfig({
+            isOpen: true,
+            title: "Cargo Acquired",
+            message: `Cargo acquired: ${item.contents.quantity}T ${item.contents.name}`,
+            onConfirm: () => setModalConfig(prev => ({...prev, isOpen: false}))
+        });
     }, [salvage]);
 
     const handlePipChange = useCallback((system: 'sys' | 'eng' | 'wep') => {
@@ -395,15 +473,69 @@ const App: React.FC = () => {
 
     const handleDock = useCallback(() => {
       if (!canDock) return;
-      if (activeMission && activeMission.status === 'Completed' && activeMission.systemId === currentSystem.id) {
-          const currentShip = playerShipService.getShip();
-          playerShipService.setShip({ ...currentShip, credits: currentShip.credits + activeMission.reward });
-          alert(`Mission Complete! ${activeMission.reward.toLocaleString()} credits awarded.`);
-          setActiveMission(null);
+      
+      // Check mission completion on dock
+      const missionMessage = missionService.checkDockingCompletion(currentSystem.id);
+      
+      // Autosave on dock
+      persistenceService.save(playerShipService.getShip(), currentSystem);
+
+      if (missionMessage) {
+          setModalConfig({
+              isOpen: true,
+              title: "Mission Update",
+              message: missionMessage,
+              onConfirm: () => {
+                  setModalConfig(prev => ({...prev, isOpen: false}));
+                  audioService.playDockingSound(); 
+                  setView('DOCKED');
+              }
+          });
+      } else {
+          audioService.playDockingSound(); 
+          setView('DOCKED');
       }
-      audioService.playDockingSound(); 
-      setView('DOCKED');
-    }, [canDock, activeMission, currentSystem.id]);
+
+    }, [canDock, currentSystem]);
+    
+    const handleNewGame = useCallback(() => {
+        playerShipService.reset();
+        missionService.reset();
+        weaponService.reset();
+        salvageService.clearSalvage();
+        effectsService.clearEffects();
+        aiService.clearNpcs();
+        physicsService3D.clearAllProjectiles();
+        
+        setShip(playerShipService.getShip());
+        setActiveMission(null);
+        setCurrentSystem(initialSystem);
+        setSelectedSystem(initialSystem);
+        setDetailedDescription('');
+        setTarget(null);
+        setMissileStatus('unarmed');
+        
+        // Start docked or undocking? Original Elite starts docked at Lave Station.
+        // Let's start with Undocking action to put player in space immediately.
+        setSystemEntryMode('UNDOCK'); 
+        setView('SYSTEM'); // Skip GALAXY view, go straight to flying
+        audioService.stopThrusterSound();
+        persistenceService.save(playerShipService.getShip(), initialSystem);
+    }, []);
+
+    const handleContinueGame = useCallback(() => {
+        const savedState = persistenceService.load();
+        if (savedState) {
+            playerShipService.setShip(savedState.ship);
+            const savedSystem = GALAXY_MAP.find(s => s.id === savedState.systemId) || initialSystem;
+            setCurrentSystem(savedSystem);
+            setSelectedSystem(savedSystem);
+            setSystemEntryMode('UNDOCK'); // Assume loading puts you at station for now
+            setView('DOCKED'); // Load into docked view
+        } else {
+            handleNewGame(); // Fallback if save is corrupt/missing
+        }
+    }, [handleNewGame]);
 
     useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
@@ -447,7 +579,7 @@ const App: React.FC = () => {
 
     useEffect(() => {
         if (view === 'SYSTEM') {
-            document.body.style.cursor = 'none';
+            document.body.style.cursor = 'crosshair';
         } else {
             document.body.style.cursor = 'default';
         }
@@ -481,61 +613,8 @@ const App: React.FC = () => {
             playerController3D.handlePlayerInput(pressedKeys.current);
             weaponService.update(deltaTime);
 
-            // 2. Handle simple NPC AI
-            const playerBody = shipBodyRef.current;
-            const playerShip = playerShipService.getShip();
-
-            npcsRef.current.forEach(npcEntity => {
-                const { data: npc, body: npcBody } = npcEntity;
-
-                switch (npc.aiState) {
-                    case 'ATTACKING':
-                        if (playerBody && npc.targetId === playerShip.id) {
-                            const toPlayer = new CANNON.Vec3().copy(playerBody.position).vsub(npcBody.position);
-                            const distance = toPlayer.length();
-
-                            const forward = new CANNON.Vec3(0, 0, -1);
-                            const worldForward = npcBody.quaternion.vmult(forward);
-                            const cross = worldForward.cross(toPlayer.unit());
-                            npcBody.applyTorque(cross.scale(100000));
-                            
-                            if (distance > 400) {
-                                physicsService3D.applyNpcThrust(npc.id, 0.5);
-                            } else if (distance < 200) {
-                                physicsService3D.applyNpcThrust(npc.id, -0.2);
-                            }
-
-                            if (distance < 800 && Math.random() < 0.03) { // Fire occasionally
-                                const weaponDamage = 5;
-                                physicsService3D.fireProjectile(npc.id, weaponDamage, 600, 'laser', playerShip.id);
-                            }
-                        }
-                        break;
-                    case 'FLEEING':
-                        if (playerBody && npc.targetId === playerShip.id) {
-                            const awayFromPlayer = new CANNON.Vec3().copy(npcBody.position).vsub(playerBody.position);
-
-                            const forward = new CANNON.Vec3(0, 0, -1);
-                            const worldForward = npcBody.quaternion.vmult(forward);
-                            const cross = worldForward.cross(awayFromPlayer.unit());
-                            npcBody.applyTorque(cross.scale(80000));
-                            
-                            physicsService3D.applyNpcThrust(npc.id, 0.8);
-                        }
-                        break;
-                    case 'PATROLLING':
-                    default:
-                        if (Math.random() < 0.01) {
-                            physicsService3D.applyNpcYaw(npc.id, (Math.random() - 0.5) * 0.5);
-                        }
-                        if (npc.type === 'Pirate' || npc.type === 'Trader') {
-                            if (Math.random() < 0.02) {
-                               physicsService3D.applyNpcThrust(npc.id, Math.random() * 0.3 + 0.1);
-                            }
-                        }
-                        break;
-                }
-            });
+            // 2. Handle AI
+            aiService.update(deltaTime);
             
             // 3. Step the 3D physics simulation
             physicsService3D.update(deltaTime);
@@ -591,21 +670,33 @@ const App: React.FC = () => {
 
     const handleUndock = () => {
         audioService.playUndockingSound();
+        setSystemEntryMode('UNDOCK');
         setView('SYSTEM');
+        // Auto-save on undock
+        persistenceService.save(playerShipService.getShip(), currentSystem);
     }
 
     const handleAcceptMission = (mission: Mission) => {
         if (activeMission) {
-            alert("You already have an active mission.");
+            setModalConfig({
+                isOpen: true,
+                title: "Mission Board",
+                message: "You already have an active mission.",
+                onConfirm: () => setModalConfig(prev => ({...prev, isOpen: false}))
+            });
             return;
         }
         audioService.playAcceptMissionSound();
-        setActiveMission({ ...mission, status: 'InProgress' });
+        missionService.acceptMission(mission);
         setView('DOCKED');
     };
 
     const renderView = () => {
         switch (view) {
+            case 'START':
+                return <StartScreen onNewGame={handleNewGame} onContinue={handleContinueGame} hasSave={persistenceService.hasSave()} />;
+            case 'HYPERSPACE':
+                return <HyperspaceView onComplete={handleHyperspaceComplete} />;
             case 'SYSTEM':
                 return (
                   <div style={{ position: 'relative', width: '100%', height: '100%', flexGrow: 1 }}>
@@ -648,7 +739,7 @@ const App: React.FC = () => {
                 <div className="text-center">
                   <h2 className="font-orbitron text-5xl text-red-500 mb-4">YOU DIED</h2>
                   <p className="text-gray-300">Your journey through the stars has come to an untimely end.</p>
-                  <button onClick={() => { audioService.playUIClick(); window.location.reload(); }} className="mt-8 bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2 px-4 rounded">Try Again</button>
+                  <button onClick={() => { audioService.playUIClick(); handleNewGame(); }} className="mt-8 bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2 px-4 rounded transition duration-200">Try Again</button>
                 </div>
               </div>;
             case 'GALAXY':
@@ -692,7 +783,7 @@ const App: React.FC = () => {
                           </svg>
                         )}
                       </section>
-                      <aside className="flex flex-col gap-4">
+                      <aside className="flex flex-col gap-2">
                         <ShipStatusPanel ship={ship} activeMission={activeMission} />
                         <SystemInfoPanel
                           system={selectedSystem}
@@ -713,8 +804,16 @@ const App: React.FC = () => {
     return (
         <div className="bg-slate-900 text-white font-sans min-h-screen flex flex-col bg-[url('https://source.unsplash.com/random/1920x1080/?stars,nebula')] bg-cover bg-center">
             <div className="flex flex-col flex-grow bg-black/50 min-h-0">
-                <Header />
+                {view !== 'START' && <Header />}
                 {renderView()}
+                <Modal 
+                    isOpen={modalConfig.isOpen} 
+                    title={modalConfig.title} 
+                    message={modalConfig.message} 
+                    onConfirm={modalConfig.onConfirm}
+                    onCancel={modalConfig.onCancel}
+                    isConfirm={modalConfig.isConfirm}
+                />
             </div>
         </div>
     );

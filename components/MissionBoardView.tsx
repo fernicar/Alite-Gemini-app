@@ -1,28 +1,47 @@
+
 import React, { useState, useEffect } from 'react';
 import { Ship, StarSystem, Mission } from '../types';
-import { generateMissions } from '../data/missions';
+import { missionService } from '../services/missionService';
 import { ShipStatusPanel } from './ShipStatusPanel';
 
 const MissionBoardView: React.FC<{
   currentSystem: StarSystem;
   ship: Ship;
-  activeMission: Mission | null;
+  activeMission: Mission | null; // This prop is kept for compatibility but we'll use service state mostly
   onAcceptMission: (mission: Mission) => void;
   onReturnToStation: () => void;
-}> = ({ currentSystem, ship, activeMission, onAcceptMission, onReturnToStation }) => {
+}> = ({ currentSystem, ship, onReturnToStation }) => {
   const [missions, setMissions] = useState<Mission[]>([]);
   const [selectedMission, setSelectedMission] = useState<Mission | null>(null);
+  const [currentActiveMission, setCurrentActiveMission] = useState<Mission | null>(missionService.getActiveMission());
 
   useEffect(() => {
-    setMissions(generateMissions(currentSystem));
+    // Load missions for this system
+    setMissions(missionService.getAvailableMissions(currentSystem));
     setSelectedMission(null);
+    
+    const unsubscribe = missionService.subscribe(() => {
+        setCurrentActiveMission(missionService.getActiveMission());
+        setMissions(missionService.getAvailableMissions(currentSystem));
+    });
+
+    return unsubscribe;
   }, [currentSystem]);
 
   const handleAccept = () => {
     if (selectedMission) {
-      onAcceptMission(selectedMission);
+      missionService.acceptMission(selectedMission);
+      // We don't need to call onAcceptMission parent prop necessarily if the service handles state, 
+      // but if the parent `App` relies on it for sound effects or view changes, we can keep it purely visual.
+      // However, App.tsx was handling state. We will update App.tsx to remove state handling there.
     }
   };
+  
+  const handleAbandon = () => {
+      if (confirm("Are you sure you want to abandon the current mission?")) {
+          missionService.abandonMission();
+      }
+  }
 
   return (
     <main className="grid flex-grow grid-cols-1 gap-4 p-4 min-h-0 lg:grid-cols-[1fr_350px]">
@@ -66,18 +85,31 @@ const MissionBoardView: React.FC<{
                            <p>TYPE: <span className="text-yellow-300">{selectedMission.type}</span></p>
                            <p>REWARD: <span className="text-green-400">{selectedMission.reward.toLocaleString()} ©</span></p>
                            <p>LOCATION: <span className="text-purple-300">{currentSystem.name} System</span></p>
+                           {selectedMission.type === 'Delivery' && <p>CARGO: <span className="text-blue-300">{selectedMission.cargoRequired?.quantity}t {selectedMission.cargoRequired?.name}</span></p>}
                         </div>
                         <button
                             onClick={handleAccept}
-                            disabled={!!activeMission}
+                            disabled={!!currentActiveMission}
                             className="w-full mt-6 bg-green-600 hover:bg-green-500 text-white font-bold py-3 px-4 rounded transition duration-200 disabled:bg-gray-500 disabled:cursor-not-allowed"
                         >
-                           {activeMission ? 'Mission Slot Full' : 'Accept Contract'}
+                           {currentActiveMission ? 'Mission Slot Full' : 'Accept Contract'}
                         </button>
                     </div>
                 ) : (
-                    <div className="flex h-full items-center justify-center">
+                    <div className="flex h-full items-center justify-center flex-col gap-4">
                         <p className="text-gray-500">Select a contract to view details.</p>
+                        {currentActiveMission && (
+                            <div className="w-full bg-slate-900/50 p-4 rounded border border-yellow-500/30">
+                                <h4 className="text-yellow-500 font-bold mb-2">Active Mission</h4>
+                                <p className="text-white font-bold">{currentActiveMission.title}</p>
+                                <p className="text-sm text-gray-400">{currentActiveMission.description}</p>
+                                <div className="mt-2 text-xs font-mono">
+                                    {currentActiveMission.type === 'Bounty' && <p>Kills: {currentActiveMission.currentKills || 0} / {currentActiveMission.requiredKills || 1}</p>}
+                                    <p>Status: <span className={currentActiveMission.status === 'Completed' ? 'text-green-400' : 'text-blue-400'}>{currentActiveMission.status}</span></p>
+                                </div>
+                                <button onClick={handleAbandon} className="mt-4 text-xs text-red-400 hover:text-red-300 underline">Abandon Mission</button>
+                            </div>
+                        )}
                     </div>
                 )}
                 </div>
@@ -85,7 +117,7 @@ const MissionBoardView: React.FC<{
         </div>
       </section>
       <aside className="space-y-4 flex flex-col">
-        <ShipStatusPanel ship={ship} activeMission={activeMission} />
+        <ShipStatusPanel ship={ship} activeMission={currentActiveMission} />
       </aside>
     </main>
   );

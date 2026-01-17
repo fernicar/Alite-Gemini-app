@@ -1,14 +1,18 @@
 
-
 import { Ship } from '../types';
 import { createInitialShip } from './shipService';
 import { physicsService3D } from './physicsService3D';
 
 class PlayerShipService {
-    private ship: Ship = createInitialShip();
+    private ship: Ship;
     private subscribers: (() => void)[] = [];
 
     constructor() {
+        const initialShip = createInitialShip();
+        this.ship = {
+            ...initialShip,
+            legalStatus: 'Clean'
+        };
         this.setShip(this.ship); // Initialize with physics properties
     }
 
@@ -28,16 +32,39 @@ class PlayerShipService {
     }
 
     public setShip(newShip: Ship) {
-        if (this.ship && this.ship.id) {
+        if (this.ship && this.ship.id && this.ship.id !== newShip.id) {
             const oldBody = physicsService3D.getShipBody();
             if (oldBody) {
                 physicsService3D.removeBody(oldBody);
             }
         }
         
-        physicsService3D.initializeShip(newShip);
+        // Ensure physics body exists for the ship
+        if (!physicsService3D.getShipBody() && newShip.id) {
+            physicsService3D.initializeShip(newShip);
+        }
 
         this.ship = newShip;
+        this.updatePhysicsFromPips();
+        this.notify();
+    }
+    
+    public reset() {
+        const initialShip = createInitialShip();
+        const freshShip = {
+            ...initialShip,
+            legalStatus: 'Clean' as const
+        };
+        
+        // Remove old physics body
+        const oldBody = physicsService3D.getShipBody();
+        if (oldBody) {
+            physicsService3D.removeBody(oldBody);
+            physicsService3D.shipBody = null;
+        }
+        
+        this.ship = freshShip;
+        physicsService3D.initializeShip(this.ship);
         this.updatePhysicsFromPips();
         this.notify();
     }
@@ -132,7 +159,7 @@ class PlayerShipService {
     public useEnergy(amount: number) {
         this.ship = {
             ...this.ship,
-            hull: Math.max(0, this.ship.energy - amount)
+            energy: Math.max(0, this.ship.energy - amount)
         };
         this.notify();
     }

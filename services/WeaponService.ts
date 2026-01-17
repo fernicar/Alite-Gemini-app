@@ -8,6 +8,10 @@ import * as THREE from 'three';
 class WeaponService {
     private cooldowns = new Map<string, number>(); // slotIndex -> cooldown remaining
 
+    public reset() {
+        this.cooldowns.clear();
+    }
+
     public update(deltaTime: number) {
         this.cooldowns.forEach((time, key) => {
             if (time > 0) {
