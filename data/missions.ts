@@ -2,7 +2,7 @@
 import { StarSystem, Mission } from '../types';
 
 const PIRATE_NAMES = ['"One-Eye" Jack', 'Silas "The Ghost" Kane', 'Mara "Red Blade"'];
-const PIRATE_SHIP_TYPES = ['Viper Mk I', 'Cobra Mk III', 'Adder'];
+const PIRATE_SHIP_TYPES = ['Viper', 'Cobra Mk III', 'Adder'];
 
 export const generateMissions = (system: StarSystem): Mission[] => {
   const missions: Mission[] = [];

@@ -10,6 +10,7 @@ import { TargetInfoPanel } from './TargetInfoPanel';
 import { SystemViewHUD } from './SystemViewHUD';
 import { playerController3D } from '../services/playerController3D';
 import { physicsService3D } from '../services/physicsService3D';
+import { createShipMesh } from '../utils/ship3d';
 
 interface SystemViewProps {
   currentSystem: StarSystem;
@@ -34,32 +35,6 @@ interface SystemViewProps {
   energyPips: { sys: number; eng: number; wep: number };
 }
 
-// Ship Dimensions mapping based on XML assets (W x H x L)
-// We apply a scale factor (e.g. 0.1) to fit the scene scale.
-const SHIP_DEFINITIONS: Record<string, { w: number; h: number; l: number; shape: 'wedge' | 'box' | 'cylinder' | 'saucer' }> = {
-    'Adder': { w: 70, h: 18, l: 105, shape: 'wedge' },
-    'Anaconda': { w: 137, h: 110, l: 312, shape: 'box' }, 
-    'Asp Explorer': { w: 128, h: 39, l: 138, shape: 'wedge' },
-    'Boa': { w: 113, h: 104, l: 200, shape: 'box' },
-    'Cobra Mk I': { w: 146, h: 31, l: 114, shape: 'wedge' },
-    'Cobra Mk III': { w: 180, h: 41, l: 90, shape: 'wedge' },
-    'Fer-de-Lance': { w: 84, h: 37, l: 160, shape: 'wedge' },
-    'Gecko': { w: 132, h: 24, l: 81, shape: 'wedge' },
-    'Krait': { w: 180, h: 40, l: 160, shape: 'wedge' },
-    'Mamba': { w: 140, h: 25, l: 118, shape: 'wedge' },
-    'Python': { w: 206, h: 103, l: 336, shape: 'wedge' },
-    'Sidewinder': { w: 128, h: 29, l: 68, shape: 'wedge' },
-    'Thargoid': { w: 328, h: 72, l: 328, shape: 'saucer' }, // Octagon
-    'Thargon': { w: 46, h: 10, l: 43, shape: 'saucer' },
-    'Transporter': { w: 100, h: 33, l: 116, shape: 'box' },
-    'Viper': { w: 87, h: 27, l: 96, shape: 'wedge' },
-    'Viper Mk I': { w: 87, h: 27, l: 96, shape: 'wedge' },
-    // Default fallback
-    'default': { w: 50, h: 20, l: 80, shape: 'wedge' }
-};
-
-const SCALE_FACTOR = 0.1; 
-
 const SystemView: React.FC<SystemViewProps> = (props) => {
   const { onReturnToGalaxy, onDock, onFire, onTargetNext, onScoop, canDock, scoopableSalvage, missileStatus } = props;
   const mountRef = useRef<HTMLDivElement>(null);
@@ -70,6 +45,7 @@ const SystemView: React.FC<SystemViewProps> = (props) => {
   const npcMeshes = useRef(new Map<string, THREE.Group>());
   const celestialMeshes = useRef(new Map<string, THREE.Group>());
   const projectileMeshes = useRef(new Map<string, THREE.Mesh>());
+  const salvageMeshes = useRef(new Map<string, THREE.Mesh>());
   
   const [camera, setCamera] = useState<THREE.OrthographicCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -111,7 +87,6 @@ const SystemView: React.FC<SystemViewProps> = (props) => {
     sceneRef.current = scene;
     
     // Orthographic Camera Setup
-    // Initial setup, values will be updated by ResizeObserver
     const frustumSize = 400; 
     const aspect = currentMount.clientWidth / currentMount.clientHeight;
     const newCamera = new THREE.OrthographicCamera(
@@ -122,7 +97,6 @@ const SystemView: React.FC<SystemViewProps> = (props) => {
         1,
         2000
     );
-    // Camera looks down -Y, forward is -Z.
     newCamera.position.set(0, 500, 0);
     newCamera.lookAt(0, 0, 0);
     setCamera(newCamera);
@@ -141,7 +115,7 @@ const SystemView: React.FC<SystemViewProps> = (props) => {
     sunLight.position.set(50, 100, 50);
     scene.add(sunLight);
 
-    // Reference Grid (XZ plane)
+    // Reference Grid
     const gridHelper = new THREE.GridHelper(50000, 200, 0x333333, 0x111111);
     gridHelper.position.y = -50; 
     scene.add(gridHelper);
@@ -157,104 +131,17 @@ const SystemView: React.FC<SystemViewProps> = (props) => {
     const starField = new THREE.Points(starGeometry, starMaterial);
     scene.add(starField);
 
-    // --- Meshes ---
-    const createWedgeGeometry = (w: number, h: number, l: number) => {
-        // A wedge that tapers to the front (-Z)
-        // Back face vertices (Z = +l/2)
-        // Front face (Z = -l/2) could be a line or point.
-        // Let's make it simple: 5 vertices (pyramid on its side) or 6 (prism)
-        // Standard Elite ships are often flattened wedges.
-        
-        // Vertices
-        // 0: Nose (0, 0, -l/2)
-        // 1: Back-Top-Right (w/2, h/2, l/2)
-        // 2: Back-Top-Left (-w/2, h/2, l/2)
-        // 3: Back-Bottom-Left (-w/2, -h/2, l/2)
-        // 4: Back-Bottom-Right (w/2, -h/2, l/2)
-        
-        const geometry = new THREE.BufferGeometry();
-        const vertices = new Float32Array([
-            // Top face (0, 1, 2)
-            0, 0, -l/2,   w/2, h/2, l/2,   -w/2, h/2, l/2,
-            // Right face (0, 4, 1)
-            0, 0, -l/2,   w/2, -h/2, l/2,  w/2, h/2, l/2,
-            // Left face (0, 2, 3)
-            0, 0, -l/2,   -w/2, h/2, l/2,  -w/2, -h/2, l/2,
-            // Bottom face (0, 3, 4)
-            0, 0, -l/2,   -w/2, -h/2, l/2, w/2, -h/2, l/2,
-            // Back face (1, 4, 3) and (1, 3, 2) - quad
-            w/2, h/2, l/2, w/2, -h/2, l/2, -w/2, -h/2, l/2,
-            w/2, h/2, l/2, -w/2, -h/2, l/2, -w/2, h/2, l/2
-        ]);
-        
-        geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-        geometry.computeVertexNormals();
-        return geometry;
-    };
-    
-    const createBoxGeometry = (w: number, h: number, l: number) => {
-        return new THREE.BoxGeometry(w, h, l);
-    };
-
-    const createSaucerGeometry = (w: number, h: number, l: number) => {
-         // Thargoid octagon
-         const radius = Math.max(w, l) / 2;
-         const geometry = new THREE.CylinderGeometry(radius, radius, h, 8);
-         geometry.rotateX(Math.PI / 2); // Rotate to face forward? No, saucer is flat on Y usually.
-         // Actually in top-down view, Cylinder(..., 8) standing up (Y axis) looks like an octagon.
-         // That's perfect.
-         return geometry;
-    };
-
-    const createShipMesh = (color: number, shipType: string) => {
-        const group = new THREE.Group();
-        
-        const dims = SHIP_DEFINITIONS[shipType] || SHIP_DEFINITIONS['default'];
-        const w = dims.w * SCALE_FACTOR;
-        const h = dims.h * SCALE_FACTOR;
-        const l = dims.l * SCALE_FACTOR;
-        
-        let bodyGeo: THREE.BufferGeometry;
-        
-        if (dims.shape === 'wedge') {
-            bodyGeo = createWedgeGeometry(w, h, l);
-        } else if (dims.shape === 'box') {
-            bodyGeo = createBoxGeometry(w, h, l);
-        } else if (dims.shape === 'saucer') {
-            bodyGeo = createSaucerGeometry(w, h, l);
-        } else {
-            bodyGeo = createWedgeGeometry(w, h, l);
-        }
-
-        const bodyMat = new THREE.MeshPhongMaterial({ color: color, emissive: 0x001111, flatShading: true });
-        const mesh = new THREE.Mesh(bodyGeo, bodyMat);
-        group.add(mesh);
-        
-        // Thruster glow (only for player/wedge/box)
-        if (dims.shape !== 'saucer') {
-            const thrusterGeo = new THREE.BoxGeometry(w * 0.6, h * 0.4, 1);
-            const thrusterMat = new THREE.MeshBasicMaterial({ color: 0xffaa00 });
-            const thruster = new THREE.Mesh(thrusterGeo, thrusterMat);
-            thruster.position.z = l / 2 + 0.1; // Position at back
-            group.add(thruster);
-            return { group, thruster };
-        }
-
-        return { group, thruster: null };
-    }
-
-    // Player Ship
-    const { group: playerGroup, thruster: playerThruster } = createShipMesh(0x00ffff, props.ship.type);
+    // Player Ship - Synchronous creation
+    const { group: playerGroup, thruster: playerThruster } = createShipMesh(props.ship.type, 0x00ffff);
     scene.add(playerGroup);
     playerMeshRef.current = playerGroup;
+    playerGroup.userData.thruster = playerThruster;
+
 
     // --- Resize Observer ---
-    // Calculates available height/width of the container dynamically
     const resizeObserver = new ResizeObserver((entries) => {
         for (const entry of entries) {
             const { width, height } = entry.contentRect;
-            
-            // Avoid 0 divide or invalid sizes
             if (width === 0 || height === 0) return;
 
             const newAspect = width / height;
@@ -274,7 +161,7 @@ const SystemView: React.FC<SystemViewProps> = (props) => {
     const animate = () => {
         animationFrameId = requestAnimationFrame(animate);
         
-        const { npcs, celestials, projectiles, shipBody: currentShipBody, pressedKeys } = propsRef.current;
+        const { npcs, celestials, projectiles, salvage, shipBody: currentShipBody, pressedKeys } = propsRef.current;
 
         // 1. Sync Player
         if (currentShipBody && playerMeshRef.current) {
@@ -292,8 +179,9 @@ const SystemView: React.FC<SystemViewProps> = (props) => {
             newCamera.position.x = currentShipBody.position.x;
             newCamera.position.z = currentShipBody.position.z;
             
-            if (playerThruster) {
-                playerThruster.visible = pressedKeys.has('w') || pressedKeys.has('arrowup');
+            const thruster = playerMeshRef.current.userData.thruster;
+            if (thruster) {
+                thruster.visible = pressedKeys.has('w') || pressedKeys.has('arrowup');
             }
         }
 
@@ -305,7 +193,7 @@ const SystemView: React.FC<SystemViewProps> = (props) => {
             
             if (!meshGroup) {
                 const color = npc.data.isHostile ? 0xff4444 : 0x00ff00;
-                const { group } = createShipMesh(color, npc.data.shipType);
+                const { group } = createShipMesh(npc.data.shipType, color);
                 scene.add(group);
                 npcMeshes.current.set(npc.data.id, group);
                 meshGroup = group;
@@ -320,6 +208,7 @@ const SystemView: React.FC<SystemViewProps> = (props) => {
             );
         });
         
+        // Remove dead NPCs
         npcMeshes.current.forEach((mesh, id) => {
             if (!activeNpcIds.has(id)) {
                 scene.remove(mesh);
@@ -336,7 +225,7 @@ const SystemView: React.FC<SystemViewProps> = (props) => {
                 let body: THREE.Mesh | undefined;
                 
                 if (cel.data.type === 'Station') {
-                    // Station is usually a Dodecahedron or Icosahedron in Elite
+                    // Station mesh (Dodecahedron)
                     body = new THREE.Mesh(
                         new THREE.IcosahedronGeometry(cel.data.radius, 0),
                         new THREE.MeshStandardMaterial({ color: 0xcccccc, wireframe: true })
@@ -388,6 +277,34 @@ const SystemView: React.FC<SystemViewProps> = (props) => {
             if (!activeProjIds.has(id)) {
                 scene.remove(mesh);
                 projectileMeshes.current.delete(id);
+            }
+        });
+
+        // 5. Sync Salvage (Scrap Metal/Cargo)
+        const activeSalvageIds = new Set<string>();
+        salvage.forEach(s => {
+            activeSalvageIds.add(s.id);
+            let mesh = salvageMeshes.current.get(s.id);
+            
+            if (!mesh) {
+                // Use a Dodecahedron for generic cargo canister look, scaled down
+                const geo = new THREE.DodecahedronGeometry(5);
+                const mat = new THREE.MeshStandardMaterial({ color: 0xaaaaaa, roughness: 0.5, metalness: 0.8 });
+                mesh = new THREE.Mesh(geo, mat);
+                scene.add(mesh);
+                salvageMeshes.current.set(s.id, mesh);
+            }
+            
+            mesh.position.set(s.position.x, s.position.y, s.position.z);
+            // Slowly rotate floating debris
+            mesh.rotation.x += 0.01;
+            mesh.rotation.y += 0.01;
+        });
+
+        salvageMeshes.current.forEach((mesh, id) => {
+            if (!activeSalvageIds.has(id)) {
+                scene.remove(mesh);
+                salvageMeshes.current.delete(id);
             }
         });
 

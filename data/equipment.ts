@@ -1,16 +1,17 @@
+
 import { EquipmentItem } from '../types';
 
 export const EQUIPMENT_LIST: EquipmentItem[] = [
     // Weapons
     {
         id: '1E_PulseLaser', name: '1E Pulse Laser', category: 'Weapon', class: 1, rating: 'E',
-        price: 2500, mass: 2, powerDraw: 4, compatibleSlotTypes: ['Hardpoint'],
-        stats: { damage: 10 }
+        price: 2500, mass: 2, powerDraw: 0.6, compatibleSlotTypes: ['Hardpoint'],
+        stats: { damage: 10, rate: 3 }
     },
     {
         id: '1E_BeamLaser', name: '1E Beam Laser', category: 'Weapon', class: 1, rating: 'E',
-        price: 7500, mass: 3, powerDraw: 11, compatibleSlotTypes: ['Hardpoint'],
-        stats: { damage: 18 }
+        price: 7500, mass: 3, powerDraw: 1.2, compatibleSlotTypes: ['Hardpoint'],
+        stats: { damage: 15, rate: 4 }
     },
     // Core
     {

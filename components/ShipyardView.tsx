@@ -1,10 +1,10 @@
 
-
 import React, { useState, useMemo, useEffect } from 'react';
 import { Ship, StarSystem, ShipForSale } from '../types';
 import { SHIPS_FOR_SALE } from '../data/ships';
 import { ShipStatusPanel } from './ShipStatusPanel';
 import { shipyardService } from '../services/shipyardService';
+import { ShipPreview } from './ShipPreview';
 
 const StatRow: React.FC<{ label: string; currentValue: number | string; newValue: number | string; reverseColors?: boolean }> = ({ label, currentValue, newValue, reverseColors }) => {
     const currentNum = typeof currentValue === 'string' ? parseFloat(currentValue) : currentValue;
@@ -111,8 +111,13 @@ const ShipyardView: React.FC<{
                 <h3 className="font-orbitron text-lg text-orange-300 border-b border-orange-300/30 pb-2 mb-4">Specifications</h3>
                 {selectedShip ? (
                     <div className="text-white font-mono flex flex-col h-full">
-                       <h4 className="text-xl font-bold text-cyan-200">{selectedShip.type}</h4>
-                       <p className="text-sm text-gray-400 mb-4">{selectedShip.spec.manufacturer} - {selectedShip.spec.class}</p>
+                       <h4 className="text-xl font-bold text-cyan-200 mb-1">{selectedShip.type}</h4>
+                       <p className="text-sm text-gray-400 mb-2">{selectedShip.spec.manufacturer} - {selectedShip.spec.class}</p>
+                       
+                       {/* Ship Preview */}
+                       <div className="h-48 mb-4 bg-black/40 rounded border border-slate-600/50 overflow-hidden relative">
+                           <ShipPreview shipType={selectedShip.type} className="w-full h-full" />
+                       </div>
 
                        <div className="bg-black/20 p-3 rounded flex-grow">
                            <h5 className="text-sm text-orange-300 mb-2">Comparison</h5>

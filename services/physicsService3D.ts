@@ -1,5 +1,4 @@
 
-
 import * as CANNON from 'cannon-es';
 import { Ship, NPC, Celestial, Projectile } from '../types';
 import { SHIPS_FOR_SALE } from '../data/ships';
@@ -25,11 +24,13 @@ class PhysicsService3D {
     private subscribers: (() => void)[] = [];
     private collisionSubscribers: ((collision: { projectile: Projectile, target: NPC | Ship }) => void)[] = [];
     
-    // Config
-    // Allow full 3D movement for simulation, but we'll damp vertical movement for gameplay feel if desired.
-    // Elite is fully 3D.
-    private linearFactor = new CANNON.Vec3(1, 1, 1); 
-    private angularFactor = new CANNON.Vec3(1, 1, 1);
+    // Safety queue for bodies to remove after step
+    private bodiesToRemove: CANNON.Body[] = [];
+    private isStepping: boolean = false;
+    
+    // Config: Limit movement to the XZ plane (2D gameplay)
+    private linearFactor = new CANNON.Vec3(1, 0, 1); 
+    private angularFactor = new CANNON.Vec3(0, 1, 0);
 
     constructor() {
         this.world = new CANNON.World({
@@ -108,6 +109,10 @@ class PhysicsService3D {
     }
 
     public initializeShip(ship: Ship) {
+        if (this.shipBody) {
+            this.removeBody(this.shipBody);
+        }
+
         const shipSpec = SHIPS_FOR_SALE.find(s => s.type === ship.type)?.spec;
         if (!shipSpec) return;
 
@@ -117,7 +122,7 @@ class PhysicsService3D {
         this.shipBody = new CANNON.Body({
             mass: shipSpec.mass,
             shape: shape,
-            position: new CANNON.Vec3(ship.position.x, ship.position.y, ship.position.z),
+            position: new CANNON.Vec3(ship.position.x, 0, ship.position.z), // Force Y=0
             linearDamping: 0.5,
             angularDamping: 0.9,
             linearFactor: this.linearFactor,
@@ -140,7 +145,7 @@ class PhysicsService3D {
         const body = new CANNON.Body({
             mass: shipSpec.mass,
             shape: shape,
-            position: new CANNON.Vec3(npc.position.x, npc.position.y, npc.position.z),
+            position: new CANNON.Vec3(npc.position.x, 0, npc.position.z), // Force Y=0
             linearDamping: 0.5,
             angularDamping: 0.9,
             linearFactor: this.linearFactor,
@@ -161,7 +166,7 @@ class PhysicsService3D {
     public removeNpcBody(npcId: string) {
         const body = this.npcBodies.get(npcId);
         if (body) {
-            this.world.removeBody(body);
+            this.removeBody(body);
             this.npcBodies.delete(npcId);
         }
     }
@@ -171,7 +176,7 @@ class PhysicsService3D {
         const body = new CANNON.Body({
             mass: 0,
             shape: shape,
-            position: new CANNON.Vec3(celestial.position.x, celestial.position.y, celestial.position.z),
+            position: new CANNON.Vec3(celestial.position.x, 0, celestial.position.z), // Force Y=0
             collisionFilterGroup: COLLISION_GROUPS.OBSTACLE,
             collisionFilterMask: COLLISION_GROUPS.PLAYER | COLLISION_GROUPS.NPC | COLLISION_GROUPS.PROJ_PLAYER | COLLISION_GROUPS.PROJ_NPC,
         });
@@ -205,6 +210,7 @@ class PhysicsService3D {
 
         // Calculate vector to target
         const toTarget = targetPos.vsub(body.position);
+        toTarget.y = 0; // Ignore vertical difference for steering
         toTarget.normalize();
         
         // Current forward vector (assuming -Z is forward)
@@ -212,25 +218,14 @@ class PhysicsService3D {
         const currentForward = body.quaternion.vmult(localForward);
         
         // Calculate rotation needed (cross product axis and angle)
-        // This is a simplified steering behavior.
-        // We want to align currentForward with toTarget.
-        
         const rotationAxis = currentForward.cross(toTarget);
-        // If vectors are opposite, axis is zero, handle edge case if needed
         
         // Apply torque proportional to the angle difference
-        // Damping is handled by angularDamping on the body
         const STEER_STRENGTH = 150000;
         
         body.applyTorque(rotationAxis.scale(STEER_STRENGTH));
         
-        // Additional stabilization: try to align up vector to Y to prevent weird rolling
-        // This keeps ships mostly "upright" relative to the galactic plane
-        const localUp = new CANNON.Vec3(0, 1, 0);
-        const currentUp = body.quaternion.vmult(localUp);
-        const globalUp = new CANNON.Vec3(0, 1, 0);
-        const stabilizationAxis = currentUp.cross(globalUp);
-        body.applyTorque(stabilizationAxis.scale(STEER_STRENGTH * 0.5));
+        // Stabilization handled by angular factor constraint
     }
 
     // AI Helper: Apply torque to yaw (rotate around local Y)
@@ -270,7 +265,7 @@ class PhysicsService3D {
         
         if (direction) {
              // If manual direction provided (e.g. from mouse aim), use it
-             worldForward = new CANNON.Vec3(direction.x, direction.y, direction.z).unit();
+             worldForward = new CANNON.Vec3(direction.x, 0, direction.z).unit(); // Flatten direction
         } else {
              worldForward = ownerBody.quaternion.vmult(localForward);
         }
@@ -278,12 +273,14 @@ class PhysicsService3D {
         // Spawn position: tip of the ship. Increase offset to avoid self-collision with larger hitboxes
         const spawnOffset = 18; 
         const spawnPos = ownerBody.position.vadd(worldForward.scale(spawnOffset));
+        spawnPos.y = 0; // Force Y=0
 
         const projectileBody = new CANNON.Body({
             mass: 0.1,
             shape: new CANNON.Sphere(2), 
             position: spawnPos,
             linearDamping: 0,
+            linearFactor: this.linearFactor, // Constrain projectile to plane
             collisionFilterGroup: isPlayer ? COLLISION_GROUPS.PROJ_PLAYER : COLLISION_GROUPS.PROJ_NPC,
             collisionFilterMask: isPlayer 
                 ? (COLLISION_GROUPS.NPC | COLLISION_GROUPS.OBSTACLE) 
@@ -296,14 +293,13 @@ class PhysicsService3D {
         // Projectile Velocity
         const muzzleVelocity = worldForward.scale(speed);
         projectileBody.velocity = ownerBody.velocity.vadd(muzzleVelocity);
-        
+        projectileBody.velocity.y = 0; // Ensure no vertical velocity
+
         // Projectile rotation to match velocity direction
         const targetQ = new CANNON.Quaternion();
         // Point -Z towards velocity
         const zAxis = new CANNON.Vec3(0,0,-1);
         const velocityDir = projectileBody.velocity.unit();
-        // A simple way to orient is lookAt logic, but for now just copying owner rotation is 'okay' for instant spawn
-        // Better:
         const axis = zAxis.cross(velocityDir);
         const angle = Math.acos(zAxis.dot(velocityDir));
         targetQ.setFromAxisAngle(axis, angle);
@@ -319,8 +315,8 @@ class PhysicsService3D {
         const projectileData: Projectile = {
             id: projectileId,
             ownerId,
-            position: { x: spawnPos.x, y: spawnPos.y, z: spawnPos.z },
-            velocity: { x: projectileBody.velocity.x, y: projectileBody.velocity.y, z: projectileBody.velocity.z },
+            position: { x: spawnPos.x, y: 0, z: spawnPos.z },
+            velocity: { x: projectileBody.velocity.x, y: 0, z: projectileBody.velocity.z },
             angle: visualAngle,
             type: type,
             damage,
@@ -342,20 +338,33 @@ class PhysicsService3D {
     
     public removeBody(body: CANNON.Body | null) {
         if (body) {
-            this.world.removeBody(body);
+            // Safely remove body: if stepping, queue it, otherwise remove immediately
+            if (this.isStepping) {
+                this.bodiesToRemove.push(body);
+            } else {
+                this.world.removeBody(body);
+            }
         }
     }
 
     public clearAllProjectiles() {
         this.projectiles.forEach(p => {
-            this.world.removeBody(p.body);
+            this.removeBody(p.body);
         });
         this.projectiles.clear();
     }
 
     public update(deltaTime: number) {
+        this.isStepping = true;
         this.world.step(1 / 60, deltaTime, 10);
+        this.isStepping = false;
         
+        // Remove queued bodies safely after step
+        while (this.bodiesToRemove.length > 0) {
+            const body = this.bodiesToRemove.pop();
+            if (body) this.world.removeBody(body);
+        }
+
         const projectilesToRemove: string[] = [];
         this.projectiles.forEach((p, id) => {
             p.data.remainingLife -= deltaTime * 1000;
@@ -363,11 +372,11 @@ class PhysicsService3D {
                 projectilesToRemove.push(id);
             } else {
                 p.data.position.x = p.body.position.x;
-                p.data.position.y = p.body.position.y;
+                p.data.position.y = 0; // Keep flat
                 p.data.position.z = p.body.position.z;
                 
                 p.data.velocity.x = p.body.velocity.x;
-                p.data.velocity.y = p.body.velocity.y;
+                p.data.velocity.y = 0;
                 p.data.velocity.z = p.body.velocity.z;
                 
                 // Keep orientation updated for visual if needed
@@ -380,7 +389,7 @@ class PhysicsService3D {
         projectilesToRemove.forEach(id => {
             const p = this.projectiles.get(id);
             if (p) {
-                this.world.removeBody(p.body);
+                this.removeBody(p.body);
                 this.projectiles.delete(id);
             }
         });

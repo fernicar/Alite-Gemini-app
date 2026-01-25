@@ -3,7 +3,7 @@ import { Mission, StarSystem, NPC, CargoItem } from '../types';
 import { playerShipService } from './playerShipService';
 
 const PIRATE_NAMES = ['"One-Eye" Jack', 'Silas "The Ghost" Kane', 'Mara "Red Blade"', 'Vex', 'Korg'];
-const PIRATE_SHIP_TYPES = ['Viper Mk I', 'Cobra Mk III', 'Adder'];
+const PIRATE_SHIP_TYPES = ['Viper', 'Cobra Mk III', 'Adder'];
 
 class MissionService {
     private activeMission: Mission | null = null;
@@ -53,7 +53,7 @@ class MissionService {
                     id: `bounty-${system.id}-${Date.now()}-${i}`,
                     title: `Bounty: ${pirateName}`,
                     description: `A notorious pirate, ${pirateName}, has been terrorizing the ${system.name} system. Eliminate them.`,
-                    type: 'Assassination',
+                    type: 'Bounty',
                     reward: 2000 + Math.floor(Math.random() * 3000),
                     status: 'Available',
                     systemId: system.id,
@@ -125,23 +125,40 @@ class MissionService {
         this.notify();
     }
     
-    public abandonMission() {
-        if (!this.activeMission) return;
+    public abandonMission(): { success: boolean, message: string } {
+        if (!this.activeMission) return { success: false, message: "No active mission." };
         
-        // Remove mission cargo if delivery
+        const ship = playerShipService.getShip();
+        let message = "Mission Abandoned.";
+        let newCredits = ship.credits;
+        let newCargo = [...ship.cargo];
+
+        // 1. Calculate Fine (10% of reward)
+        const fine = Math.floor(this.activeMission.reward * 0.1);
+        if (fine > 0) {
+            newCredits = Math.max(0, newCredits - fine);
+            message += ` You have been fined ${fine} CR for breach of contract.`;
+        }
+
+        // 2. Remove mission cargo if delivery
         if (this.activeMission.type === 'Delivery' && this.activeMission.cargoRequired) {
-            const ship = playerShipService.getShip();
-            const newCargo = ship.cargo.map(c => {
-                 if (c.name === this.activeMission!.cargoRequired!.name) {
-                     return { ...c, quantity: Math.max(0, c.quantity - this.activeMission!.cargoRequired!.quantity) };
+            const req = this.activeMission.cargoRequired;
+            newCargo = newCargo.map(c => {
+                 if (c.name === req.name) {
+                     return { ...c, quantity: Math.max(0, c.quantity - req.quantity) };
                  }
                  return c;
             }).filter(c => c.quantity > 0);
-            playerShipService.setShip({ ...ship, cargo: newCargo });
+            message += ` Mission cargo (${req.name}) confiscated.`;
         }
+
+        // Apply changes
+        playerShipService.setShip({ ...ship, credits: newCredits, cargo: newCargo });
 
         this.activeMission = null;
         this.notify();
+        
+        return { success: true, message };
     }
 
     public onNpcDestroyed(npc: NPC, currentSystemId: number) {
@@ -191,12 +208,14 @@ class MissionService {
 
     public checkDockingCompletion(systemId: number): string | null {
         if (!this.activeMission) return null;
+        
+        const mission = this.activeMission;
 
         // Delivery Completion
-        if (this.activeMission.type === 'Delivery' && this.activeMission.status === 'InProgress' && this.activeMission.destinationSystemId === systemId) {
+        if (mission.type === 'Delivery' && mission.status === 'InProgress' && mission.destinationSystemId === systemId) {
              // Remove cargo
              const ship = playerShipService.getShip();
-             const req = this.activeMission.cargoRequired!;
+             const req = mission.cargoRequired!;
              
              // Check if we still have the cargo (player might have sold it!)
              const hasCargo = ship.cargo.find(c => c.name === req.name && c.quantity >= req.quantity);
@@ -211,18 +230,18 @@ class MissionService {
                  playerShipService.setShip({ ...ship, cargo: newCargo });
                  
                  this.completeMissionRewards();
-                 return `Mission Complete: ${this.activeMission.title}. Reward: ${this.activeMission.reward}cr`;
+                 return `Mission Complete: ${mission.title}. Reward: ${mission.reward}cr`;
              } else {
                  return "Mission Failed: Cargo missing.";
              }
         }
         
         // Bounty/Assassination Claim
-        if ((this.activeMission.type === 'Bounty' || this.activeMission.type === 'Assassination') && this.activeMission.status === 'Completed') {
+        if ((mission.type === 'Bounty' || mission.type === 'Assassination') && mission.status === 'Completed') {
             // Must be at the issuing system (or any system for bounty? usually issuing for contracts)
-            if (this.activeMission.systemId === systemId) {
+            if (mission.systemId === systemId) {
                 this.completeMissionRewards();
-                return `Mission Complete: ${this.activeMission.title}. Bounty Claimed: ${this.activeMission.reward}cr`;
+                return `Mission Complete: ${mission.title}. Bounty Claimed: ${mission.reward}cr`;
             }
         }
 

@@ -66,7 +66,7 @@ export interface ShipSlot {
 
 export interface ShipSpec {
     manufacturer: string;
-    class: 'Fighter' | 'Trader' | 'Explorer' | 'Multi-purpose';
+    class: 'Fighter' | 'Trader' | 'Explorer' | 'Multi-purpose' | 'Shuttle';
     hull: number;
     shields: number; // Base shields
     maxFuel: number;

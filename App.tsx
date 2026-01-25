@@ -1,7 +1,6 @@
 
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Ship, StarSystem, NPC, Salvage, CargoItem, ShipSlot, Mission, EquipmentItem, ShipSpec, Projectile, VisualEffect, PhysicsState, Celestial } from './types';
-import { generateSystemDescription } from './services/geminiService';
 import { getGalaxy, GALAXY_WIDTH, GALAXY_HEIGHT } from './services/galaxyService';
 import { JumpIcon } from './components/icons';
 import { ShipStatusPanel } from './components/ShipStatusPanel';
@@ -15,7 +14,6 @@ import { HyperspaceView } from './components/HyperspaceView';
 import { StartScreen } from './components/StartScreen';
 import { EQUIPMENT_LIST } from './data/equipment';
 import { SHIPS_FOR_SALE } from './data/ships';
-import { MarkdownRenderer } from './components/MarkdownRenderer';
 import { audioService } from './services/audioService';
 import { playerShipService } from './services/playerShipService';
 import { physicsService3D } from './services/physicsService3D';
@@ -44,50 +42,37 @@ const Header: React.FC = () => (
 
 const SystemInfoPanel: React.FC<{
   system: StarSystem | null;
-  onGenerateDescription: () => void;
-  description: string;
-  isLoading: boolean;
   onJump: () => void;
   onEnterSystem: () => void;
   canJump: boolean;
   isCurrentSystem: boolean;
-}> = ({ system, onGenerateDescription, description, isLoading, onJump, onEnterSystem, canJump, isCurrentSystem }) => (
+}> = ({ system, onJump, onEnterSystem, canJump, isCurrentSystem }) => (
   <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-700 h-full flex flex-col">
     <h2 className="font-orbitron text-md text-orange-300 border-b border-orange-300/30 pb-1 mb-2">SYSTEM INFO</h2>
     {system ? (
       <div className="flex-grow flex flex-col">
         <h3 className="text-lg font-bold text-cyan-300">{system.name}</h3>
-        <p className="text-xs text-gray-400 mb-2">{system.description}</p>
         <div className="text-xs space-y-1 mb-2">
           <p><strong>Economy:</strong> <span className="text-yellow-300">{system.economy}</span></p>
           <p><strong>Government:</strong> <span className="text-purple-300">{system.government}</span></p>
+          <p><strong>Tech Level:</strong> <span className="text-blue-300">{system.techLevel}</span></p>
+          <p><strong>Population:</strong> <span className="text-green-300">{system.population.toLocaleString()} Billion</span></p>
         </div>
         
-        <div className="flex-grow bg-black/30 p-2 rounded-md overflow-y-auto custom-scrollbar text-xs">
-          {isLoading ? (
-            <p className="text-cyan-400 animate-pulse">Generating detailed briefing...</p>
-          ) : (
-            <MarkdownRenderer markdown={description} />
-          )}
+        <div className="flex-grow bg-black/30 p-2 rounded-md overflow-y-auto custom-scrollbar text-xs text-gray-300">
+           {system.description}
         </div>
         
-        <div className="mt-2 grid grid-cols-2 gap-2">
-          <button 
-            onClick={() => { audioService.playUIClick(); onGenerateDescription(); }}
-            disabled={isLoading}
-            className="w-full bg-slate-600 hover:bg-slate-500 text-white font-bold py-1 px-2 rounded transition duration-200 disabled:bg-slate-700 disabled:cursor-not-allowed text-xs h-full flex items-center justify-center"
-          >
-            {isLoading ? 'Loading...' : 'Get AI Briefing'}
-          </button>
+        <div className="mt-2 grid grid-cols-1 gap-2">
           {isCurrentSystem ? (
-             <button onClick={() => { audioService.playUIClick(); onEnterSystem(); }} className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-1 px-2 rounded transition duration-200 flex items-center justify-center gap-2 text-xs h-full">
+             <button onClick={() => { audioService.playUIClick(); onEnterSystem(); }} className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-2 rounded transition duration-200 flex items-center justify-center gap-2 text-xs">
                 Enter System View
             </button>
           ) : (
             <button 
                 onClick={() => { audioService.playUIClick(); onJump(); }} 
                 disabled={!canJump}
-                className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-1 px-2 rounded transition duration-200 flex items-center justify-center gap-2 disabled:bg-gray-500 disabled:cursor-not-allowed text-xs h-full"
+                className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2 px-2 rounded transition duration-200 flex items-center justify-center gap-2 disabled:bg-gray-500 disabled:cursor-not-allowed text-xs"
             >
                 <JumpIcon className="w-4 h-4" />
                 Jump to System
@@ -124,8 +109,6 @@ const App: React.FC = () => {
 
     const [currentSystem, setCurrentSystem] = useState<StarSystem>(initialSystem);
     const [selectedSystem, setSelectedSystem] = useState<StarSystem>(initialSystem);
-    const [detailedDescription, setDetailedDescription] = useState<string>('');
-    const [descriptionLoading, setDescriptionLoading] = useState<boolean>(false);
     
     const [activeMission, setActiveMission] = useState<Mission | null>(null);
     const pressedKeys = useRef(new Set<string>());
@@ -168,6 +151,14 @@ const App: React.FC = () => {
     const shipBodyRef = useRef<CANNON.Body | null>(null);
     useEffect(() => { shipBodyRef.current = shipBody; }, [shipBody]);
 
+    // Global Ship Subscription
+    useEffect(() => {
+        const unsubShip = playerShipService.subscribe(() => {
+            setShip(playerShipService.getShip());
+        });
+        return unsubShip;
+    }, []);
+
     useEffect(() => {
         // Update mission service with current system ID whenever it changes
         damageService.setCurrentSystemId(currentSystem.id);
@@ -190,7 +181,8 @@ const App: React.FC = () => {
             return;
         }
         
-        const unsubPlayerShip = playerShipService.subscribe(() => setShip(playerShipService.getShip()));
+        // Removed local playerShipService subscription from here, handled globally now
+        
         const unsubPhysics3D = physicsService3D.subscribe(() => {
             setProjectiles(physicsService3D.getProjectiles());
         });
@@ -249,11 +241,11 @@ const App: React.FC = () => {
 
 
         // Initialize Celestials (Defined here so we can reference Station position for undocking)
-        // Station coordinates
-        const stationPos = { x: 5000, y: 200, z: -1000 };
+        // Station coordinates - Flattened to Y=0
+        const stationPos = { x: 5000, y: 0, z: -1000 };
         const initialCelestials: Celestial[] = [
-            { id: 'sun-1', type: 'Star', name: `${currentSystem.name} Prime`, position: { x: 0, y: 1000, z: -15000 }, radius: 2000 },
-            { id: 'planet-1', type: 'Planet', name: `${currentSystem.name} I`, position: { x: stationPos.x, y: 200, z: 0 }, radius: 600 },
+            { id: 'sun-1', type: 'Star', name: `${currentSystem.name} Prime`, position: { x: 0, y: 0, z: -15000 }, radius: 2000 },
+            { id: 'planet-1', type: 'Planet', name: `${currentSystem.name} I`, position: { x: stationPos.x, y: 0, z: 0 }, radius: 600 },
             { id: 'station-1', type: 'Station', name: `${currentSystem.name} Station`, position: stationPos, radius: 200 },
         ];
 
@@ -262,10 +254,10 @@ const App: React.FC = () => {
         
         if (systemEntryMode === 'UNDOCK') {
             // Spawn just outside station, facing away (roughly +Z relative to station, but depends on layout)
-            // Let's spawn at station Z + 400 (safe distance)
+            // Let's spawn at station Z + 400 (safe distance), flattened to Y=0
             currentShip.position = { 
                 x: stationPos.x, 
-                y: stationPos.y, 
+                y: 0, 
                 z: stationPos.z + 400 
             };
             // Set initial velocity away from station
@@ -298,7 +290,6 @@ const App: React.FC = () => {
         salvageService.clearSalvage(); // Clear salvage when entering new system or mode
 
         return () => {
-            unsubPlayerShip();
             unsubPhysics3D();
             unsubEffects();
             unsubCollision();
@@ -336,16 +327,7 @@ const App: React.FC = () => {
 
     const handleSelectSystem = useCallback((system: StarSystem) => {
         setSelectedSystem(system);
-        setDetailedDescription('');
     }, []);
-
-    const handleGenerateDescription = useCallback(async () => {
-        if (!selectedSystem) return;
-        setDescriptionLoading(true);
-        const desc = await generateSystemDescription(selectedSystem);
-        setDetailedDescription(desc);
-        setDescriptionLoading(false);
-    }, [selectedSystem]);
 
     const jumpDistance = useMemo(() => {
         if (!currentSystem || !selectedSystem) return 0;
@@ -368,7 +350,6 @@ const App: React.FC = () => {
 
     const handleHyperspaceComplete = useCallback(() => {
         setCurrentSystem(selectedSystem);
-        setDetailedDescription('');
         setSystemEntryMode('JUMP'); // Arriving via Hyperspace
         setView('SYSTEM');
     }, [selectedSystem]);
@@ -512,7 +493,6 @@ const App: React.FC = () => {
         setActiveMission(null);
         setCurrentSystem(initialSystem);
         setSelectedSystem(initialSystem);
-        setDetailedDescription('');
         setTarget(null);
         setMissileStatus('unarmed');
         
@@ -788,9 +768,6 @@ const App: React.FC = () => {
                         <ShipStatusPanel ship={ship} activeMission={activeMission} />
                         <SystemInfoPanel
                           system={selectedSystem}
-                          onGenerateDescription={handleGenerateDescription}
-                          description={detailedDescription}
-                          isLoading={descriptionLoading}
                           onJump={handleJump}
                           onEnterSystem={() => setView('SYSTEM')}
                           canJump={jumpDistance <= ship.fuel && currentSystem?.id !== selectedSystem?.id}

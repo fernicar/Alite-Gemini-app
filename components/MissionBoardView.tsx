@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { Ship, StarSystem, Mission } from '../types';
 import { missionService } from '../services/missionService';
 import { ShipStatusPanel } from './ShipStatusPanel';
+import { audioService } from '../services/audioService';
 
 const MissionBoardView: React.FC<{
   currentSystem: StarSystem;
@@ -38,8 +39,10 @@ const MissionBoardView: React.FC<{
   };
   
   const handleAbandon = () => {
-      if (confirm("Are you sure you want to abandon the current mission?")) {
-          missionService.abandonMission();
+      if (confirm("Are you sure you want to abandon the current mission? Breach of contract fines may apply.")) {
+          audioService.playSellSound(); // Re-using sell sound as a 'transaction' sound
+          const result = missionService.abandonMission();
+          alert(result.message);
       }
   }
 
@@ -107,7 +110,7 @@ const MissionBoardView: React.FC<{
                                     {currentActiveMission.type === 'Bounty' && <p>Kills: {currentActiveMission.currentKills || 0} / {currentActiveMission.requiredKills || 1}</p>}
                                     <p>Status: <span className={currentActiveMission.status === 'Completed' ? 'text-green-400' : 'text-blue-400'}>{currentActiveMission.status}</span></p>
                                 </div>
-                                <button onClick={handleAbandon} className="mt-4 text-xs text-red-400 hover:text-red-300 underline">Abandon Mission</button>
+                                <button onClick={handleAbandon} className="mt-4 text-xs text-red-400 hover:text-red-300 underline">Abandon Mission (Fines Apply)</button>
                             </div>
                         )}
                     </div>

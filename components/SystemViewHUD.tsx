@@ -97,11 +97,6 @@ export const SystemViewHUD: React.FC<SystemViewHUDProps> = ({ shipBody, energyPi
                       if (Math.abs(localPos.y) > 100) {
                           ctx.beginPath();
                           ctx.moveTo(center.x + bx, center.y + by);
-                          // Stalk goes UP if object is above, DOWN if below
-                          // On canvas, UP is negative Y.
-                          // If local.y > 0 (above), stalk should go down to the plane? 
-                          // Convention: Stalk extends from the plane TO the blip.
-                          // Let's keep it simple: small line indicating up/down
                           const stalkLen = Math.min(10, Math.abs(localPos.y) / 100);
                           const dir = localPos.y > 0 ? -1 : 1;
                           ctx.lineTo(center.x + bx, center.y + by + (stalkLen * dir * 5));
@@ -113,6 +108,7 @@ export const SystemViewHUD: React.FC<SystemViewHUDProps> = ({ shipBody, energyPi
 
                   celestials.forEach(c => drawBlip(c.body.position, c.data.type === 'Station' ? '#00ffff' : '#ffff00', c.data.type === 'Station' ? 3 : 4));
                   npcs.forEach(n => drawBlip(n.body.position, n.data.isHostile ? '#ff0000' : '#00ff00', 2.5));
+                  salvage.forEach(s => drawBlip(new CANNON.Vec3(s.position.x, s.position.y, s.position.z), '#aaaaaa', 2));
               }
           }
 
@@ -145,13 +141,9 @@ export const SystemViewHUD: React.FC<SystemViewHUDProps> = ({ shipBody, energyPi
                       // atan2(x, -z) -> 0 is forward, PI/2 is Right, -PI/2 is Left
                       const angle = Math.atan2(localPos.x, -localPos.z);
                       
-                      // Map -PI to PI to screen width
-                      // Let's use a 180 degree FOV for the scanner bar (-PI/2 to PI/2)
-                      // Objects behind are not shown or clamped to edges
-                      
                       const fov = Math.PI; // 180 degrees wide scanner
                       
-                      if (Math.abs(angle) > fov / 2) return; // Behind us (optional: could clamp to edges)
+                      if (Math.abs(angle) > fov / 2) return; // Behind us
 
                       const x = (angle / (fov/2)) * (width / 2) + (width / 2);
                       
@@ -161,6 +153,7 @@ export const SystemViewHUD: React.FC<SystemViewHUDProps> = ({ shipBody, energyPi
 
                   celestials.forEach(c => drawPanoBlip(c.body.position, c.data.type === 'Station' ? '#00ffff' : '#ffff00', 16));
                   npcs.forEach(n => drawPanoBlip(n.body.position, n.data.isHostile ? '#ff0000' : '#00ff00', 10));
+                  salvage.forEach(s => drawPanoBlip(new CANNON.Vec3(s.position.x, s.position.y, s.position.z), '#aaaaaa', 8));
               }
           }
 
@@ -172,13 +165,10 @@ export const SystemViewHUD: React.FC<SystemViewHUDProps> = ({ shipBody, energyPi
 
       animationFrameId = requestAnimationFrame(render);
       return () => cancelAnimationFrame(animationFrameId);
-  }, [shipBody, npcs, celestials]); // Dependencies for restarting the loop if critical objects change
+  }, [shipBody, npcs, celestials, salvage]); 
 
   return (
     <div className="absolute inset-0 pointer-events-none font-orbitron">
-      {/* Reticle */}
-      <div className="aiming-reticle" />
-
       {/* Panoramic Radar (Top Center) */}
       <div className="absolute top-4 left-1/2 -translate-x-1/2 w-[600px] h-[40px] z-20">
           <canvas ref={panoramicCanvasRef} width={600} height={40} className="w-full h-full rounded border border-cyan-500/50 bg-slate-900/50" />

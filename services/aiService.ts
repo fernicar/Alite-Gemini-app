@@ -5,7 +5,7 @@ import { physicsService3D } from './physicsService3D';
 import { playerShipService } from './playerShipService';
 import * as CANNON from 'cannon-es';
 
-const PIRATE_SHIP_TYPES = ['Viper Mk I', 'Adder', 'Cobra Mk III'];
+const PIRATE_SHIP_TYPES = ['Viper', 'Adder', 'Cobra Mk III'];
 
 class AIService {
     private npcs: NPC[] = [];
@@ -74,7 +74,7 @@ class AIService {
         const id = `${npcType.toLowerCase()}-${Date.now()}-${Math.random()}`;
         const position = spawnPos || { 
             x: (Math.random() - 0.5) * 8000, 
-            y: (Math.random() - 0.5) * 2000, 
+            y: 0, 
             z: (Math.random() - 0.5) * 8000 
         };
         
@@ -104,7 +104,7 @@ class AIService {
     public spawnEntities(currentSystem: StarSystem) {
         this.clearNpcs();
         
-        const stationPos = { x: 5000, y: 200, z: -1000 }; // Matches system view
+        const stationPos = { x: 5000, y: 0, z: -1000 }; // Flattened station position
         const jumpPoint = { x: 0, y: 0, z: 0 };
 
         const isAnarchy = currentSystem.government === 'Anarchy';
@@ -117,7 +117,7 @@ class AIService {
         // Spawn Traders near jump point, heading to station
         for (let i = 0; i < numTraders; i++) {
             const spawnOffset = { x: (Math.random() - 0.5) * 1000, y: 0, z: (Math.random() - 0.5) * 1000 };
-            const npc = this.createNpcShip('Cobra Mk III', 'Trader', { x: jumpPoint.x + spawnOffset.x, y: jumpPoint.y, z: jumpPoint.z + spawnOffset.z });
+            const npc = this.createNpcShip('Cobra Mk III', 'Trader', { x: jumpPoint.x + spawnOffset.x, y: 0, z: jumpPoint.z + spawnOffset.z });
             if (npc) {
                 npc.navigationTarget = stationPos;
                 newNpcs.push(npc);
@@ -127,7 +127,7 @@ class AIService {
         // Spawn Police near station
         for (let i = 0; i < numPolice; i++) {
              const spawnOffset = { x: (Math.random() - 0.5) * 500, y: 0, z: (Math.random() - 0.5) * 500 };
-            const npc = this.createNpcShip('Viper Mk I', 'Police', { x: stationPos.x + spawnOffset.x, y: stationPos.y, z: stationPos.z + spawnOffset.z });
+            const npc = this.createNpcShip('Viper', 'Police', { x: stationPos.x + spawnOffset.x, y: 0, z: stationPos.z + spawnOffset.z });
             if (npc) {
                 npc.isHostile = false; 
                 npc.navigationTarget = stationPos; // They patrol around here
@@ -140,7 +140,7 @@ class AIService {
             const lerpFactor = 0.3 + Math.random() * 0.4; // 30-70% of the way
             const ambushPos = {
                 x: jumpPoint.x + (stationPos.x - jumpPoint.x) * lerpFactor + (Math.random() - 0.5) * 2000,
-                y: jumpPoint.y,
+                y: 0,
                 z: jumpPoint.z + (stationPos.z - jumpPoint.z) * lerpFactor + (Math.random() - 0.5) * 2000
             };
             
